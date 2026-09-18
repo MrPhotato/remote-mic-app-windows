@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Remote Coding",
+  "version": "0.2.6",
+  "identifier": "local.remote-coding.windows",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:2430",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "遥控 Coding · 本地版",
+        "width": 1029,
+        "height": 732,
+        "minWidth": 1029,
+        "minHeight": 732,
+        "decorations": true,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": false,
+    "publisher": "Local build",
+    "category": "Productivity",
+    "shortDescription": "小米蓝牙遥控器的 Windows 语音与 Codex 控制器",
+    "longDescription": "基于 SayAll Windows 开源代码的本地定制版，增加 Codex 按键方案。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer-hooks.nsh",
+        "uninstallerIcon": "icons/icon.ico",
+        "startMenuFolder": "Remote Coding"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyRUY0RDUwOEQ1ODAyNDgKUldSSUFsaU5VRTN2Y3ZleWlGT3AzSHpNZk5ka09TZFZRUHRsci9BVXJacmU0QTljSElnd0RydTQK",
+      "endpoints": [],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
+  "mainBinaryName": "remote-coding"
+}

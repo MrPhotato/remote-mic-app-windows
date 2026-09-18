@@ -1,0 +1,200 @@
+# 无线麦 Windows Tauri 长期架构与实施路线
+
+## 1. 决策
+
+无线麦 Windows 版在公开仓库 `GetSayAll/remote-mic-app-windows` 中独立开发，采用 Rust、Tauri 2 和 Vue 3。macOS 继续使用 SwiftUI/AppKit；两端独立构建、签名、打包、测试和发布。
+
+`mwlt/Voice_VibeCoding`、PR #249、ZSTDJan Windows 版本和 Vibe Flow 只作为带来源的架构、实现和故障经验参考。
+
+Windows UI 的唯一产品设计基准是无线麦 macOS 原版。Windows 使用本地标题栏、Segoe UI Variable、系统 Accent 和 WebView2，不模拟 macOS 红黄绿窗口按钮或 Liquid Glass。
+
+## 2. 产品范围
+
+第一阶段支持小米蓝牙遥控器 2 / RC001 和小米蓝牙遥控器 2 Pro / RC003：
+
+- WinRT BLE 发现、连接和重连；
+- ATVV 能力协商和 16 kHz IMA/DVI ADPCM；
+- 物理按下开始、释放结束的语音会话；
+- WASAPI 输出到用户明确选择的端点；
+- Windows 能通过公共 API 稳定提供的 Raw Input 按键；
+- SendInput、按键映射、统计、诊断和设置；
+- Windows 10/11 x64。
+
+第一阶段不包含：
+
+- macOS、iOS、Web 或服务端代码；
+- T1、汉王 V60、DJI Mic 2；
+- 第三方 App 私有配置、内部数据库或私有协议；
+- 依赖 Frida 或管理员权限才能工作的基础语音；
+- 未完成 Windows 真机验收的完整 13 键承诺。
+
+## 3. 架构
+
+```text
+Vue 3 UI
+  ├─ 按键
+  ├─ 统计
+  ├─ 连接与语音
+  ├─ 权限
+  └─ 关于
+        │
+        ▼
+Tauri Commands / Events
+        │
+        ▼
+Application State
+        │
+        ├─ sayall-core
+        │    ├─ ATVV
+        │    ├─ ADPCM
+        │    ├─ Voice Session
+        │    ├─ Settings
+        │    └─ Statistics
+        │
+        └─ sayall-windows
+             ├─ WinRT BLE
+             ├─ Raw Input
+             ├─ SendInput
+             ├─ WASAPI
+             └─ Windows lifecycle
+```
+
+### 3.1 `sayall-core`
+
+必须是纯 Rust，不能依赖 Windows、Tauri、WebView 或第三方输入法。核心协议测试应能在 macOS、Linux 和 Windows 上运行。
+
+### 3.2 `sayall-windows`
+
+只包含 Windows 公共 API。所有 Windows 句柄、COM、WinRT、HID 和音频资源必须有明确生命周期。BLE 回调和音频回调不得执行阻塞文件或进程操作。
+RC001/RC003 断连由 BLE 工作线程统一清理后进入 2–30 秒指数退避；用户主动断开只停止本次运行的重连。连接时优先从已批准设备名识别型号，名称不足以判定时可选读取标准 Device Information / Model Number（2A24）；型号未知不阻断共用 ATVV 路径。Windows 电源回调只投递事件，睡眠前的 GATT/音频释放与恢复后的重新发现仍在同一工作线程串行完成，旧 connection generation 回调继续丢弃。2026-09-10 修复升级重启后的重连窗口 F5 泄漏：Raw Input 每设备类在进程内只保留一个注册窗口，由主监听器统一转发设备归因；Connecting/Discovering/AwaitingCapabilities/Reconnecting 期间临时保护语音 F5，进入稳定/失败/挂起状态即释放实体键盘 F5；每次连接的设备激活、属性、服务/特征发现、CCCD 订阅与能力请求均记录脱敏结构化耗时，详见 `Bugs/2026-09-10-voice-f5-timestamp-during-reconnect.md`。
+
+### 3.3 Tauri Host
+
+Tauri Host 负责应用生命周期、IPC、托盘和窗口，不直接解析 ATVV 或处理音频帧。主程序保持普通用户权限。
+设备专属设置写入本应用自己的 Tauri 配置目录；音频端点同时保存稳定 endpoint ID 与用户选择时的名称，不跨设备同步，也不读取 Windows 默认输出配置。启动恢复必须先验证两者一致。
+
+Tauri command 只依赖宿主内的 `PlatformRuntime` 接口。普通构建唯一实现仍是 `WindowsPlatform`；仅显式启用 `runtime-simulation` feature 且设置专用环境变量的 CI 构建可注入确定性平台。仿真实现复用 `sayall-core` ATVV 管线，并只记录 SendInput，不访问真实 BLE、WASAPI、Raw Input 或桌面输入。仿真专用前端入口和 command 必须从普通生产构建中消失。
+
+### 3.4 可选高级 Helper
+
+返回、独立音量等 Windows 不稳定提供的 HID usage 单独评估。需要提权的能力必须是可选 Helper，并且失败时不能影响 BLE 语音和可靠按键。
+
+## 4. UI
+
+沿用 macOS 原版的页面层级、遥控器实物图、卡片、状态和侧栏结构。第一版页面顺序：
+
+1. 按键；
+2. 统计；
+3. 连接与语音；
+4. 权限；
+5. 关于。
+
+未实现的 Mac 页面不显示空入口。中文最终字号不小于 12pt。设置尽量在大页面中铺平完成，不使用长下拉列表或连续确认弹窗。
+
+界面只能显示真实状态。进程已启动、事件已入队或音频已解码都不能被展示成“用户语音已经可用”。
+
+## 5. 来源策略
+
+### PR #249
+
+迁移测试夹具、会话边沿、音频排空、升级兼容、统计和公开边界检查。放弃 Python/PySide6、Qt、C++ 迁移骨架、第三方输入法进程注入和内部协议。
+
+### ZSTDJan Windows 版本
+
+参考 WinRT 缓存、PortAudio/WASAPI 端点、Raw Input、安装器和许可证门禁；其语音页按语音程序配置"按住说话快捷键"（按下注入、松开释放）是本仓库按住说话快捷键设置的产品参考。其硬件结论需要本项目独立复验。
+
+### Vibe Flow
+
+参考自然 ATVV 生命周期、三进程故障隔离思想、100 次按下/释放和 60 秒边界验收。其单体 C# UI 不作为代码基线。
+
+### Voice VibeCoding
+
+参考 Rust/Tauri 结构、windows-rs、音频占用策略和窗口恢复；其语音键按住注入 Hold 语义（按下先快捷键 DOWN、松手统一释放、SendInput 互斥降级）是本仓库按住说话快捷键注入时序的参考。不得继承 Git 历史、品牌、配置目录或未经审计的 VB-CABLE、Frida、WinUHid 二进制。
+
+## 6. 开发阶段
+
+### 阶段 A：工程与来源基线
+
+- Rust Workspace、Tauri、Vue；
+- Windows CI；
+- UI 静态壳；
+- 来源矩阵；
+- Mac 可运行的纯逻辑测试。
+
+### 阶段 B：RC001 / RC003 语音核心
+
+- 唯一候选发现；
+- GATT 特征发现和通知；
+- ATVV 能力；
+- ADPCM；
+- WASAPI；
+- 会话排空、重连和错误恢复。
+
+当前实现状态：候选扫描、设备名与 2A24 型号识别、GATT 连接与通知、ATVV 能力、RC001/RC003 共用的高半字节优先 ADPCM/PCM、连接代次隔离、显式端点 WASAPI 输出、基于 padding 的会话排空、稳定 endpoint ID + 原名称恢复，以及遥控器选择持久化、2–30 秒退避重连和 Windows 睡眠/恢复通知代码已落地并通过静态与纯逻辑检查。音频端点缺失或名称变化会失败关闭；BLE 清理、重连和恢复都不接受旧代次回调。Raw Input 已建立共用 VID/PID 设备族路径选择、隐藏消息窗口、Keyboard/HID 报告解析、双来源并集去重和停止释放代码路径；语音键在此层明确排除，继续由 ATVV 独占。在 ATVV 层新增了用户显式配置的按住说话快捷键（如右 Alt）：按下先注入 DOWN 再开始音频会话，释放统一注入 UP，断连、睡眠、中止和退出全部强制释放，注入不替代语音会话（来源见 ATTRIBUTION：ZSTDJan 按程序配置按住说话快捷键、Voice_VibeCoding 的按下先 DOWN/松手统一释放 Hold 语义）。已确认的兼容性边界：仅使用 SendInput 公共 API，不采用参考实现中的驱动级注入（WinUHid）或管理员权限，因此对过滤模拟按键的输入法内置热键（如豆包固定的"长按右 Alt"）无效，见 Bugs/2026-09-04。Windows 运行、真实睡眠恢复、VB-CABLE 回环、快捷键成对注入和 RC001/RC003 真机验证尚未完成。
+
+### 阶段 C：可靠按键
+
+- Raw Input；
+- 设备身份；
+- SendInput；
+- 普通按键单击、双击和长按；
+- 语音键保持即时生命周期。
+
+当前实现状态（2026-09-05 按键映射功能完成）：三列映射（单击/双击/长按，Mac 原版 `RemoteButtonGestureRecognizer` 同款 300/550/350ms 参数与"按配置动态启用"语义）已落地——`button_gestures.rs` 纯状态机、`button_mapping.rs` 映射引擎（双源合并：Raw Input 监听器的 HID 报文与透传键盘边沿 + `key_gate.rs` 门控钩子喂入的被吞键盘边沿；本机探针实证 LL 吞键会阻断同一事件的 Raw Input 投递，见 docs/investigations/2026-09-05-ll-swallow-vs-raw-input.md）、`key_gate.rs` WH_KEYBOARD_LL 门控（VK 0xFF 厂商键直接归因；其余键由 HID 报文武装 + 60ms 有界等待归因；DOWN 漏进 OS 则 UP 必放行的边沿配对；LLKHF_INJECTED 免疫；链头 bump；未配置映射/总开关关闭一律透传）。动作注入为 SendInput tap（零间隔批量，部分交付回滚由 send_input 层保证）；按住连发对齐 Mac（返回 50ms、方向/音量 100ms）。按键页重构为 Mac `RemoteMappingCanvas` 对标画布（遥控器实物图 + 12 卡 + 语音卡 + 贝塞尔连线 + 三态高亮：按下=橙/选中=强调；单击/双击/长按单元格编辑 + 预设芯片 + 自定义快捷键录入 + 锁定当前按键），映射保存即热加载（引擎 + 门控同步）。旧版单动作 button-mappings.json 自动迁移为单击列（真机验证：用户既有 OK→Enter 配置迁移成功显示）。Raw Input 监听随应用自愈启动（10 秒重试；用户显式停止不重启），真机验证：RC003 已配对主机上开机即"按键监听已就绪"；设备热移除通知（RIDEV_DEVNOTIFY）触发引擎释放全部按住状态。Windows 主机已验证：cargo test 93 项、vitest 18 项、四页 UI 初始视口全覆盖（UIA 遍历 0 折叠元素）、监听自愈启动；实体按键的吞键/手势注入回路与 RC001 未在本轮真机验收（RC003 已配对就绪，待用户按遥控器复核；已知边界：映射键的物理键盘同键在 60ms 归因窗口内可能被误吞——VVC 同款取舍；管理员权限前台窗口中 UIPI 钩子不可见，映射退化为观察模式防双输入）。
+
+2026-09-09 增加按键映射配置迁移：页面保留自动保存并提供显式保存状态反馈，通过 Windows 公共 `IFileOpenDialog` / `IFileSaveDialog` 导入导出版本化 JSON。导入文件限制为 1 MiB，先完成版本、按钮、动作和快捷键校验，再写入应用配置并热加载；失败或取消不替换当前运行态。该文件仅承载 Windows 按键映射，不包含设备身份、音频、统计或 Mac 专属配置，也不承诺与 macOS 文件互通。
+
+### 阶段 D：产品化
+
+- Onboarding；
+- 设置、统计、诊断、日志；
+- 中英文和主题；
+- 安装、升级、卸载和更新；
+- 自签 Authenticode、证书指纹和 SHA-256。
+
+Windows 深色模式已于 2026-09-08 实现：“关于”页面提供“系统 / 浅色 / 深色”三档选择器，默认跟随 Windows，选择立即生效并通过现有设置文件持久化；主题只作用于 Tauri 窗口与 Vue CSS，不重建页面，也不触碰 BLE、音频、Raw Input 或按键服务。自动测试、正式浏览器渲染和完整 7 步预检 passed；因本机安装版正在运行且不得强杀，Windows Tauri 原生标题栏、重启保持及 RC001/RC003 保持连接切换验收 deferred。调研、schema 迁移、令牌范围、日志与逐项证据见 `docs/plan/2026-09-08-windows-dark-mode.md`。
+
+安装包采用 Tauri NSIS current-user 模式，固定应用 identifier、publisher、开始菜单目录和禁止降级策略。最低系统版本统一定义为 Windows 10 1809（build 17763）：NSIS 在复制应用文件前通过官方 installer hook 拒绝更低 build，Tauri Host 在创建 WebView、BLE、WASAPI 和 Raw Input 资源前再次读取真实系统版本并失败关闭，覆盖绕过安装器直接运行 exe 的情况。普通 CI 校验 hook 路径与门槛值，并只生成明确标记为 unsigned 的短期 Preview artifact；该 artifact 只证明代码和打包结构可构建，不能替代 Windows 10 1809 / Windows 11 上的提示、安装升级、Authenticode 或 SmartScreen 真机验收。
+
+关于页已接入只读运行诊断摘要（2026-09-16 从权限页迁入，权限页只保留蓝牙/按键/音频三项状态）：Tauri Host 从现有平台快照提取能力、阶段、代次和计数，并在 Rust 边界直接丢弃设备 ID、蓝牙地址、HID 路径、遥控器名称、音频端点身份、错误原文和用户内容。页面只在用户主动操作后生成并复制可见 JSON；该能力不是持久日志，也不代表任何 Windows 真机路径已通过。同页另有“打开日志目录”：目录路径由 Rust 从诊断日志的实际落盘位置推导、前端不接受路径参数（维持 capabilities 最小权限），经 ShellExecuteW 交给系统资源管理器。
+
+使用统计已按长期边界接入：Windows 平台层只维护线程安全的累计计数，不在 BLE、WASAPI 或 Raw Input 回调中写文件；Tauri Host 在后台合并增量并写入本应用 `settings.json`。普通按键只统计去重后的语义按下边沿，语音只在 WASAPI 排空和 ATVV drain 都成功后记录一次，并按 16 kHz 已解码采样折算时长。核心层只保存每日汇总，不保存设备、端点、按键名称、语音内容或应用上下文；统计页沿用 Mac 原版的今日、本周、全部和最近 7 天信息层级。真实 Windows 事件和升级保留仍按测试手册验收。
+
+### 阶段 E：实验性完整 HID 与增强注入
+
+单独研究返回和音量键，不阻塞 Preview。模拟、驱动存在或 HID Tap ready 都不能代替真实按下/释放验收。
+
+按住说话快捷键与按键映射的真机结果（Bugs/2026-09-04）确认了 IME 对模拟按键的过滤边界。按 ADR 0002（docs/decisions/0002-dual-track-injection-optional-helper.md）设立双轨架构：默认轨保持主程序 SendInput；增强轨为独立、显式安装的提权 Helper，负责按设备吞掉遥控器原始按键并以虚拟键盘驱动执行"与物理按键等价"的注入。驱动来源按序评估 WinUHid 审计、微软公开样例自研、暂缓；未经审计的 WinUHid 二进制不得进入仓库。前置条件：真机物理按键对照 + RC001/RC003 Keyboard/HID 事件形态确认。
+
+## 7. 验证边界
+
+Mac 开发机可以证明：
+
+- Vue 类型检查和生产构建；
+- Rust 核心测试；
+- 格式化和静态检查；
+- 非 Windows 平台不会伪造可用状态。
+
+Mac 开发机不能证明：
+
+- WinRT BLE 能分别识别并连接 RC001 和 RC003；
+- Windows Raw Input 报告；
+- WASAPI 和 VB-CABLE；
+- SendInput 对真实目标应用有效；
+- Windows 安装、升级、签名和 SmartScreen；
+- Windows 10 1809 / Windows 11 的安装与启动版本门禁提示；
+- 真实语音首次会话完整可用。
+
+这些项目必须在 Windows 主机按 `Testing/WindowsRC003Preview.md` 完成。
+
+## 8. 完成标准
+
+公开 Preview 至少满足：
+
+- Windows CI 从干净提交构建；
+- 第一次真实 `STREAM_START → AUDIO → STREAM_STOP` 成功；
+- 快速按下/释放和连续会话没有重复、卡键或尾音丢失；
+- BLE 断开、休眠和重连后恢复；
+- 稳定按键不误伤普通键盘；
+- 安装升级保留配置且只有一个安装条目；
+- Release 包含来源、许可证、SHA-256、已完成和未完成的真机边界。

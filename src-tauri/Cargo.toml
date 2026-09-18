@@ -1,0 +1,41 @@
+[package]
+name = "sayall-windows-app"
+default-run = "remote-coding"
+autobins = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "remote-coding"
+path = "src/main.rs"
+
+[lib]
+name = "sayall_windows_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+runtime-simulation = []
+
+[build-dependencies]
+tauri-build = { version = "2.4", features = [] }
+
+[dependencies]
+sayall-core = { path = "../crates/sayall-core" }
+sayall-windows = { path = "../crates/sayall-windows" }
+serde.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.13.4", default-features = false }
+quick-xml = { version = "0.41", features = ["serialize"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+semver = "1"
+tauri = { version = "2.8", features = ["tray-icon"] }
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-updater = "2.11.0"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }

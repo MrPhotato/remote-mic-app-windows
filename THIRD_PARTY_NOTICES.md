@@ -1,0 +1,23 @@
+# Third-party notices
+
+## SayAll App Logo and App Icon
+
+`public/app-logo.png`、`public/favicon.png` 以及 `src-tauri/icons/` 下的应用图标属于 HD838A 保留版权的专有品牌资产。它们不属于本项目 GPL-3.0-only 软件代码许可范围，复制、改编或用于其他项目须遵守 [LOGO-LICENSE.md](LOGO-LICENSE.md)。
+
+## RC003 product photo
+
+The RC003 product photo bundled as `public/RC003-remote-photo.png` was supplied by the user on 2026-07-17 for the physical-button mapping interface. Copyright and trademark rights in the photo and depicted products remain with their respective owners. GPL-3.0-only does not grant additional rights to this image or the Xiaomi marks.
+
+## Tauri, Vue and Rust dependencies
+
+Tauri, Vue, windows-rs and other package dependencies remain under their respective upstream licenses. The lockfiles and generated release inventory are the authoritative list for a particular build.
+
+The `wasapi` Rust crate is used under the MIT License. Copyright remains with its upstream authors; the dependency version and transitive inventory are recorded in `Cargo.lock`.
+
+## VB-CABLE
+
+VB-CABLE is developed by VB-Audio and is separately licensed Donationware. The current Windows preview does not copy, bundle, download or execute its driver package. Interactive SayAll installs and the application may direct users to the official page at <https://vb-audio.com/Cable/>. VB-CABLE installation requires administrator permission and, according to its Pack45 instructions, a Windows restart.
+
+## Reference implementations
+
+Source references and fixed revisions are listed in `ATTRIBUTION.md`. Copying compatible code into this GPL-3.0-only project does not change the license or attribution requirements of the original work.
