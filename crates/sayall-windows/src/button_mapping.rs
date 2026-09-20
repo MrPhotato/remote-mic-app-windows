@@ -830,7 +830,9 @@ fn fire_gesture(
             ));
             match injector.tap(&chord) {
                 Ok(()) => {
-                    crate::ble::gatt_note("map_inject result=submitted target_result=unknown".to_owned());
+                    crate::ble::gatt_note(
+                        "map_inject result=submitted target_result=unknown".to_owned(),
+                    );
                     return terminal_action;
                 }
                 Err(error) => {
