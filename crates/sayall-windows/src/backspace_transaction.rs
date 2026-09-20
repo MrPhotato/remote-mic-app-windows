@@ -23,8 +23,9 @@ use windows::Win32::UI::Accessibility::{
     UIA_IsReadOnlyAttributeId, UIA_TextEditPatternId, UIA_TextPatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, VK_BACK, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, GetLastInputInfo, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, LASTINPUTINFO, VK_BACK, VK_CONTROL, VK_LWIN, VK_MENU,
+    VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -101,6 +102,7 @@ struct State {
 struct Transaction {
     started: Instant,
     foreground: usize,
+    first_input_tick: Option<u32>,
     cancelled: AtomicBool,
     epoch: Arc<AtomicU64>,
     generation: u64,
@@ -187,8 +189,9 @@ impl Runtime {
     }
 
     pub fn begin(&self, report: Report) -> Result<(), String> {
+        let first_input_tick = last_input_tick();
         let foreground = unsafe { GetForegroundWindow() }.0 as usize;
-        let transaction = self.register(foreground, report)?;
+        let transaction = self.register(foreground, first_input_tick, report)?;
         note("begin", "accepted", "first_requested", transaction.started);
         let fallback = transaction.clone();
         let send = self.send.clone();
@@ -217,7 +220,12 @@ impl Runtime {
 
     // Pure registration boundary: no UIA, window lookup, input or callbacks
     // while holding active. Epoch invalidation precedes exposing a successor.
-    fn register(&self, foreground: usize, report: Report) -> Result<Arc<Transaction>, String> {
+    fn register(
+        &self,
+        foreground: usize,
+        first_input_tick: Option<u32>,
+        report: Report,
+    ) -> Result<Arc<Transaction>, String> {
         let (previous, candidate) = {
             let mut active = lock(&self.active);
             let previous = active.take();
@@ -232,6 +240,7 @@ impl Runtime {
                 let transaction = Arc::new(Transaction {
                     started: Instant::now(),
                     foreground,
+                    first_input_tick,
                     cancelled: AtomicBool::new(false),
                     epoch: self.epoch.clone(),
                     generation,
@@ -354,7 +363,7 @@ fn submit_first(
     busy: &AtomicUsize,
     ticket: Ticket,
 ) -> EditResult<bool> {
-    submit_first_with(transaction, busy, ticket, || unsafe {
+    submit_first_with_activity(transaction, busy, ticket, last_input_tick, || unsafe {
         if GetForegroundWindow().0 as usize != transaction.foreground {
             return Err("focus_changed");
         }
@@ -370,10 +379,11 @@ fn submit_first(
 // The injected closure includes the actual OS guards and paired submission in
 // production. Tests supply a counter only, exercising this same ticket and
 // cancellation gate without inspecting a window or sending keyboard input.
-fn submit_first_with(
+fn submit_first_with_activity(
     transaction: &Transaction,
     busy: &AtomicUsize,
     ticket: Ticket,
+    current_input_tick: impl FnOnce() -> Option<u32>,
     submit: impl FnOnce() -> EditResult<()>,
 ) -> EditResult<bool> {
     let mut state = lock(&transaction.state);
@@ -386,11 +396,24 @@ fn submit_first_with(
         Err("input_gate_unavailable")
     } else if busy.load(Ordering::SeqCst) > own_busy {
         Err("busy")
+    } else if ticket == Ticket::Fallback {
+        unchanged_input_activity(transaction.first_input_tick, current_input_tick())
+            .and_then(|()| submit())
     } else {
         submit()
     };
     state.ticket = ticket;
     let report = state.first_report.take();
+    let activity_invalidated = matches!(
+        result,
+        Err("input_activity_changed" | "input_activity_unknown")
+    );
+    let completion = if activity_invalidated {
+        transaction.cancelled.store(true, Ordering::SeqCst);
+        state.complete.take()
+    } else {
+        None
+    };
     drop(state);
     transaction.changed.notify_all();
     note(
@@ -407,10 +430,71 @@ fn submit_first_with(
         }),
         transaction.started,
     );
-    if let Some(report) = report {
+    if let Some(report) = report.filter(|_| !activity_invalidated) {
+        report(result.map_err(message));
+    }
+    if let Some(completion) = completion {
+        let report = completion.report.clone();
+        drop(completion);
         report(result.map_err(message));
     }
     result.map(|()| true)
+}
+
+fn last_input_tick() -> Option<u32> {
+    let mut info = LASTINPUTINFO {
+        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetLastInputInfo(&mut info) }
+        .as_bool()
+        .then_some(info.dwTime)
+}
+
+fn unchanged_input_activity(before: Option<u32>, current: Option<u32>) -> EditResult<()> {
+    match (before, current) {
+        (Some(before), Some(current)) if before == current => Ok(()),
+        (Some(_), Some(_)) => Err("input_activity_changed"),
+        _ => Err("input_activity_unknown"),
+    }
+}
+
+#[cfg(test)]
+fn submit_first_with(
+    transaction: &Transaction,
+    busy: &AtomicUsize,
+    ticket: Ticket,
+    submit: impl FnOnce() -> EditResult<()>,
+) -> EditResult<bool> {
+    submit_first_with_activity(
+        transaction,
+        busy,
+        ticket,
+        || transaction.first_input_tick,
+        submit,
+    )
+}
+
+fn cancel_for_prepare_failure(transaction: &Transaction, reason: &str) -> bool {
+    let changed = matches!(
+        reason,
+        "cancelled"
+            | "focus_changed"
+            | "caret_changed"
+            | "text_changed"
+            | "selection_changed"
+            | "text_or_caret_changed"
+            | "caret_outside_document"
+            | "modifier_or_backspace_held"
+    ) || reason.starts_with("foreground_")
+        || reason.starts_with("first_change_");
+    if changed {
+        note("prepare", "cancelled", reason, transaction.started);
+        // Invalidate only this transaction; a late failure must not advance the
+        // shared epoch or cancel a successor. This also wakes the deadline wait.
+        transaction.cancel();
+    }
+    changed
 }
 
 fn fallback_worker(
@@ -816,8 +900,10 @@ unsafe fn transaction_worker(
         Ok((editor, before, after))
     })();
     if let Err(reason) = &prepared {
-        note("prepare", "unsupported", reason, transaction.started);
-        let _ = submit_first(&transaction, &send, &busy, Ticket::Fallback);
+        if !cancel_for_prepare_failure(&transaction, reason) {
+            note("prepare", "unsupported", reason, transaction.started);
+            let _ = submit_first(&transaction, &send, &busy, Ticket::Fallback);
+        }
     }
     let Some(completion) = transaction.await_complete() else {
         return;
@@ -1048,6 +1134,7 @@ mod tests {
         Arc::new(Transaction {
             started: Instant::now(),
             foreground: 1,
+            first_input_tick: Some(1),
             cancelled: AtomicBool::new(false),
             epoch: Arc::new(AtomicU64::new(1)),
             generation: 1,
@@ -1349,7 +1436,7 @@ mod tests {
             let barrier = barrier.clone();
             workers.push(std::thread::spawn(move || {
                 barrier.wait();
-                runtime.register(1, Arc::new(|_| {}))
+                runtime.register(1, Some(1), Arc::new(|_| {}))
             }));
         }
         barrier.wait();
@@ -1385,9 +1472,9 @@ mod tests {
     #[test]
     fn cancelled_runtime_generation_cannot_send_after_restart_or_shutdown() {
         let runtime = Runtime::new(Arc::new(SendInputRuntime::new()), Arc::new(|| true));
-        let first = runtime.register(1, Arc::new(|_| {})).unwrap();
+        let first = runtime.register(1, Some(1), Arc::new(|_| {})).unwrap();
         runtime.cancel();
-        let second = runtime.register(1, Arc::new(|_| {})).unwrap();
+        let second = runtime.register(1, Some(1), Arc::new(|_| {})).unwrap();
         assert!(first.cancelled());
         assert!(!second.cancelled());
         // A late spawn failure belonging to the first may not cancel second.
@@ -1395,7 +1482,7 @@ mod tests {
         assert!(!second.cancelled());
         runtime.shutdown();
         assert!(second.cancelled());
-        assert!(runtime.register(1, Arc::new(|_| {})).is_err());
+        assert!(runtime.register(1, Some(1), Arc::new(|_| {})).is_err());
         let sends = AtomicUsize::new(0);
         for transaction in [first, second] {
             assert_eq!(
@@ -1417,6 +1504,7 @@ mod tests {
         runtime
             .register(
                 1,
+                Some(1),
                 Arc::new(move |_| {
                     first_count.fetch_add(1, Ordering::SeqCst);
                 }),
@@ -1480,5 +1568,160 @@ mod tests {
         ] {
             assert!(!empty_edit_placeholder(true, true, &[], document, true));
         }
+    }
+
+    #[test]
+    fn fallback_requires_two_successful_identical_activity_ticks() {
+        for (before, current, expected) in [
+            (Some(42), Some(42), Ok(true)),
+            (Some(42), Some(43), Err("input_activity_changed")),
+            // Tick counters may move backwards or wrap; inequality is enough.
+            (Some(42), Some(41), Err("input_activity_changed")),
+            (Some(u32::MAX), Some(0), Err("input_activity_changed")),
+            (None, Some(42), Err("input_activity_unknown")),
+            (Some(42), None, Err("input_activity_unknown")),
+            (None, None, Err("input_activity_unknown")),
+        ] {
+            let runtime = Runtime::new(Arc::new(SendInputRuntime::new()), Arc::new(|| true));
+            let reports = Arc::new(AtomicUsize::new(0));
+            let report_count = reports.clone();
+            let transaction = runtime
+                .register(
+                    1,
+                    before,
+                    Arc::new(move |result| {
+                        assert!(result.is_ok());
+                        report_count.fetch_add(1, Ordering::SeqCst);
+                    }),
+                )
+                .unwrap();
+            let sends = AtomicUsize::new(0);
+            assert_eq!(
+                submit_first_with_activity(
+                    &transaction,
+                    &runtime.busy,
+                    Ticket::Fallback,
+                    || current,
+                    || {
+                        sends.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }
+                ),
+                expected
+            );
+            let expected_count = usize::from(expected.is_ok());
+            assert_eq!(sends.load(Ordering::SeqCst), expected_count);
+            assert_eq!(reports.load(Ordering::SeqCst), expected_count);
+            assert_eq!(
+                submit_first_with_activity(
+                    &transaction,
+                    &runtime.busy,
+                    Ticket::Prepared,
+                    || Some(42),
+                    || {
+                        sends.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }
+                ),
+                Ok(false)
+            );
+            assert_eq!(sends.load(Ordering::SeqCst), expected_count);
+        }
+    }
+
+    #[test]
+    fn precise_prepared_path_does_not_require_an_activity_tick() {
+        let runtime = Runtime::new(Arc::new(SendInputRuntime::new()), Arc::new(|| true));
+        let transaction = runtime
+            .register(1, None, Arc::new(|result| assert!(result.is_ok())))
+            .unwrap();
+        let sends = AtomicUsize::new(0);
+        assert_eq!(
+            submit_first_with_activity(
+                &transaction,
+                &runtime.busy,
+                Ticket::Prepared,
+                || panic!("prepared must not read fallback activity"),
+                || {
+                    sends.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            ),
+            Ok(true)
+        );
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn prepare_context_change_prevents_deadline_send_without_cancelling_successor() {
+        let runtime = Runtime::new(Arc::new(SendInputRuntime::new()), Arc::new(|| true));
+        for reason in [
+            "focus_changed",
+            "caret_changed",
+            "text_changed",
+            "selection_changed",
+            "foreground_ancestry_mismatch",
+            "cancelled",
+        ] {
+            let transaction = runtime
+                .register(
+                    1,
+                    Some(7),
+                    Arc::new(|_| panic!("unsent first cancellation must be silent")),
+                )
+                .unwrap();
+            assert!(cancel_for_prepare_failure(&transaction, reason));
+            let sends = AtomicUsize::new(0);
+            assert_eq!(
+                submit_first_with_activity(
+                    &transaction,
+                    &runtime.busy,
+                    Ticket::Fallback,
+                    || Some(7),
+                    || {
+                        sends.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }
+                ),
+                Ok(false)
+            );
+            assert_eq!(sends.load(Ordering::SeqCst), 0);
+            let successor = runtime.register(1, Some(8), Arc::new(|_| {})).unwrap();
+            assert!(cancel_for_prepare_failure(&transaction, reason));
+            assert!(!successor.cancelled());
+        }
+    }
+
+    #[test]
+    fn activity_change_silences_first_but_rejects_requested_double() {
+        let runtime = Runtime::new(Arc::new(SendInputRuntime::new()), Arc::new(|| true));
+        let transaction = runtime
+            .register(
+                1,
+                Some(1),
+                Arc::new(|_| panic!("unsent first cancellation must be silent")),
+            )
+            .unwrap();
+        let double_reports = Arc::new(AtomicUsize::new(0));
+        let report_count = double_reports.clone();
+        runtime
+            .complete(Arc::new(move |result| {
+                assert!(result.is_err());
+                report_count.fetch_add(1, Ordering::SeqCst);
+            }))
+            .unwrap();
+        assert_eq!(
+            submit_first_with_activity(
+                &transaction,
+                &runtime.busy,
+                Ticket::Fallback,
+                || Some(2),
+                || panic!("changed activity must not send")
+            ),
+            Err("input_activity_changed")
+        );
+        assert!(transaction.cancelled());
+        assert!(!runtime.is_busy());
+        assert_eq!(double_reports.load(Ordering::SeqCst), 1);
     }
 }

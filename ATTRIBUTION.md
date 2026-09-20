@@ -308,3 +308,11 @@ Microsoft [TextRange.Select](https://learn.microsoft.com/en-us/windows/win32/api
 后续 `15:10:14Z–15:12:39Z` 自家 WebView 真实软件执行得到 9 passed、1 failed：首击成对输入提交 28–48ms；普通后缀双击实际 12→11→6，英文/中文边界以 Unicode 成对输入分别恢复 6→5→6、3→2→3，单个 emoji 8→6；普通后缀重复通过。Select 后取消保持文本 12 不变并恢复光标，`cleanup_wait_caret pending_count=1` 实际观察到恢复的异步过程。无标点实际 5→4→0，但最终 UIA 校验拒绝，仍为 failed；空 ValuePattern 与单个 U+FFFC DocumentRange 的只读对照已记录，尚不作为修复通过。来源、每项计时及覆盖限制见 [提前退格执行证据](Testing/evidence/optimistic-backspace-webview-20260920.json)。这些是产品 Runtime/函数调用，未经过实体遥控器及手势；有 fixture UIA 预检，不证明未经预热的冷态首用或新安装通过。
 
 随后依据该公开 UIA 本机实证加入窄范围空字段确认：只接受可写 Edit、空 ValuePattern、单个 U+FFFC 文档及起点空光标，重复两次组合态、焦点和字段检查，普通嵌入对象仍拒绝。`15:16:02Z` 无标点修复复验 passed，实际 5→4→0、API 与精确预期均通过，首击提交 39ms、总动作 559ms；最新事务单元测试 23 passed。此修复独立实现，未复制外部代码；原失败与该次复验在同一证据中分开保留。
+
+## 提前退格兜底的输入活动保护（2026-09-20）
+
+审查发现候选把准备阶段的已知焦点变化也归入普通兜底，且原 200ms 截止路径只检查前台 HWND，同窗口内换字段可能避开该检查。修复在事务开始时记录公开 [GetLastInputInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlastinputinfo) 的当前会话最后输入 tick，普通兜底提交前必须再次读取成功并与记录相等；读取失败或不相等则拒绝。已知焦点、光标或上下文变化取消当前事务，同时阻断其截止线程，不能再转为兜底。准备完成路径仍保留精确 UIA 校验，不改变 200ms 上限；不复制外部实现。
+
+Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差、SendInput 自带时间都可能影响它。因此只能比较是否相等，不能把更小值解释为没有新输入，也不能把它当成纯物理输入计数。该 API 只报告调用会话的输入时间，不提供字段身份；相等不能证明没有程序性换焦或同 tick 的活动，检查与发送也不具原子性。本次只增加保守拒绝条件，不宣称普遍阻止同窗口换焦误删；此前真实软件成功证据走 prepared 路径，不能证明此兜底在实体遥控器或闲置首按场景已通过。
+
+新增 4 项不发送真实键的定向测试覆盖读取失败、tick 改变/倒退/回绕、精确 prepared 不依赖该 tick、旧代准备失败不取消后代、未发送首击静默及已请求双击单次拒绝并释放 busy；事务模块合计 27 passed、0 failed。独立源码审查确认失效判定与一次票据共用短锁，回调在锁外；这些证据只证明所测逻辑，不代替兜底实际输入验收。
