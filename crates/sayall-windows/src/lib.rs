@@ -31,6 +31,8 @@ pub use ble::{
     diagnostic_log_directory, gatt_note, initialize_diagnostic_log, DiagnosticLogMetadata,
 };
 #[cfg(windows)]
+pub mod backspace_transaction;
+#[cfg(windows)]
 mod ime;
 pub mod key_gate;
 #[cfg(windows)]

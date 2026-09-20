@@ -171,6 +171,22 @@ impl Rc003TapSession {
 /// 动作注入器抽象（生产实现包装 `SendInputRuntime`，测试实现记录调用）。
 pub trait MappingInjector: Send + Sync {
     fn cancel_text_edit(&self) {}
+    fn supports_eager_backspace(&self) -> bool {
+        false
+    }
+    fn cancel_eager_backspace(&self) {}
+    fn begin_eager_backspace(
+        &self,
+        _report: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) -> Result<(), String> {
+        Err("当前注入器不支持提前退格".into())
+    }
+    fn complete_eager_backspace(
+        &self,
+        _report: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) -> Result<(), String> {
+        Err("本次退格没有可验证的补偿记录".into())
+    }
     fn finish_text_edit(&self) {
         self.cancel_text_edit();
     }
@@ -193,33 +209,69 @@ pub struct SendInputInjector {
     runtime: Arc<crate::send_input_windows::SendInputRuntime>,
     edit_generation: Arc<AtomicU64>,
     edit_busy: Arc<AtomicBool>,
+    backspace_transactions: Arc<crate::backspace_transaction::Runtime>,
 }
 
 impl SendInputInjector {
     #[cfg(windows)]
     pub fn new(runtime: Arc<crate::send_input_windows::SendInputRuntime>) -> Self {
+        let backspace_transactions = crate::backspace_transaction::Runtime::new(
+            Arc::clone(&runtime),
+            Arc::new(key_gate::is_gate_thread_alive),
+        );
         Self {
             runtime,
             edit_generation: Arc::new(AtomicU64::new(0)),
             edit_busy: Arc::new(AtomicBool::new(false)),
+            backspace_transactions,
         }
     }
 }
 
 impl MappingInjector for SendInputInjector {
+    fn supports_eager_backspace(&self) -> bool {
+        true
+    }
+
+    fn cancel_eager_backspace(&self) {
+        self.backspace_transactions.cancel();
+    }
+
+    fn begin_eager_backspace(
+        &self,
+        report: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) -> Result<(), String> {
+        if self.edit_busy.load(Ordering::SeqCst) {
+            return Err("上一次文本删除仍在收尾，未继续删除。".into());
+        }
+        self.backspace_transactions
+            .begin(transaction_report(report))
+    }
+
+    fn complete_eager_backspace(
+        &self,
+        report: Box<dyn FnOnce(Result<(), String>) + Send>,
+    ) -> Result<(), String> {
+        self.backspace_transactions
+            .complete(transaction_report(report))
+    }
+
     fn cancel_text_edit(&self) {
         self.edit_generation.fetch_add(1, Ordering::SeqCst);
     }
 
     fn finish_text_edit(&self) {
         self.cancel_text_edit();
+        self.backspace_transactions.shutdown();
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
-        while self.edit_busy.load(Ordering::SeqCst) && Instant::now() < deadline {
+        while (self.edit_busy.load(Ordering::SeqCst) || self.backspace_transactions.is_busy())
+            && Instant::now() < deadline
+        {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         crate::ble::gatt_note(format!(
             "map_text_edit phase=shutdown idle={}",
-            !self.edit_busy.load(Ordering::SeqCst)
+            !self.edit_busy.load(Ordering::SeqCst) && !self.backspace_transactions.is_busy()
         ));
     }
 
@@ -227,7 +279,7 @@ impl MappingInjector for SendInputInjector {
         &self,
         report: Box<dyn FnOnce(Result<(), String>) + Send>,
     ) -> Result<(), String> {
-        if self.edit_busy.swap(true, Ordering::SeqCst) {
+        if self.backspace_transactions.is_busy() || self.edit_busy.swap(true, Ordering::SeqCst) {
             return Err("上一次按标点删除仍在处理".into());
         }
         let generation = Arc::clone(&self.edit_generation);
@@ -255,7 +307,7 @@ impl MappingInjector for SendInputInjector {
     }
 
     fn scroll(&self, direction: ScrollDirection, steps: u16) -> Result<(), String> {
-        if self.edit_busy.load(Ordering::SeqCst) {
+        if self.edit_busy.load(Ordering::SeqCst) || self.backspace_transactions.is_busy() {
             return Err("文本删除正在取消或完成，请松开后重试".into());
         }
         self.runtime
@@ -265,7 +317,7 @@ impl MappingInjector for SendInputInjector {
     }
 
     fn mouse_click(&self, kind: MouseClickKind) -> Result<(), String> {
-        if self.edit_busy.load(Ordering::SeqCst) {
+        if self.edit_busy.load(Ordering::SeqCst) || self.backspace_transactions.is_busy() {
             return Err("文本删除正在取消或完成，请松开后重试".into());
         }
         self.runtime
@@ -275,7 +327,7 @@ impl MappingInjector for SendInputInjector {
     }
 
     fn mouse_move(&self, direction: MoveDirection, distance: u16) -> Result<(), String> {
-        if self.edit_busy.load(Ordering::SeqCst) {
+        if self.edit_busy.load(Ordering::SeqCst) || self.backspace_transactions.is_busy() {
             return Err("文本删除正在取消或完成，请松开后重试".into());
         }
         self.runtime
@@ -285,7 +337,7 @@ impl MappingInjector for SendInputInjector {
     }
 
     fn tap(&self, chord: &KeyChord) -> Result<(), String> {
-        if self.edit_busy.load(Ordering::SeqCst) {
+        if self.edit_busy.load(Ordering::SeqCst) || self.backspace_transactions.is_busy() {
             return Err("文本删除正在取消或完成，请松开后重试".into());
         }
         self.runtime
@@ -295,11 +347,26 @@ impl MappingInjector for SendInputInjector {
     }
 
     fn launch_app(&self, target: &str) -> Result<(), String> {
-        if self.edit_busy.load(Ordering::SeqCst) {
+        if self.edit_busy.load(Ordering::SeqCst) || self.backspace_transactions.is_busy() {
             return Err("文本删除正在取消或完成，请松开后重试".into());
         }
         crate::app_launcher::activate_or_launch(target)
     }
+}
+
+fn transaction_report(
+    report: Box<dyn FnOnce(Result<(), String>) + Send>,
+) -> crate::backspace_transaction::Report {
+    let report = Mutex::new(Some(report));
+    Arc::new(move |result| {
+        if let Some(report) = report
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            report(result);
+        }
+    })
 }
 
 fn foreground_token() -> usize {
@@ -513,6 +580,9 @@ fn engine_worker(
     let mut recognizer = GestureRecognizer::new();
     let (delay, interval) = crate::button_gestures::keyboard_repeat_timing();
     recognizer.configure_with_keyboard_repeat(&read_lock(&mappings).clone(), delay, interval);
+    if injector.supports_eager_backspace() {
+        recognizer.enable_eager_backspace(&read_lock(&mappings));
+    }
     // 泄漏对冲标记：本次按住的原始键已泄漏进 OS（原生动作已交付）的按键。
     // 由 [`EngineMessage::Keyboard`]（泄漏路径）的按压边沿置位，Single 同键
     // 映射触发时消费并跳过注入；门控吞下的按压（[`EngineMessage::GateEdge`]）
@@ -536,6 +606,7 @@ fn engine_worker(
                         if fire_gesture(
                             button,
                             trigger,
+                            false,
                             &mappings,
                             &state,
                             &gesture_callbacks,
@@ -577,10 +648,22 @@ fn engine_worker(
         if cancels_edit {
             injector.cancel_text_edit();
         }
+        // A Back press/release belongs to the same speculative deletion. Other
+        // semantic keys cancel it in handle_edges; lifecycle resets cancel now.
+        if matches!(
+            &message,
+            EngineMessage::ListenerStopped
+                | EngineMessage::DeviceRemoved
+                | EngineMessage::MappingsChanged
+                | EngineMessage::Shutdown
+        ) {
+            injector.cancel_eager_backspace();
+        }
         match message {
             EngineMessage::Rc003TapStart { generation } => {
                 if rc003_tap.start(generation) {
                     injector.cancel_text_edit();
+                    injector.cancel_eager_backspace();
                     cancel_rc003_tap(
                         &mut merger,
                         &mut recognizer,
@@ -628,6 +711,7 @@ fn engine_worker(
             EngineMessage::Rc003TapLost { generation } => {
                 if rc003_tap.active_generation == Some(generation) {
                     injector.cancel_text_edit();
+                    injector.cancel_eager_backspace();
                     rc003_tap.invalidate("source_lost");
                     cancel_rc003_tap(
                         &mut merger,
@@ -751,6 +835,9 @@ fn engine_worker(
                 let mappings = read_lock(&mappings).clone();
                 let (delay, interval) = crate::button_gestures::keyboard_repeat_timing();
                 recognizer.configure_with_keyboard_repeat(&mappings, delay, interval);
+                if injector.supports_eager_backspace() {
+                    recognizer.enable_eager_backspace(&mappings);
+                }
                 // 配置变化重置全部手势状态：挂起的泄漏对冲标记一并失效。
                 native_pending.clear();
                 let configured = crate::raw_input::ALL_BUTTONS
@@ -768,6 +855,7 @@ fn engine_worker(
             EngineMessage::Shutdown => break,
         }
     }
+    injector.cancel_eager_backspace();
     rc003_tap.invalidate("shutdown");
     reset_after_terminal_action(
         "shutdown",
@@ -864,6 +952,9 @@ fn handle_edges(
     }
 
     for edge in edges {
+        if edge.button != RemoteButton::Back {
+            injector.cancel_eager_backspace();
+        }
         #[cfg(windows)]
         if edge.button == RemoteButton::Tv && edge.is_pressed {
             crate::lock_open_with_guard::note_tv_press();
@@ -874,6 +965,8 @@ fn handle_edges(
                 edge.button
             ));
         }
+        let eager_first =
+            edge.is_pressed && recognizer.first_press_would_be_eager(edge.button, now);
         let fired = if edge.is_pressed {
             recognizer.press(edge.button, now)
         } else {
@@ -883,6 +976,7 @@ fn handle_edges(
             if fire_gesture(
                 edge.button,
                 trigger,
+                eager_first && trigger == ButtonTrigger::Single,
                 mappings,
                 state,
                 gesture_callbacks,
@@ -947,6 +1041,7 @@ fn reset_after_terminal_action(
 fn fire_gesture(
     button: RemoteButton,
     trigger: ButtonTrigger,
+    eager_first: bool,
     mappings: &Arc<RwLock<ButtonMappings>>,
     state: &Arc<Mutex<EngineState>>,
     gesture_callbacks: &Arc<RwLock<Vec<ButtonGestureCallback>>>,
@@ -1009,11 +1104,26 @@ fn fire_gesture(
             crate::ble::gatt_note(format!(
                 "map_fire button={button:?} trigger={trigger:?} action=normal_backspace"
             ));
-            if let Err(error) = injector.tap(&KeyChord {
-                keys: vec![KeyCode::Backspace],
-            }) {
-                lock_state(state).last_error = Some(format!("退格发送失败：{error}"));
-                crate::ble::gatt_note("map_backspace result=err".into());
+            if eager_first {
+                let result_state = Arc::clone(state);
+                let report = Box::new(move |result: Result<(), String>| {
+                    if let Err(error) = result {
+                        lock_state(&result_state).last_error = Some(error);
+                    }
+                });
+                if let Err(error) = injector.begin_eager_backspace(report) {
+                    lock_state(state).last_error = Some(error);
+                }
+            } else {
+                // Repeats are ordinary backspaces. They invalidate any saved
+                // first-click context before changing the text again.
+                injector.cancel_eager_backspace();
+                if let Err(error) = injector.tap(&KeyChord {
+                    keys: vec![KeyCode::Backspace],
+                }) {
+                    lock_state(state).last_error = Some(format!("退格发送失败：{error}"));
+                    crate::ble::gatt_note("map_backspace result=err".into());
+                }
             }
         }
         ButtonAction::DeleteToPunctuation => {
@@ -1030,7 +1140,17 @@ fn fire_gesture(
                     lock_state(&result_state).last_error = Some(error);
                 }
             });
-            if let Err(error) = injector.delete_to_punctuation(report) {
+            let result = if button == RemoteButton::Back
+                && trigger == ButtonTrigger::Double
+                && mappings.action_for(button, ButtonTrigger::Single)
+                    == ButtonAction::NormalBackspace
+                && injector.supports_eager_backspace()
+            {
+                injector.complete_eager_backspace(report)
+            } else {
+                injector.delete_to_punctuation(report)
+            };
+            if let Err(error) = result {
                 lock_state(state).last_error = Some(error);
                 crate::ble::gatt_note("map_text_edit result=busy_or_unavailable".into());
             }
@@ -1171,6 +1291,15 @@ mod tests {
     }
 
     /// 测试注入器：记录 tap 的和弦与打开应用的目标。
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum EagerCall {
+        Begin,
+        Complete,
+        Cancel,
+        Tap,
+        ActiveAtBarrier(bool),
+    }
+
     #[derive(Debug, Default)]
     struct RecordingInjector {
         taps: StdMutex<Vec<KeyChord>>,
@@ -1180,10 +1309,45 @@ mod tests {
         moves: StdMutex<Vec<(MoveDirection, u16)>>,
         edit_generation: Arc<AtomicU64>,
         text_edit_started: StdMutex<Option<Sender<DeferredTextEdit>>>,
+        eager_enabled: bool,
+        eager_active: AtomicBool,
+        eager_calls: StdMutex<Vec<EagerCall>>,
         fail: bool,
     }
 
     impl MappingInjector for RecordingInjector {
+        fn supports_eager_backspace(&self) -> bool {
+            self.eager_enabled
+        }
+
+        fn cancel_eager_backspace(&self) {
+            if self.eager_active.swap(false, Ordering::SeqCst) {
+                self.eager_calls.lock().unwrap().push(EagerCall::Cancel);
+            }
+        }
+
+        fn begin_eager_backspace(
+            &self,
+            report: Box<dyn FnOnce(Result<(), String>) + Send>,
+        ) -> Result<(), String> {
+            assert!(self.eager_enabled);
+            assert!(!self.eager_active.swap(true, Ordering::SeqCst));
+            self.eager_calls.lock().unwrap().push(EagerCall::Begin);
+            report(Ok(()));
+            Ok(())
+        }
+
+        fn complete_eager_backspace(
+            &self,
+            report: Box<dyn FnOnce(Result<(), String>) + Send>,
+        ) -> Result<(), String> {
+            assert!(self.eager_enabled);
+            assert!(self.eager_active.swap(false, Ordering::SeqCst));
+            self.eager_calls.lock().unwrap().push(EagerCall::Complete);
+            report(Ok(()));
+            Ok(())
+        }
+
         fn cancel_text_edit(&self) {
             self.edit_generation.fetch_add(1, Ordering::SeqCst);
         }
@@ -1232,6 +1396,10 @@ mod tests {
         fn tap(&self, chord: &KeyChord) -> Result<(), String> {
             if self.fail {
                 return Err("注入失败（测试）".to_owned());
+            }
+            if self.eager_enabled {
+                assert!(!self.eager_active.load(Ordering::SeqCst));
+                self.eager_calls.lock().unwrap().push(EagerCall::Tap);
             }
             self.taps.lock().unwrap().push(chord.clone());
             Ok(())
@@ -1282,6 +1450,234 @@ mod tests {
 
     const KEYDOWN: u32 = 0x0100;
     const KEYUP: u32 = 0x0101;
+
+    fn eager_mappings() -> ButtonMappings {
+        let mut mappings = ButtonMappings::default();
+        mappings.actions.clear();
+        mappings.actions.insert(
+            RemoteButton::Back,
+            ButtonActions {
+                single: ButtonAction::NormalBackspace,
+                double: ButtonAction::DeleteToPunctuation,
+                ..ButtonActions::default()
+            },
+        );
+        mappings
+    }
+
+    fn eager_state(generation: u64, sequence: u64, pressed_mask: u8) -> EngineMessage {
+        EngineMessage::Rc003TapState {
+            generation,
+            sequence,
+            pressed_mask,
+        }
+    }
+
+    /// Run the real message loop with a prefilled queue: no sleeps, UIA, or input
+    /// injection. The unconfigured Up release observes the preceding messages
+    /// before handle_edges cancels the fake transaction for that barrier itself.
+    fn run_eager_messages(messages: Vec<EngineMessage>) -> (Vec<EagerCall>, u64) {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _gate = crate::key_gate::KeyGate::start();
+        let recording = Arc::new(RecordingInjector {
+            eager_enabled: true,
+            ..RecordingInjector::default()
+        });
+        let observer = recording.clone();
+        let callback: ButtonEdgeCallback = Arc::new(move |edge| {
+            if edge.button == RemoteButton::Up && !edge.is_pressed {
+                observer
+                    .eager_calls
+                    .lock()
+                    .unwrap()
+                    .push(EagerCall::ActiveAtBarrier(
+                        observer.eager_active.load(Ordering::SeqCst),
+                    ));
+            }
+        });
+        let state = Arc::new(Mutex::new(EngineState::default()));
+        let (sender, receiver) = mpsc::channel();
+        for message in [
+            EngineMessage::GateEdge(ButtonEdge {
+                button: RemoteButton::Up,
+                is_pressed: true,
+            }),
+            EngineMessage::Rc003TapStart { generation: 2 },
+            eager_state(2, 1, 0),
+        ] {
+            sender.send(message).unwrap();
+        }
+        for message in messages {
+            sender.send(message).unwrap();
+        }
+        sender
+            .send(EngineMessage::GateEdge(ButtonEdge {
+                button: RemoteButton::Up,
+                is_pressed: false,
+            }))
+            .unwrap();
+        sender.send(EngineMessage::Shutdown).unwrap();
+        engine_worker(
+            receiver,
+            Arc::new(RwLock::new(eager_mappings())),
+            state.clone(),
+            Arc::new(Mutex::new(RawInputSnapshot::default())),
+            Arc::new(RwLock::new(vec![callback])),
+            Arc::new(RwLock::new(Vec::new())),
+            recording.clone(),
+            Arc::new(UsageCounters::default()),
+            Arc::new(AtomicU64::new(0)),
+        );
+        let state = lock_state(&state);
+        assert_eq!(state.last_error, None);
+        assert!(recording.taps.lock().unwrap().is_empty());
+        assert!(!recording.eager_active.load(Ordering::SeqCst));
+        let calls = recording.eager_calls.lock().unwrap().clone();
+        (calls, state.fired_gestures)
+    }
+
+    #[test]
+    fn eager_first_down_begins_and_release_preserves_transaction() {
+        for masks in [vec![1], vec![1, 0], vec![1, 0, 1]] {
+            let messages = masks
+                .into_iter()
+                .enumerate()
+                .map(|(index, mask)| eager_state(2, index as u64 + 2, mask))
+                .collect();
+            assert_eq!(
+                run_eager_messages(messages),
+                (
+                    vec![
+                        EagerCall::Begin,
+                        EagerCall::ActiveAtBarrier(true),
+                        EagerCall::Cancel,
+                    ],
+                    1,
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn eager_second_release_completes_once_without_another_single() {
+        let messages = [1, 0, 1, 0]
+            .into_iter()
+            .enumerate()
+            .map(|(index, mask)| eager_state(2, index as u64 + 2, mask))
+            .collect();
+        assert_eq!(
+            run_eager_messages(messages),
+            (
+                vec![
+                    EagerCall::Begin,
+                    EagerCall::Complete,
+                    EagerCall::ActiveAtBarrier(false),
+                ],
+                2,
+            ),
+        );
+    }
+
+    #[test]
+    fn eager_rejected_or_unchanged_helper_frames_preserve_transaction() {
+        let messages = vec![
+            eager_state(2, 2, 1),
+            eager_state(2, 3, 0),
+            EngineMessage::Rc003TapLost { generation: 1 },
+            EngineMessage::Rc003TapLost { generation: 3 },
+            EngineMessage::Rc003TapStart { generation: 1 },
+            EngineMessage::Rc003TapStart { generation: 2 },
+            eager_state(1, 4, 1),
+            eager_state(2, 3, 1),
+            eager_state(2, 4, 8),
+            eager_state(2, 4, 0),
+            eager_state(2, 4, 0),
+        ];
+        assert_eq!(
+            run_eager_messages(messages),
+            (
+                vec![
+                    EagerCall::Begin,
+                    EagerCall::ActiveAtBarrier(true),
+                    EagerCall::Cancel,
+                ],
+                1,
+            ),
+        );
+    }
+
+    #[test]
+    fn eager_other_sources_and_lifecycle_cancel_before_next_edge() {
+        for reset in [
+            EngineMessage::Rc003TapLost { generation: 2 },
+            EngineMessage::Rc003TapStart { generation: 3 },
+            EngineMessage::ListenerStopped,
+            EngineMessage::DeviceRemoved,
+            EngineMessage::MappingsChanged,
+            EngineMessage::Shutdown,
+            eager_state(2, 4, 2), // Another helper button.
+            EngineMessage::GateEdge(ButtonEdge {
+                button: RemoteButton::Ok,
+                is_pressed: true,
+            }),
+            EngineMessage::Keyboard(keyboard_event(0x27, KEYDOWN)),
+            EngineMessage::HidUsages(hid_usages_of(RemoteButton::Ok)),
+        ] {
+            assert_eq!(
+                run_eager_messages(vec![eager_state(2, 2, 1), eager_state(2, 3, 0), reset]),
+                (
+                    vec![
+                        EagerCall::Begin,
+                        EagerCall::Cancel,
+                        EagerCall::ActiveAtBarrier(false),
+                    ],
+                    1,
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn eager_repeat_cancels_saved_context_before_ordinary_backspace() {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _gate = crate::key_gate::KeyGate::start();
+        let recording = Arc::new(RecordingInjector {
+            eager_enabled: true,
+            ..RecordingInjector::default()
+        });
+        let injector: Arc<dyn MappingInjector> = recording.clone();
+        let mappings = Arc::new(RwLock::new(eager_mappings()));
+        let state = Arc::new(Mutex::new(EngineState::default()));
+        let callbacks = Arc::new(RwLock::new(Vec::new()));
+        let mut native_pending = BTreeSet::new();
+        for eager_first in [true, false] {
+            assert!(!fire_gesture(
+                RemoteButton::Back,
+                ButtonTrigger::Single,
+                eager_first,
+                &mappings,
+                &state,
+                &callbacks,
+                &injector,
+                &mut native_pending,
+            ));
+        }
+        assert_eq!(
+            *recording.eager_calls.lock().unwrap(),
+            [EagerCall::Begin, EagerCall::Cancel, EagerCall::Tap],
+        );
+        assert_eq!(
+            *recording.taps.lock().unwrap(),
+            [KeyChord {
+                keys: vec![KeyCode::Backspace],
+            }],
+        );
+        assert_eq!(lock_state(&state).last_error, None);
+    }
 
     fn assert_rc003_tap_pending_edit(
         button: RemoteButton,

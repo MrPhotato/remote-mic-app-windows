@@ -277,9 +277,9 @@
 - [Chromium CodeFromNative](https://chromium.googlesource.com/chromium/src/+/e357d701c9b59b4fcb17d65b17bcb8ce3d04cf08/ui/events/win/events_win.cc) 从 Windows 消息扫描码生成 DOM code。仅参考行为，未复制外部实现。
 - 独立原生窗口实测旧 VK 注入的 PageUp/Down 消息 scan=00，Ctrl 状态正确；物理对照49/51。沿用已有扫描码发送路径补齐这两个键，不调整注入时序。证据与验证边界见 `Bugs/2026-09-18-page-navigation-scan-code.md`。
 
-## 首击提前退格与双击补偿可行性（2026-09-20，仅调研）
+## 首击提前退格与双击补偿可行性（2026-09-20，调研与候选）
 
-用户提出“单击先普通退格、双击补偿后保留标点删除”。依据 Microsoft [TextPattern 读写与跨进程调用边界](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-textpattern-overview)、[GetActiveComposition](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtexteditpattern-getactivecomposition) 和 [KEYBDINPUT Unicode 输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput) 核查：受控 UIA 方案可研究，但需要首删前快照、组合态判断和实际恢复验证；未找到本仓库来源矩阵中已验证的乐观补偿先例，未复制实现。当前保留既有 300ms 窗口，提前退格尚未实现，冷/热/闲置首用延迟与 Unicode 恢复尚未验证，不宣称零延迟或通用 Ctrl+Z 安全恢复。既有双击按标点删除的实际测试与新提案分开记录，详见 [可行性调查](docs/investigations/2026-09-20-optimistic-backspace-feasibility.md)。
+用户提出“单击先普通退格、双击补偿后保留标点删除”。依据 Microsoft [TextPattern 读写与跨进程调用边界](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-textpattern-overview)、[GetActiveComposition](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtexteditpattern-getactivecomposition) 和 [KEYBDINPUT Unicode 输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput) 核查：受控 UIA 方案可研究，但需要首删前快照、组合态判断和实际恢复验证；未找到本仓库来源矩阵中已验证的乐观补偿先例，未复制实现。当前已安装版保留既有 300ms 等待，源码候选已将其仅用于双击分类，并加入有界预检、一次首删票据和精确边界补偿；新路径冷/热/闲置首用延迟与 Unicode 恢复尚未实测，不宣称零延迟或通用 Ctrl+Z 安全恢复。既有双击按标点删除的实际测试与新提案分开记录，详见 [可行性调查](docs/investigations/2026-09-20-optimistic-backspace-feasibility.md)。
 
 ## WebView 焦点所属窗口校验（2026-09-20）
 
@@ -302,3 +302,5 @@ Microsoft [TextRange.Select](https://learn.microsoft.com/en-us/windows/win32/api
 新增等待、拒绝第三态、取消后迟到选择与恢复、预算边界测试；定向 `text_edit` 共 17 项 passed。自家 WebView 产品函数自动验证共 6 项 passed：普通后缀 12→6（264ms），末尾标点 6→6（138ms），普通退格 12→11（0ms，提交耗时），后缀重复 12→6（204ms、199ms），固定框闲置 152.542 秒后 12→6（探针 245ms，产品内部 244ms）。每项除 API 结果外均核对了最终实际文本与固定预期完全相等。探针调用前有自己的 UIA 保护性检查，可能预热 provider；闲置项不等于未经预热的冷态首按验证。成功选择观察均为 `pending_count=0`，不宣称此次成功运行直接覆盖了等待中间态。
 
 这些数值不能当作跨应用保证或遥控器端到端延迟；最终安装版实体 RC003、取消真实窗口、新提前退格/补偿和其他应用覆盖分别待验收。补偿候选只以精确可验证的纯文本为范围，字符恢复不证明富文本格式恢复。版本化布尔、长度及耗时见 [软件 UIA 执行证据](Testing/evidence/punctuation-webview-uia-execution-20260920.json)；完整诊断保留于本地忽略目录 `target/local-launch/rc003-integration`，版本化证据不包含文本、设备身份、进程/窗口标识或个人路径。
+
+候选实现继续只使用上述公开 UIA / SendInput API，无外部实现复制。200ms 首删预检上限来自同日只读探针首轮 155ms 与热态 63–84ms 的候选判断，仍需实际首击与闲置场景确认；不据此宣称固定时延保证。新单击事务、手势及引擎分别通过 21、27、20 项定向测试，覆盖竞争、换代、取消、门控和部分输入警示；这些测试未发送真实键。完整候选限制与待验项目见[调查和候选边界](docs/investigations/2026-09-20-optimistic-backspace-feasibility.md)。

@@ -13,6 +13,8 @@
 //! - 第二击按住同样可触发长按（Mac：press 时重启长按计时）。
 //! - 普通退格动作使用宿主传入的系统键盘重复参数；即使配置双击也保留按住连删。
 //!   双击模式先等待，避免首击提前删掉标点；第二击按住转为普通删除。
+//!   显式启用 eager 返回键模式时，首击 DOWN 先发 Single，窗口到期不重复补发；
+//!   双击仍在第二击 UP 触发。宿主必须先接好首删快照与补偿事务再启用。
 //! - 语音键不进入本识别器（保持按下开始/释放结束的实时生命周期）。
 //!
 //! 纯状态机：不持锁、不触 IO，时间由调用方注入，便于单元测试。
@@ -46,6 +48,9 @@ pub struct GestureConfig {
     pub repeat: Option<Duration>,
     pub repeat_delay: Duration,
     pub normal_backspace: bool,
+    /// Runtime-only opt-in for Back: NormalBackspace + DeleteToPunctuation.
+    /// configure() always leaves this false; no persisted mapping is changed.
+    pub eager_backspace: bool,
     /// 会切换交互桌面的单击动作必须等本次实体按键完整释放后执行，确保
     /// 原始 DOWN/UP 先由门控成对处理，不把迟到边沿带到锁屏/解锁阶段。
     pub defer_single_until_release: bool,
@@ -84,6 +89,7 @@ impl GestureConfig {
             repeat,
             repeat_delay: REPEAT_START_DELAY,
             normal_backspace,
+            eager_backspace: false,
             defer_single_until_release,
         })
     }
@@ -155,6 +161,38 @@ impl GestureRecognizer {
             .is_some_and(|(config, _)| config.defer_single_until_release)
     }
 
+    /// Call after configure[_with_keyboard_repeat] only when the host can safely
+    /// execute an early single and compensate it on a later punctuation double.
+    /// Other buttons/action pairs retain their existing gesture timing.
+    pub fn enable_eager_backspace(&mut self, mappings: &ButtonMappings) {
+        let actions = mappings.actions(RemoteButton::Back);
+        if let Some((config, state)) = self.buttons.get_mut(&RemoteButton::Back) {
+            let enabled = mappings.enabled
+                && actions.single == ButtonAction::NormalBackspace
+                && actions.double == ButtonAction::DeleteToPunctuation
+                && config.normal_backspace
+                && config.double_enabled;
+            if config.eager_backspace != enabled {
+                *state = ButtonGestureState::default();
+                config.eager_backspace = enabled;
+            }
+        }
+    }
+
+    /// Query immediately before press(), using the same `now`. Only this Single
+    /// starts a snapshot transaction; repeat/conversion Singles use ordinary tap.
+    /// An expired double window is a new first press even before advance() runs.
+    pub fn first_press_would_be_eager(&self, button: RemoteButton, now: Instant) -> bool {
+        self.buttons.get(&button).is_some_and(|(config, state)| {
+            config.eager_backspace
+                && !state.pressed
+                && (!state.waiting_for_second
+                    || state
+                        .double_deadline
+                        .is_some_and(|deadline| deadline <= now))
+        })
+    }
+
     /// 按下沿：返回立即触发的手势（原始单击路径）。
     pub fn press(&mut self, button: RemoteButton, now: Instant) -> Vec<ButtonTrigger> {
         let Some((config, state)) = self.buttons.get_mut(&button) else {
@@ -173,7 +211,9 @@ impl GestureRecognizer {
         {
             state.waiting_for_second = false;
             state.double_deadline = None;
-            fired.push(ButtonTrigger::Single);
+            if !config.eager_backspace {
+                fired.push(ButtonTrigger::Single);
+            }
         }
         if state.waiting_for_second {
             // 第二击：取消双击窗口，标记第二击并重启长按计时。
@@ -188,7 +228,7 @@ impl GestureRecognizer {
         if config.normal_backspace && config.double_enabled {
             state.repeat_deadline = Some(now + config.repeat_delay);
         }
-        if config.raw_path() {
+        if config.raw_path() || (config.eager_backspace && !state.is_second_press) {
             // 原始单击路径：按下沿立即触发单击；有连发能力的按键 350ms 后连发。
             if config.repeat.is_some() {
                 state.repeat_deadline = Some(now + config.repeat_delay);
@@ -213,7 +253,15 @@ impl GestureRecognizer {
                 .repeat_deadline
                 .is_some_and(|deadline| deadline <= now);
         if held_without_timer {
-            let count = if state.is_second_press { 2 } else { 1 };
+            let count = if config.eager_backspace {
+                // First was already dispatched on DOWN. A held second needs
+                // only its own ordinary deletion, even if the timer was late.
+                usize::from(state.is_second_press)
+            } else if state.is_second_press {
+                2
+            } else {
+                1
+            };
             *state = ButtonGestureState::default();
             return vec![ButtonTrigger::Single; count];
         }
@@ -257,7 +305,9 @@ impl GestureRecognizer {
             {
                 state.double_deadline = None;
                 state.waiting_for_second = false;
-                fired.push((*button, ButtonTrigger::Single));
+                if !config.eager_backspace {
+                    fired.push((*button, ButtonTrigger::Single));
+                }
             }
             if state.long_deadline.is_some_and(|deadline| deadline <= now) {
                 state.long_deadline = None;
@@ -275,7 +325,10 @@ impl GestureRecognizer {
                         if config.normal_backspace && !state.repeat_started && state.is_second_press
                         {
                             // A held second press becomes two ordinary presses, never a bulk delete.
-                            fired.push((*button, ButtonTrigger::Single));
+                            // Eager mode already dispatched the first one.
+                            if !config.eager_backspace {
+                                fired.push((*button, ButtonTrigger::Single));
+                            }
                             state.is_second_press = false;
                         }
                         state.repeat_started = true;
@@ -440,6 +493,247 @@ mod tests {
             },
         );
         m
+    }
+
+    fn eager_deletion_recognizer() -> GestureRecognizer {
+        let mappings = deletion_mappings(true);
+        let mut recognizer = GestureRecognizer::new();
+        recognizer.configure(&mappings);
+        recognizer.enable_eager_backspace(&mappings);
+        recognizer
+    }
+
+    #[test]
+    fn eager_is_explicit_and_only_for_the_back_punctuation_pair() {
+        let t = Instant::now();
+        let mappings = deletion_mappings(true);
+        let mut r = GestureRecognizer::new();
+        r.configure(&mappings);
+        assert!(!r.first_press_would_be_eager(RemoteButton::Back, t));
+        r.enable_eager_backspace(&mappings);
+        assert!(r.first_press_would_be_eager(RemoteButton::Back, t));
+        assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+        r.enable_eager_backspace(&mappings);
+        assert!(
+            r.press(RemoteButton::Back, t).is_empty(),
+            "opt-in is idempotent"
+        );
+        r.configure(&mappings);
+        assert!(!r.first_press_would_be_eager(RemoteButton::Back, t));
+        assert!(r.press(RemoteButton::Back, t).is_empty());
+
+        for case in 0..4 {
+            let mut mappings = deletion_mappings(true);
+            match case {
+                0 => mappings.enabled = false,
+                1 => {
+                    mappings
+                        .actions
+                        .get_mut(&RemoteButton::Back)
+                        .unwrap()
+                        .single = ButtonAction::Shortcut {
+                        chord: KeyChord {
+                            keys: vec![KeyCode::Backspace],
+                        },
+                    }
+                }
+                2 => {
+                    mappings
+                        .actions
+                        .get_mut(&RemoteButton::Back)
+                        .unwrap()
+                        .double = ButtonAction::Shortcut {
+                        chord: KeyChord {
+                            keys: vec![KeyCode::Space],
+                        },
+                    }
+                }
+                _ => {
+                    let actions = mappings.actions.remove(&RemoteButton::Back).unwrap();
+                    mappings.actions.insert(RemoteButton::Up, actions);
+                }
+            }
+            r.configure(&mappings);
+            r.enable_eager_backspace(&mappings);
+            assert!(!r.first_press_would_be_eager(RemoteButton::Back, t));
+            assert!(!r.first_press_would_be_eager(RemoteButton::Up, t));
+        }
+    }
+
+    #[test]
+    fn eager_single_and_duplicate_down_never_repeat_at_window_expiry() {
+        let t = Instant::now();
+        let mut r = eager_deletion_recognizer();
+        assert!(r.first_press_would_be_eager(RemoteButton::Back, t));
+        assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+        assert!(!r.first_press_would_be_eager(RemoteButton::Back, t));
+        assert!(r
+            .press(RemoteButton::Back, t + Duration::from_millis(1))
+            .is_empty());
+        let up = t + Duration::from_millis(50);
+        assert!(r.release(RemoteButton::Back, up).is_empty());
+        assert_eq!(r.next_deadline(), Some(up + DOUBLE_CLICK_WINDOW));
+        assert!(r.advance(up + DOUBLE_CLICK_WINDOW).is_empty());
+        assert!(r.advance(t + Duration::from_secs(2)).is_empty());
+        assert!(r.next_deadline().is_none());
+    }
+
+    #[test]
+    fn eager_double_then_third_click_has_one_single_per_first_press() {
+        let t = Instant::now();
+        let mut r = eager_deletion_recognizer();
+        assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+        assert!(r
+            .release(RemoteButton::Back, t + Duration::from_millis(10))
+            .is_empty());
+        let second = t + Duration::from_millis(100);
+        assert!(!r.first_press_would_be_eager(RemoteButton::Back, second));
+        assert!(r.press(RemoteButton::Back, second).is_empty());
+        assert!(r.press(RemoteButton::Back, second).is_empty());
+        assert_eq!(
+            r.release(RemoteButton::Back, t + Duration::from_millis(150)),
+            vec![ButtonTrigger::Double]
+        );
+        let third = t + Duration::from_millis(200);
+        assert!(r.first_press_would_be_eager(RemoteButton::Back, third));
+        assert_eq!(
+            r.press(RemoteButton::Back, third),
+            vec![ButtonTrigger::Single]
+        );
+        assert!(r
+            .release(RemoteButton::Back, third + Duration::from_millis(10))
+            .is_empty());
+        assert!(r.advance(t + Duration::from_secs(1)).is_empty());
+    }
+
+    #[test]
+    fn eager_query_and_press_agree_at_late_double_deadline_without_timer() {
+        let t = Instant::now();
+        for second_ms in [309, 310, 500] {
+            let mut r = eager_deletion_recognizer();
+            assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+            r.release(RemoteButton::Back, t + Duration::from_millis(10));
+            let second = t + Duration::from_millis(second_ms);
+            let new_first = second_ms >= 310;
+            assert_eq!(
+                r.first_press_would_be_eager(RemoteButton::Back, second),
+                new_first
+            );
+            assert_eq!(
+                r.press(RemoteButton::Back, second),
+                if new_first {
+                    vec![ButtonTrigger::Single]
+                } else {
+                    vec![]
+                }
+            );
+            assert_eq!(
+                r.release(RemoteButton::Back, second + Duration::from_millis(10)),
+                if new_first {
+                    vec![]
+                } else {
+                    vec![ButtonTrigger::Double]
+                }
+            );
+            assert!(r.advance(t + Duration::from_secs(2)).is_empty());
+        }
+    }
+
+    #[test]
+    fn eager_first_and_second_hold_repeat_without_replaying_first() {
+        let t = Instant::now();
+        for second in [false, true] {
+            let mappings = deletion_mappings(true);
+            let mut r = GestureRecognizer::new();
+            r.configure_with_keyboard_repeat(
+                &mappings,
+                Duration::from_millis(500),
+                Duration::from_millis(40),
+            );
+            r.enable_eager_backspace(&mappings);
+            assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+            let press = if second {
+                r.release(RemoteButton::Back, t + Duration::from_millis(10));
+                let press = t + Duration::from_millis(100);
+                assert!(r.press(RemoteButton::Back, press).is_empty());
+                press
+            } else {
+                t
+            };
+            assert!(r.advance(press + Duration::from_millis(499)).is_empty());
+            assert_eq!(
+                r.advance(press + Duration::from_millis(500)),
+                vec![(RemoteButton::Back, ButtonTrigger::Single)]
+            );
+            // A late repeat wakeup does not catch up with a burst of old repeats.
+            assert_eq!(
+                r.advance(press + Duration::from_millis(900)),
+                vec![(RemoteButton::Back, ButtonTrigger::Single)]
+            );
+            assert!(!r.first_press_would_be_eager(RemoteButton::Back, press));
+            assert!(r
+                .release(RemoteButton::Back, press + Duration::from_millis(910))
+                .is_empty());
+            assert!(r.advance(t + Duration::from_secs(2)).is_empty());
+        }
+    }
+
+    #[test]
+    fn eager_held_release_without_timer_does_not_replay_first_or_bulk_delete() {
+        let t = Instant::now();
+        for second in [false, true] {
+            let mut r = eager_deletion_recognizer();
+            assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+            if second {
+                r.release(RemoteButton::Back, t + Duration::from_millis(10));
+                assert!(r
+                    .press(RemoteButton::Back, t + Duration::from_millis(100))
+                    .is_empty());
+            }
+            assert_eq!(
+                r.release(RemoteButton::Back, t + Duration::from_secs(1)),
+                if second {
+                    vec![ButtonTrigger::Single]
+                } else {
+                    vec![]
+                }
+            );
+            assert!(r.next_deadline().is_none());
+            assert!(r.advance(t + Duration::from_secs(2)).is_empty());
+        }
+    }
+
+    #[test]
+    fn eager_cancel_discards_pending_second_and_repeat_without_replaying_single() {
+        let t = Instant::now();
+        for all in [false, true] {
+            for stage in 0..4 {
+                let mut r = eager_deletion_recognizer();
+                r.press(RemoteButton::Back, t);
+                if stage >= 1 {
+                    r.release(RemoteButton::Back, t + Duration::from_millis(10));
+                }
+                if stage >= 2 {
+                    r.press(RemoteButton::Back, t + Duration::from_millis(100));
+                }
+                if stage == 3 {
+                    r.advance(t + Duration::from_millis(450));
+                }
+                if all {
+                    r.release_all();
+                } else {
+                    r.cancel_button(RemoteButton::Back);
+                }
+                assert!(r
+                    .release(RemoteButton::Back, t + Duration::from_secs(1))
+                    .is_empty());
+                assert!(r.advance(t + Duration::from_secs(2)).is_empty());
+                assert!(r.next_deadline().is_none());
+                assert!(
+                    r.first_press_would_be_eager(RemoteButton::Back, t + Duration::from_secs(3))
+                );
+            }
+        }
     }
 
     #[test]
