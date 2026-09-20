@@ -44,5 +44,22 @@
     "mapping": 20,
     "transaction": 27,
     "failed": 0
+  },
+  "helper_initialized": {
+    "result": "passed",
+    "ready_at": "2026-09-20T15:32:23.162Z",
+    "physical_up_edges": 2,
+    "generation": 1,
+    "reports": 1
+  },
+  "idle_before_first_requested_back": {
+    "result": "passed_for_idle_period_only",
+    "started_at_ms": 1789918427896,
+    "confirmed_at_ms": 1789918511007,
+    "duration_ms": 83111,
+    "additional_semantic_edges": 0,
+    "additional_helper_reports": 0,
+    "additional_input_events": 0,
+    "product_uia_called_before_physical_test": false
   }
 }
