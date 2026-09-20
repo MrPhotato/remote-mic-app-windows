@@ -2,6 +2,14 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## RC003 Frida 独立诊断例外（2026-09-20）
+
+- 用户在明确获知管理员权限、向 `WUDFHost.exe` 注入监听代码和非公开输入接口的边界后，授权一次独立实验；不代表授权接入正式产品、修改驱动或启动安全设置。实验方案见 [Testing/WindowsRc003Frida.md](Testing/WindowsRc003Frida.md)。
+- 参考并实质改编 [ZSTDJan/windows-remote-mic-app](https://github.com/ZSTDJan/windows-remote-mic-app/tree/1e6b1d285f9cd50f30c5bc92ac7787a693fc993d) 固定提交 `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d` 的 `apps/windows/rc003/src/ovb_rc003/frida_hid_tap_runtime.py`、`frida_hid_tap_injector.py`：注册表 HostPid 定位、宿主独占性检查、`NtDeviceIoControlFile` 的 `0x80018483`/8 字节 metadata/9 字节 Report 1 识别及入口快照。该提交根目录 `LICENSE.md` 是 **GPLv3**，不是 MIT；来源与许可副本仅存本地 ignored 实验目录，不将其代码或第三方二进制接入或分发到产品。
+- 去掉上游吞键、清零、映射、套接字协议和持久 Gadget 注入流程。使用官方 [Frida Injected 模式](https://frida.re/docs/modes/#injected) 的 Python binding `17.15.3`，仅对唯一目标对应的宿主直接 attach；本机宿主另有一个 BLE HID 实例，因此复用上游 `DeviceIoControl` 活动调用帧、UMDF 设备对象与注册表 ContainerId 来源验证，在匹配选中容器之前不读取报告，不允许独占回退。白名单事件只用于验证可见性。所谓只观察指不写设备报告，Frida hook 本身仍临时修改目标进程代码，来源验证也读取了非公开 UMDF 实现。
+- 依据 [Frida Interceptor API](https://frida.re/docs/javascript-api/#interceptor) 与固定版本 Python binding 的 `Cancellable`、`Script.unload`、`Session.detach` 实现有界调用、租约到期解钩和正常退出清理。入口与返回快照不当作两次物理输入，也不作为真实硬件延迟证据。之前调研中的“Frida IOCTL 无捕获”仅是当时尝试结果，不能覆盖本次不同入口快照实现或证明纯软件不可能。
+- 本机 `17.15.3` direct attach 两次报 `ProcessNotRespondingError`，宿主存活；切换隔离的官方 `17.18.0` 后 attach/load/hook_ready 通过。该版 [官方说明](https://frida.re/news/2026/09/09/frida-17-18-0-released/) 与 [ACL 修复提交](https://github.com/frida/frida-core/commit/65e713c76202a9266b13061245c302be25c8bb03) 给 Frida 自己的临时目录/文件增加 LOCAL SERVICE 读执行权限，并完善自身管道权限，不修改设备、目标进程 ACL 或系统安全策略；版本对照与修复方向吻合，不能单凭对照认定唯一根因。上游 Gadget 本来就为自身文件授予 LOCAL SERVICE 读执行，因此旧 binding 失败不等于 Gadget 路线不通。
+
 ## RC003 GameInput 免驱接口实验（2026-09-20）
 
 - 依据微软 [GameInput 3.4 公告](https://developer.microsoft.com/en-us/games/articles/2026/05/gameinput-update-now-available/) 的 raw HID 新能力，使用官方 [Microsoft.GameInput 3.5.274](https://www.nuget.org/packages/Microsoft.GameInput/3.5.274) 固定包进行独立诊断。该包 README 声明 3.5 支持应用目录并排部署；包内 `native/src/GameInput.cpp` 实际包含应用目录加载分支，不能用落后的 GitHub main loader 推断不支持。

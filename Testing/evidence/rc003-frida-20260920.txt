@@ -1,0 +1,43 @@
+RC003 Frida 17.18.0 physical input experiment, 2026-09-20 UTC.
+Entry snapshots only for event rows; returned snapshots are the same copies, not extra button presses.
+User confirmed Up x2, Back x3, VolumeUp x3, VolumeDown x3, Up x2.
+No report writes, key injection, device identities, raw payloads, voice, or paths.
+{"utc":"2026-09-20T09:40:00.655Z","elapsed_ms":0,"event":"start","diagnostic_schema":1,"app_version":"diagnostic","app_build":"none","source_revision":"eae048549b4f070bdbd24b7b9d2119f4380760d8","build_channel":"local","release_tag":"none","process_architecture":"x86_64","windows_build":26200,"frida_version":"17.18.0","seconds":600,"device_scope":"unique_rc003","modifies_reports":false}
+{"utc":"2026-09-20T09:40:00.712Z","elapsed_ms":63,"event":"target_validated","result":"passed","exclusive":false,"host_member_count":2,"source_binding_required":true}
+{"utc":"2026-09-20T09:40:01.052Z","elapsed_ms":407,"event":"attached"}
+{"utc":"2026-09-20T09:40:01.087Z","elapsed_ms":438,"event":"hook_ready","architecture":"x64","report_writes":false,"automatic_unhook_ms":10000,"max_duration_ms":600000}
+{"utc":"2026-09-20T09:40:01.087Z","elapsed_ms":438,"event":"capture_ready","result":"passed"}
+{"utc":"2026-09-20T09:40:38.282Z","elapsed_ms":37625,"event":"button","channel":"entry","button":"up","edge":"down"}
+{"utc":"2026-09-20T09:40:38.383Z","elapsed_ms":37735,"event":"button","channel":"entry","button":"up","edge":"up"}
+{"utc":"2026-09-20T09:40:39.069Z","elapsed_ms":38422,"event":"button","channel":"entry","button":"up","edge":"down"}
+{"utc":"2026-09-20T09:40:39.232Z","elapsed_ms":38578,"event":"button","channel":"entry","button":"up","edge":"up"}
+{"utc":"2026-09-20T09:40:41.068Z","elapsed_ms":40422,"event":"button","channel":"entry","button":"back","edge":"down"}
+{"utc":"2026-09-20T09:40:41.243Z","elapsed_ms":40594,"event":"button","channel":"entry","button":"back","edge":"up"}
+{"utc":"2026-09-20T09:40:41.719Z","elapsed_ms":41063,"event":"button","channel":"entry","button":"back","edge":"down"}
+{"utc":"2026-09-20T09:40:41.894Z","elapsed_ms":41250,"event":"button","channel":"entry","button":"back","edge":"up"}
+{"utc":"2026-09-20T09:40:42.744Z","elapsed_ms":42094,"event":"button","channel":"entry","button":"back","edge":"down"}
+{"utc":"2026-09-20T09:40:42.907Z","elapsed_ms":42250,"event":"button","channel":"entry","button":"back","edge":"up"}
+{"utc":"2026-09-20T09:40:44.169Z","elapsed_ms":43516,"event":"button","channel":"entry","button":"volume_up","edge":"down"}
+{"utc":"2026-09-20T09:40:44.344Z","elapsed_ms":43688,"event":"button","channel":"entry","button":"volume_up","edge":"up"}
+{"utc":"2026-09-20T09:40:45.219Z","elapsed_ms":44563,"event":"button","channel":"entry","button":"volume_up","edge":"down"}
+{"utc":"2026-09-20T09:40:45.444Z","elapsed_ms":44797,"event":"button","channel":"entry","button":"volume_up","edge":"up"}
+{"utc":"2026-09-20T09:40:45.906Z","elapsed_ms":45250,"event":"button","channel":"entry","button":"volume_up","edge":"down"}
+{"utc":"2026-09-20T09:40:46.107Z","elapsed_ms":45453,"event":"button","channel":"entry","button":"volume_up","edge":"up"}
+{"utc":"2026-09-20T09:40:46.994Z","elapsed_ms":46344,"event":"button","channel":"entry","button":"volume_down","edge":"down"}
+{"utc":"2026-09-20T09:40:47.169Z","elapsed_ms":46516,"event":"button","channel":"entry","button":"volume_down","edge":"up"}
+{"utc":"2026-09-20T09:40:47.793Z","elapsed_ms":47141,"event":"button","channel":"entry","button":"volume_down","edge":"down"}
+{"utc":"2026-09-20T09:40:47.957Z","elapsed_ms":47313,"event":"button","channel":"entry","button":"volume_down","edge":"up"}
+{"utc":"2026-09-20T09:40:48.393Z","elapsed_ms":47750,"event":"button","channel":"entry","button":"volume_down","edge":"down"}
+{"utc":"2026-09-20T09:40:48.532Z","elapsed_ms":47875,"event":"button","channel":"entry","button":"volume_down","edge":"up"}
+{"utc":"2026-09-20T09:40:49.219Z","elapsed_ms":48563,"event":"button","channel":"entry","button":"up","edge":"down"}
+{"utc":"2026-09-20T09:40:49.357Z","elapsed_ms":48703,"event":"button","channel":"entry","button":"up","edge":"up"}
+{"utc":"2026-09-20T09:40:49.882Z","elapsed_ms":49235,"event":"button","channel":"entry","button":"up","edge":"down"}
+{"utc":"2026-09-20T09:40:50.031Z","elapsed_ms":49375,"event":"button","channel":"entry","button":"up","edge":"up"}
+{"utc":"2026-09-20T09:41:12.371Z","elapsed_ms":71719,"event":"hook_stopped","reason":"client_cleanup"}
+{"utc":"2026-09-20T09:41:12.371Z","elapsed_ms":71719,"event":"final_stats","counts":{"ioctl":26,"shape":26,"metadata":26,"success":26,"failure":0,"entry_report":26,"return_report":26,"unknown_slots":0,"errors":0,"entry_snapshot":26,"pending":0,"completed_nine_bytes":0,"source_filtered":0},"edges":{"entry":{"up_down":4,"up_up":4,"back_down":3,"back_up":3,"volume_up_down":3,"volume_up_up":3,"volume_down_down":3,"volume_down_up":3},"returned":{"up_down":4,"up_up":4,"back_down":3,"back_up":3,"volume_up_down":3,"volume_up_up":3,"volume_down_down":3,"volume_down_up":3}},"stopped":true,"source":{"ready":false,"stopped":true,"reason_counts":{}},"held":{"entry":[],"returned":[]}}
+{"utc":"2026-09-20T09:41:12.375Z","elapsed_ms":71719,"event":"script_unloaded","result":"passed"}
+{"utc":"2026-09-20T09:41:12.376Z","elapsed_ms":71719,"event":"session_detached","reason":"application-requested","crash":false}
+{"utc":"2026-09-20T09:41:12.376Z","elapsed_ms":71719,"event":"session_cleanup","result":"passed"}
+{"utc":"2026-09-20T09:41:12.401Z","elapsed_ms":71750,"event":"host_after_cleanup","alive":true,"exclusive":false,"host_member_count":2}
+{"utc":"2026-09-20T09:41:12.401Z","elapsed_ms":71750,"event":"finished","terminal_result":"completed"}
+Post-check: helper_process_running=false secure_boot_enabled=true sayall_hid_filter_service_exists=false.
