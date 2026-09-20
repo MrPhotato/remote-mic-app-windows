@@ -161,3 +161,12 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 多 RC003/残留设备实例目前保持唯一目标门禁；拒绝歧义不会扩大到整个宿主。
 本模式仍依赖非公开 Windows UMDF 实现与管理员 Helper，不是普通权限公开 API 方案。
 测试期间不修改驱动、Secure Boot 或测试签名状态；先前签名实验的证书状态另计。
+
+
+## 2026-09-20 首击提前退格候选：正常升级与启动
+
+源代码提交 `8e7b68acf1af3ab0ce09b21615416af268684c2b` 的本地 NSIS 已构建、安装并启动，未推送或发布。完整散列、安装回读与当前验收状态见 [安装证据](evidence/eager-backspace-install-20260920.json)。本轮实际核对主 EXE 与构建产物仅有 NSIS 的三字节 bundle 标记差异；Helper manifest 与构建一致，96 个文件全部通过、总文件 97（含 manifest）。不能仅凭安装器返回 0 判定安装成功。
+
+升级前使用应用正常退出事件，主进程确认退出；同一运行轮次的日志出现 helper_exited=true、helper_process cleanup_exited exit_code=0、cleanup_result passed / helper_cleanup_completed / error_mask=0。这是 `9057f5de…7d8441` Helper 的实际正常清理结果，不是强杀或单元模拟；没有单独采集驱动宿主存活证据，不扩展为崩溃/睡眠恢复通过。
+
+新主程序 startup connection/audio ready，voice idle，主程序 main_elevated=false；返回单击/双击映射保持 normal_backspace/delete_to_punctuation。增强已通过 manifest 预检并启动，首次状态 waiting/awaiting_neutral，等待实体方向键释放来完成初始化。新安装版的实体返回、未经探针预热的闲置首按、其他应用 UIA 兼容性仍分别待验证。软件函数实测、取消清理及边界补回的结果见 [WebView 执行证据](evidence/optimistic-backspace-webview-20260920.json)。
