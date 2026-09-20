@@ -276,3 +276,11 @@
 - [Microsoft KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput) 说明 SCANCODE/EXTENDEDKEY 的物理按键编码语义。
 - [Chromium CodeFromNative](https://chromium.googlesource.com/chromium/src/+/e357d701c9b59b4fcb17d65b17bcb8ce3d04cf08/ui/events/win/events_win.cc) 从 Windows 消息扫描码生成 DOM code。仅参考行为，未复制外部实现。
 - 独立原生窗口实测旧 VK 注入的 PageUp/Down 消息 scan=00，Ctrl 状态正确；物理对照49/51。沿用已有扫描码发送路径补齐这两个键，不调整注入时序。证据与验证边界见 `Bugs/2026-09-18-page-navigation-scan-code.md`。
+
+## 首击提前退格与双击补偿可行性（2026-09-20，仅调研）
+
+用户提出“单击先普通退格、双击补偿后保留标点删除”。依据 Microsoft [TextPattern 读写与跨进程调用边界](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-textpattern-overview)、[GetActiveComposition](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtexteditpattern-getactivecomposition) 和 [KEYBDINPUT Unicode 输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput) 核查：受控 UIA 方案可研究，但需要首删前快照、组合态判断和实际恢复验证；未找到本仓库来源矩阵中已验证的乐观补偿先例，未复制实现。当前保留既有 300ms 窗口，提前退格尚未实现，冷/热/闲置首用延迟与 Unicode 恢复尚未验证，不宣称零延迟或通用 Ctrl+Z 安全恢复。既有双击按标点删除的实际测试与新提案分开记录，详见 [可行性调查](docs/investigations/2026-09-20-optimistic-backspace-feasibility.md)。
+
+## WebView 焦点所属窗口校验（2026-09-20）
+
+本机 RC003 双击已进入文字删除模块，但测试框的 UIA 元素进程与 Tauri 主窗口进程不同，旧版严格 PID 相等检查拒绝执行。依据 Microsoft [RawViewWalker](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-get_rawviewwalker)、[GetParentElement](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtreewalker-getparentelement) 与 [GetAncestor](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getancestor)，跨进程焦点改为证明最近原生宿主 HWND 的实际所属进程与 UIA 宿主进程一致，且其 GA_ROOT 精确等于当前前台窗口；不沿 owner 关系放行，不移除焦点、密码、取消和选区校验。自家测试框的公开 UIA 祖先链已验证符合该条件；实际删除结果单独记录于 [Bug 与验收证据](Bugs/2026-09-20-punctuation-webview-focus.md)。未复制外部代码，未改 300ms 双击窗口。
