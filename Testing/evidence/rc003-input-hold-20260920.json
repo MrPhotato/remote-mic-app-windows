@@ -1,0 +1,269 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "app_version": "0.2.6",
+  "remote_model": "rc003",
+  "trial": "single_backspace_hold_repeat_and_explicit_stop_while_held",
+  "sources": [
+    "target/local-launch/rc003-integration/hold-observation.json",
+    "target/local-launch/rc003-integration/installed-app-final.log"
+  ],
+  "observation_scope": {
+    "prepared_utc": "2026-09-20T12:44:55.247Z",
+    "end_utc": "2026-09-20T12:46:12.626Z",
+    "prior_trial_events_excluded": true
+  },
+  "user_confirmation": {
+    "reported_hold_worked": true,
+    "later_no_response_after_intentional_stop": true,
+    "enhancement_subsequently_reenabled_by_controller": true,
+    "no_further_automatic_stop_requested": true
+  },
+  "result": {
+    "actual_single_backspace": "passed",
+    "held_backspace_repeat": "passed",
+    "stop_while_held_cancellation": "passed",
+    "ordinary_direction_keys_after_stop": "passed",
+    "trusted_key_pairs": 17,
+    "frontend_back_single_gestures": 17,
+    "semantic_edges": 16,
+    "highlight_transitions": 16,
+    "initial_text_length": 200,
+    "after_single_text_length": 199,
+    "final_text_length": 183,
+    "deleted_by_single": 1,
+    "deleted_during_hold": 16,
+    "helper_final_status": {
+      "phase": "stopped",
+      "last_error": null,
+      "generation": 1,
+      "report_count": 22,
+      "edge_count": 21
+    },
+    "helper_physical_release_observed_for_held_press": false,
+    "engine_synthetic_releases": 1
+  },
+  "trusted_backspace_pairs_and_text_changes": [
+    {
+      "down_utc": "2026-09-20T12:45:48.408Z",
+      "up_utc": "2026-09-20T12:45:48.409Z",
+      "text_length_after": 199,
+      "text_input_utc": "2026-09-20T12:45:48.409Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:49.638Z",
+      "up_utc": "2026-09-20T12:45:49.639Z",
+      "text_length_after": 198,
+      "text_input_utc": "2026-09-20T12:45:49.639Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.153Z",
+      "up_utc": "2026-09-20T12:45:50.154Z",
+      "text_length_after": 197,
+      "text_input_utc": "2026-09-20T12:45:50.154Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.199Z",
+      "up_utc": "2026-09-20T12:45:50.200Z",
+      "text_length_after": 196,
+      "text_input_utc": "2026-09-20T12:45:50.199Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.245Z",
+      "up_utc": "2026-09-20T12:45:50.247Z",
+      "text_length_after": 195,
+      "text_input_utc": "2026-09-20T12:45:50.246Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.292Z",
+      "up_utc": "2026-09-20T12:45:50.294Z",
+      "text_length_after": 194,
+      "text_input_utc": "2026-09-20T12:45:50.293Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.339Z",
+      "up_utc": "2026-09-20T12:45:50.340Z",
+      "text_length_after": 193,
+      "text_input_utc": "2026-09-20T12:45:50.339Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.387Z",
+      "up_utc": "2026-09-20T12:45:50.388Z",
+      "text_length_after": 192,
+      "text_input_utc": "2026-09-20T12:45:50.387Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.435Z",
+      "up_utc": "2026-09-20T12:45:50.436Z",
+      "text_length_after": 191,
+      "text_input_utc": "2026-09-20T12:45:50.435Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.481Z",
+      "up_utc": "2026-09-20T12:45:50.482Z",
+      "text_length_after": 190,
+      "text_input_utc": "2026-09-20T12:45:50.481Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.529Z",
+      "up_utc": "2026-09-20T12:45:50.531Z",
+      "text_length_after": 189,
+      "text_input_utc": "2026-09-20T12:45:50.530Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.577Z",
+      "up_utc": "2026-09-20T12:45:50.579Z",
+      "text_length_after": 188,
+      "text_input_utc": "2026-09-20T12:45:50.577Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.623Z",
+      "up_utc": "2026-09-20T12:45:50.625Z",
+      "text_length_after": 187,
+      "text_input_utc": "2026-09-20T12:45:50.624Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.670Z",
+      "up_utc": "2026-09-20T12:45:50.672Z",
+      "text_length_after": 186,
+      "text_input_utc": "2026-09-20T12:45:50.671Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.715Z",
+      "up_utc": "2026-09-20T12:45:50.717Z",
+      "text_length_after": 185,
+      "text_input_utc": "2026-09-20T12:45:50.716Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.761Z",
+      "up_utc": "2026-09-20T12:45:50.763Z",
+      "text_length_after": 184,
+      "text_input_utc": "2026-09-20T12:45:50.762Z"
+    },
+    {
+      "down_utc": "2026-09-20T12:45:50.809Z",
+      "up_utc": "2026-09-20T12:45:50.809Z",
+      "text_length_after": 183,
+      "text_input_utc": "2026-09-20T12:45:50.809Z"
+    }
+  ],
+  "semantic_and_ui_pairs": [
+    {
+      "button": "left",
+      "down_utc": "2026-09-20T12:45:46.887Z",
+      "up_utc": "2026-09-20T12:45:46.992Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:45:46.888Z",
+      "highlight_off_utc": "2026-09-20T12:45:46.992Z"
+    },
+    {
+      "button": "back",
+      "down_utc": "2026-09-20T12:45:48.405Z",
+      "up_utc": "2026-09-20T12:45:48.560Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:45:48.406Z",
+      "highlight_off_utc": "2026-09-20T12:45:48.561Z"
+    },
+    {
+      "button": "back",
+      "down_utc": "2026-09-20T12:45:49.636Z",
+      "up_utc": "2026-09-20T12:45:50.840Z",
+      "release_source": "engine_synthetic_cancel",
+      "highlight_on_utc": "2026-09-20T12:45:49.637Z",
+      "highlight_off_utc": "2026-09-20T12:45:50.840Z"
+    },
+    {
+      "button": "right",
+      "down_utc": "2026-09-20T12:46:11.396Z",
+      "up_utc": "2026-09-20T12:46:11.516Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:46:11.397Z",
+      "highlight_off_utc": "2026-09-20T12:46:11.517Z"
+    },
+    {
+      "button": "right",
+      "down_utc": "2026-09-20T12:46:11.635Z",
+      "up_utc": "2026-09-20T12:46:11.756Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:46:11.636Z",
+      "highlight_off_utc": "2026-09-20T12:46:11.757Z"
+    },
+    {
+      "button": "right",
+      "down_utc": "2026-09-20T12:46:11.965Z",
+      "up_utc": "2026-09-20T12:46:12.085Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:46:11.966Z",
+      "highlight_off_utc": "2026-09-20T12:46:12.086Z"
+    },
+    {
+      "button": "left",
+      "down_utc": "2026-09-20T12:46:12.310Z",
+      "up_utc": "2026-09-20T12:46:12.416Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:46:12.311Z",
+      "highlight_off_utc": "2026-09-20T12:46:12.417Z"
+    },
+    {
+      "button": "left",
+      "down_utc": "2026-09-20T12:46:12.506Z",
+      "up_utc": "2026-09-20T12:46:12.626Z",
+      "release_source": "observed_input",
+      "highlight_on_utc": "2026-09-20T12:46:12.507Z",
+      "highlight_off_utc": "2026-09-20T12:46:12.626Z"
+    }
+  ],
+  "stop_while_held": {
+    "generation": 1,
+    "held_down_utc": "2026-09-20T12:45:49.636Z",
+    "stop_requested_utc": "2026-09-20T12:45:50.837Z",
+    "synthetic_up_utc": "2026-09-20T12:45:50.840Z",
+    "helper_exited_log_utc": "2026-09-20T12:45:50.916Z",
+    "stop_completed_utc": "2026-09-20T12:45:50.918Z",
+    "settled_utc": "2026-09-20T12:45:54.928Z",
+    "focused_when_stopped": true,
+    "length_before_stop": 183,
+    "length_after_stop": 183,
+    "settled_length": 183,
+    "observation_after_completion_ms": 4010,
+    "trusted_backspace_events_after_request": 0,
+    "text_length_changes_after_request": 0,
+    "synthetic_up_is_not_a_physical_release": true
+  },
+  "qualified_idle_observation": {
+    "prior_warm_last_physical_up_utc": "2026-09-20T12:43:14.866Z",
+    "prior_back_single_gesture_utc": "2026-09-20T12:43:08.839Z",
+    "first_control_down_utc": "2026-09-20T12:45:46.887Z",
+    "first_back_down_utc": "2026-09-20T12:45:48.405Z",
+    "since_prior_physical_edge_ms": 153539,
+    "since_prior_back_single_gesture_ms": 159566,
+    "control_preceded_back_ms": 1518,
+    "first_physical_key_after_idle_was": "left",
+    "strict_unprimed_back_first_key_passed": false,
+    "boundary": "Backspace succeeded after about 159.6 seconds without a prior Back gesture, but Left was pressed 1.518 seconds earlier. This does not prove Back as the first unprimed physical key after idle."
+  },
+  "process_observation": {
+    "basis": "controller post-trial process presence check",
+    "main_remained_live": true,
+    "original_helper_absent": true,
+    "previous_host_pid_count": 13,
+    "previous_host_pids_still_present": 13,
+    "host_creation_times_available": false,
+    "host_handle_identity_verified": false,
+    "boundary": "PID presence only; no claim that creation-time or held-handle identity was verified, or that PID reuse is excluded."
+  },
+  "pending": [
+    "back_as_first_physical_key_after_ready_idle",
+    "voice_regression",
+    "active_helper_upgrade"
+  ],
+  "privacy": {
+    "device_identity": false,
+    "personal_paths": false,
+    "raw_hid_reports": false,
+    "text_content": false,
+    "audio_content": false,
+    "credentials": false,
+    "process_ids_exported": false
+  }
+}

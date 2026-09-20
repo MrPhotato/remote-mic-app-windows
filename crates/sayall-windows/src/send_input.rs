@@ -224,6 +224,9 @@ impl KeyCode {
             Self::RightAlt => (0x38, true),
             Self::LeftWindows => (0x5B, true),
             Self::RightWindows => (0x5C, true),
+            // VK_RETURN with a zero scan code reaches WebView with code="".
+            // Preserve the main Enter identity for code-based shortcut handlers.
+            Self::Enter => (0x1C, false),
             // Chromium derives DOM code from the message scan code. A VK-only
             // Page key with wScan=0 arrives without that identity, even though
             // Ctrl and the virtual key are correct. Use the dedicated E0 keys.

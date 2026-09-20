@@ -704,6 +704,30 @@ mod windows_impl {
     pub fn listener_active() -> bool {
         LISTENER_ACTIVE.load(Ordering::Relaxed)
     }
+
+    #[cfg(test)]
+    mod filter_alias_tests {
+        use super::*;
+        use windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT_FLAGS;
+
+        #[test]
+        fn filter_alias_edges_never_enter_identity_free_hook_pairing() {
+            for vk in [0x7C, 0x7D, 0x7E] {
+                assert!(!direct_attributed(vk));
+                HOLD_PAIRING.with(|pairing| pairing.borrow_mut().clear());
+                // Unknown attribution, repeats, and a late release after restart all
+                // pass through before gate readiness/arming is even inspected.
+                for message in [0x0100, 0x0100, 0x0101, 0x0101] {
+                    assert!(!handle_keyboard(vk, 0, message, KBDLLHOOKSTRUCT_FLAGS(0)));
+                    HOLD_PAIRING.with(|pairing| assert!(pairing.borrow().is_empty()));
+                }
+                // Exiting/restarting while the key is held creates no DOWN ownership.
+                HOLD_PAIRING.with(|pairing| pairing.borrow_mut().clear());
+                assert!(!handle_keyboard(vk, 0, 0x0101, KBDLLHOOKSTRUCT_FLAGS(0)));
+                assert!(!handle_keyboard(vk, 0, 0x0100, LLKHF_INJECTED));
+            }
+        }
+    }
 }
 
 #[cfg(windows)]

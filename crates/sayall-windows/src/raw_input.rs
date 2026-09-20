@@ -41,6 +41,13 @@ pub const ALL_BUTTONS: [RemoteButton; 13] = [
     RemoteButton::VolumeDown,
 ];
 
+/// The supplemental RC003 source can represent only these three buttons.
+pub(crate) const RC003_TAP_BUTTONS: [RemoteButton; 3] = [
+    RemoteButton::Back,
+    RemoteButton::VolumeUp,
+    RemoteButton::VolumeDown,
+];
+
 impl RemoteButton {
     /// 在 [`ALL_BUTTONS`] 中的序号（0..12），用于门控位掩码。
     pub fn ordinal(self) -> usize {
@@ -117,7 +124,10 @@ impl RawKeyboardEvent {
     }
 
     pub fn button(self) -> Option<RemoteButton> {
-        button_for_keyboard(self.virtual_key, self.make_code)
+        // RawKeyboardEvent enters the engine only after the listener matches the
+        // selected remote. Keep filter aliases out of the identity-free LL hook.
+        filter_alias_for_keyboard(self.virtual_key)
+            .or_else(|| button_for_keyboard(self.virtual_key, self.make_code))
     }
 }
 
@@ -214,6 +224,9 @@ pub fn parse_raw_hid_body(body: &[u8]) -> Result<Vec<&[u8]>, RawInputDecodeError
 }
 
 pub fn button_for_usage(usage: u16) -> Option<RemoteButton> {
+    if let Some(button) = filter_alias_for_usage(usage) {
+        return Some(button);
+    }
     Some(match usage {
         0x00F1 => RemoteButton::Back,
         0x0028 => RemoteButton::Ok,
@@ -233,6 +246,28 @@ pub fn button_for_usage(usage: u16) -> Option<RemoteButton> {
     })
 }
 
+/// Optional RC003 HID filter aliases, decoded only after device attribution.
+/// Original keyboard-page usages 0x80/0x81/0xF1 become F13/F14/F15 respectively.
+pub(crate) fn filter_alias_for_usage(usage: u16) -> Option<RemoteButton> {
+    match usage {
+        0x0068 => Some(RemoteButton::VolumeUp),
+        0x0069 => Some(RemoteButton::VolumeDown),
+        0x006A => Some(RemoteButton::Back),
+        _ => None,
+    }
+}
+
+pub(crate) fn filter_alias_for_keyboard(virtual_key: u16) -> Option<RemoteButton> {
+    match virtual_key {
+        0x7C => Some(RemoteButton::VolumeUp),
+        0x7D => Some(RemoteButton::VolumeDown),
+        0x7E => Some(RemoteButton::Back),
+        _ => None,
+    }
+}
+
+/// Identity-free decoder shared with the LL hook. F13/F14/F15 must stay absent:
+/// an ordinary keyboard using those keys must never inherit remote attribution.
 pub fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<RemoteButton> {
     if virtual_key == 0xFF {
         return Some(match make_code {
@@ -266,6 +301,7 @@ pub fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<RemoteBut
 pub struct ButtonStateMerger {
     keyboard: BTreeSet<RemoteButton>,
     hid: BTreeSet<RemoteButton>,
+    rc003_tap: BTreeSet<RemoteButton>,
 }
 
 impl ButtonStateMerger {
@@ -298,7 +334,7 @@ impl ButtonStateMerger {
         edges_between(&before, &self.active_buttons())
     }
 
-    /// 当前按下的语义按键集合（两个来源的并集）。
+    /// 当前按下的语义按键集合（各独立来源的并集）。
     pub fn active_button_set(&self) -> BTreeSet<RemoteButton> {
         self.active_buttons()
     }
@@ -318,10 +354,25 @@ impl ButtonStateMerger {
         edges_between(&before, &self.active_buttons())
     }
 
+    /// Independently attributed helper state; invalid masks never change a source.
+    pub(crate) fn update_rc003_tap(&mut self, pressed_mask: u8) -> Vec<ButtonEdge> {
+        if pressed_mask & !0x07 != 0 {
+            return Vec::new();
+        }
+        let before = self.active_buttons();
+        self.rc003_tap = RC003_TAP_BUTTONS
+            .into_iter()
+            .enumerate()
+            .filter_map(|(bit, button)| (pressed_mask & (1 << bit) != 0).then_some(button))
+            .collect();
+        edges_between(&before, &self.active_buttons())
+    }
+
     pub fn release_all(&mut self) -> Vec<ButtonEdge> {
         let active = self.active_buttons();
         self.keyboard.clear();
         self.hid.clear();
+        self.rc003_tap.clear();
         active
             .into_iter()
             .map(|button| ButtonEdge {
@@ -332,7 +383,12 @@ impl ButtonStateMerger {
     }
 
     fn active_buttons(&self) -> BTreeSet<RemoteButton> {
-        self.keyboard.union(&self.hid).copied().collect()
+        self.keyboard
+            .iter()
+            .chain(&self.hid)
+            .chain(&self.rc003_tap)
+            .copied()
+            .collect()
     }
 }
 
@@ -355,6 +411,44 @@ fn edges_between(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rc003_tap_deduplicates_three_sources_and_preserves_other_keys() {
+        let mut merger = ButtonStateMerger::default();
+        merger.apply_keyboard_button_edge(RemoteButton::Up, true);
+        assert_eq!(
+            merger.update_rc003_tap(1),
+            vec![ButtonEdge {
+                button: RemoteButton::Back,
+                is_pressed: true
+            }]
+        );
+        assert!(merger.update_rc003_tap(1).is_empty());
+        assert!(merger
+            .apply_keyboard_button_edge(RemoteButton::Back, true)
+            .is_empty());
+        assert!(merger.update_hid_usages(BTreeSet::from([0xF1])).is_empty());
+        assert!(merger.update_rc003_tap(0).is_empty());
+        assert!(merger
+            .apply_keyboard_button_edge(RemoteButton::Back, false)
+            .is_empty());
+        assert_eq!(
+            merger.update_hid_usages(BTreeSet::new()),
+            vec![ButtonEdge {
+                button: RemoteButton::Back,
+                is_pressed: false
+            }]
+        );
+        assert_eq!(
+            merger.active_button_set(),
+            BTreeSet::from([RemoteButton::Up])
+        );
+        merger.update_rc003_tap(7);
+        assert!(merger.update_rc003_tap(8).is_empty());
+        assert_eq!(merger.active_button_set().len(), 4);
+        assert_eq!(merger.release_all().len(), 4);
+        assert!(merger.release_all().is_empty());
+    }
 
     fn report(usages: &[u16]) -> Vec<u8> {
         let mut bytes = vec![0x01, 0x00, 0x00, 0, 0, 0, 0, 0, 0];
@@ -441,6 +535,58 @@ mod tests {
                 is_pressed: false,
             }]
         );
+    }
+
+    #[test]
+    fn filter_aliases_preserve_original_usages_and_require_keyboard_attribution() {
+        for (usage, alias, vk, button) in [
+            (0x0080, 0x0068, 0x7C, RemoteButton::VolumeUp),
+            (0x0081, 0x0069, 0x7D, RemoteButton::VolumeDown),
+            (0x00F1, 0x006A, 0x7E, RemoteButton::Back),
+        ] {
+            assert_eq!(button_for_usage(usage), Some(button));
+            assert_eq!(button_for_usage(alias), Some(button));
+            assert_eq!(keyboard(vk, 0x0100).button(), Some(button));
+            assert_eq!(button_for_keyboard(vk, 0), None);
+            assert_eq!(button_for_keyboard(vk, 0x6A), None);
+        }
+        assert_eq!(filter_alias_for_keyboard(0x74), None);
+        assert_eq!(filter_alias_for_usage(0x003E), None);
+    }
+
+    #[test]
+    fn filter_alias_holds_deduplicate_sources_and_release_on_stop_or_restart() {
+        for (usage, vk, button) in [
+            (0x0068, 0x7C, RemoteButton::VolumeUp),
+            (0x0069, 0x7D, RemoteButton::VolumeDown),
+            (0x006A, 0x7E, RemoteButton::Back),
+        ] {
+            let mut merger = ButtonStateMerger::default();
+            let down = ButtonEdge {
+                button,
+                is_pressed: true,
+            };
+            let up = ButtonEdge {
+                button,
+                is_pressed: false,
+            };
+            assert_eq!(merger.update_keyboard(keyboard(vk, 0x0100)), vec![down]);
+            assert!(merger.update_keyboard(keyboard(vk, 0x0100)).is_empty());
+            assert!(merger
+                .update_hid_report(&report(&[usage]))
+                .unwrap()
+                .is_empty());
+            // Device removal/listener stop during a hold releases the merged state once.
+            assert_eq!(merger.release_all(), vec![up]);
+            assert!(merger.release_all().is_empty());
+            assert!(merger.update_keyboard(keyboard(vk, 0x0101)).is_empty());
+            assert!(merger.update_hid_report(&report(&[])).unwrap().is_empty());
+            // A new process has no DOWN ownership: a late UP cannot create a press.
+            let mut restarted = ButtonStateMerger::default();
+            assert!(restarted.update_keyboard(keyboard(vk, 0x0101)).is_empty());
+            assert_eq!(restarted.update_keyboard(keyboard(vk, 0x0100)), vec![down]);
+            assert_eq!(restarted.update_keyboard(keyboard(vk, 0x0101)), vec![up]);
+        }
     }
 
     #[test]

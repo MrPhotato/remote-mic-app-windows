@@ -109,7 +109,9 @@
 
 - [x] 独立 Codex Windows 快捷键栏目：73 个动作、搜索分类、上下文提示与官方来源；前端目录/键码契约验证通过。
 - [x] 返回键普通退格配置、跟随系统键盘重复参数、可选双击保留标点删除；手势、迟到事件、取消、迁移与公开 UIA 实现单元测试通过。
-- [ ] RC003 实体返回按下/释放、闲置后首按、长按连删与双击删除真机验收；被动监听无上键正对照，尚不可判定是否上报。
+- [ ] RC003 可选双击按标点删除完整真机验收：旧焦点/范围/异步选区失败记录保留；安装版 `8e7b68a` 的后续实体轮次已有 12 次 prepared 首删（提交 36–55ms）、7 次旧规则双击完成 passed，其中 2 次补回尾标点。首个事务因 `focus_changed` 在 52ms 取消，没有发送退格；返回前先按 Up/Left/Right，严格闲置首按 deferred。该轮不证明后来改用 Ctrl+Z 的日常预设、其它应用或全部生命周期通过，详见 [实体证据](Testing/evidence/eager-backspace-physical-round1-20260920.json) 与 [Bug 记录](Bugs/2026-09-20-punctuation-webview-focus.md)。
+- 已取消、未交付：2026-09-20 的“当前短句及连续尾符删除”提案曾有文本编辑 19 项、事务 31 项测试 passed，用户随后明确取消；不作为待交付需求，不将此前旧规则实体结果记为此提案通过。
+- 历史默认方案、现为可选配置：即时普通退格＋双击 Ctrl+Z 的引擎/手势测试 21/32、自家 WebView 实际 12→11→12，以及来源 `e8718f1` 的构建、正常升级、启动和配置回读 passed。用户实体试用后因快速连删会触发撤销而取消返回双击默认绑定，见 [原 Undo 方案实体记录](Testing/evidence/daily-undo-physical-20260921.json)。可选 Ctrl+Z 仍可配到任意可编辑格；其撤销范围由编辑器决定，不保证整段撤销，跨应用、RC001 和严格闲置首用不据此记为通过。
 - [ ] Codex 输入框公开 UIA 文本范围兼容性及双击删除真机验收。
 
 
@@ -117,9 +119,25 @@
 
 - [x] 音量±的单击/双击/长按开放编辑，保存、导入与运行时保留配置；界面改为信号需实测提示。定向持久化与编辑保存测试通过。
 - [x] 日常默认方案应用与原生窗口回验：已在新版程序应用12键方案、生成最近备份且保留最初备份；读取持久化文件核对全部动作，语音配置哈希不变。原生音量编辑入口可打开，六格均启用；实体动作验收另列。
+- [ ] 2026-09-21 最终日常预设实体验收：TV 单击查看改动 Ctrl+Alt+B、双击开关侧边栏 Ctrl+B、长按撤销 Ctrl+Z；返回单击普通退格，Double/Long 均 disabled，按住仍连续退格。Home、菜单、方向、音量 Ctrl+PageUp/PageDown、OK、Esc 与语音保持现有方案。来源 `b67a397` 的完整包已构建、正常升级、启动并通过可见页面应用；36 格零差异，首次备份保留、最近备份精确，应用列表/语音/音频端点不变，见 [最终包证据](Testing/evidence/final-profile-switch-install-20260921.json)。此前关闭返回双击后，用户确认快速连按与长按正常，见 [普通返回实体回验](Testing/evidence/plain-back-physical-20260921.json)；新 TV 实体三动作、完整 Codex 前台效果、严格闲置首用和 RC001 仍 deferred。官方来源及聊天/标签页边界见 [方案调研](docs/investigations/2026-09-20-codex-remote-defaults.md)。
 - [ ] RC003 音量按键上报及全部默认动作实体真机验收。
+- [ ] RC003 可选三键 HID lower filter：复用 QL-4 MIT 实现，仅将返回/音量±转为设备归因后的 F15/F13/F14；本地构建、自动验证、测试签名与签名/目录成员验证 passed，安装/加载/回滚、闲置首用和语音回归尚 deferred。默认主程序不依赖驱动、不自动发布，边界见 Testing/WindowsRc003Filter.md。
+- [ ] RC003 返回/音量±免驱输入：2026-09-20 应用目录 GameInput 3.5.274 实验未取得三键事件或原始报告；前后实体上键对照 passed，三键读取 failed，系统 3.3 服务保持不变。不能据此宣称所有纯软件方案不可能，也不接入产品。见 Testing/WindowsRc003GameInput.md；驱动试验暂留在签名准备阶段，Secure Boot 保持开启。
+- [x] RC003 Frida 独立监听实验：2026-09-20 用户明确授权的管理员 helper + 严格设备来源绑定实测，返回/音量±各 3 对 DOWN/UP，上键前后共 4 对；正常解钩、卸载、detach 和宿主存活复核 passed。未写报告、未改驱动或启动安全设置。本次独立实验未接入产品高亮/映射；随后获授权的集成见下一项。长按/冷首用/异常恢复/语音回归须另验。来源、GPLv3 边界与证据见 Testing/WindowsRc003Frida.md。
+- [x] RC003 可选三键增强核心接入（用户明确授权；仅本机 RC003）：已安装完整包的显式管理员 Helper、三键来源及高亮、实际返回退格/按住连续删除、按住停止增强与普通键保留、严格就绪闲置首键、基础语音到虚拟声卡输出均 passed。原普通键和基础语音不依赖增强。实测包 manifest 为 `65de7e42…9678ae2`，后续 `9057f5de…7d8441` 日志改进候选已核对全部文件，主程序正常退出时 Helper 清理 exit 0 / error mask 0 已 passed；最新返回键候选的实体复验另列。见 [集成验收](Testing/WindowsRc003Input.md) 及 [三键](Testing/evidence/rc003-input-keys-20260920.json)、[长按/停止](Testing/evidence/rc003-input-hold-20260920.json)、[严格闲置首键](Testing/evidence/rc003-input-cold-first-20260920.json)、[基础语音](Testing/evidence/rc003-input-voice-20260920.json) 证据；不等同于 RC001 或识别文字端到端通过。
+- [x] RC003 三键增强显眼开关：已在来源 `b67a397` 的安装版确认唯一入口位于图例上方，补齐返回、音量＋/－及管理员权限说明可见，无横向溢出。原生开启、等待真实中性状态、关闭及再次开启均 passed；停止 Helper exit 0 / error mask 0，主程序普通权限，用户方向键初始化后实际显示“增强已就绪”。组件 12、ButtonsPage 37、CodingPage 8 项定向测试 passed；浏览器、失败、断连等未实测分支仍只按组件证据记录。临时输入框已移除，生产资源与新版窗口均不存在该框。见 [安装与原生开关证据](Testing/evidence/final-profile-switch-install-20260921.json)。
+- [ ] RC003 可选三键增强剩余验收：睡眠/崩溃恢复、多目标与共享宿主负对照、RC001、最终普通返回的严格闲置首用、新 TV/完整 Codex 预设和第三方识别文字端到端；旧规则已有本机实体首删/双击结果，关闭返回双击后快速连按已由用户确认，正常退出、清理退出状态与本轮升级/启动已 passed，不代表崩溃清理通过；运行中安装未替换主程序的问题仍未归因，不得以安装器返回 0 代替实际文件核验。范围和边界见 [集成验收](Testing/WindowsRc003Input.md) 与 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。
+- [ ] 本 fork 首个完整签名 Preview：Helper 构建与完整性门禁、独立 minisign 验证、own-repo 元数据和最新 PR CI 门禁已实现并完成本地对应检查；远端全流程、版本化 Notes、Tag 与公开资产尚未执行，不把本地签名测试记为发布通过。自动更新保持关闭，Authenticode 仍未启用。
+- [ ] 并发映射变更一致性：保存、重置、导入已统一写盘与热加载事务，11 项设置测试 passed（含三类操作全部 9 种交错和失败不热加载）；来源 `6e49fd5` 的 0.2.7 安装版 4 对并发保存 IPC、恢复原配置和升级后文件保留 passed，实际导入对话框／重置按钮及实体按键回归 deferred。见 [Bug 记录](Bugs/2026-09-21-button-mapping-transaction.md)。
+- [ ] 语音触发三键增强重复重绑：已用日志确认旧版 12 次语音均误重绑，Helper 已改读同锁发布的真实连接代次；清理前先发布失效，避免慢清理期间仍保留旧可用状态。补修后 19 项 RC003 定向及此前 1 项 IPC 契约测试 passed；新版实体语音／三键、断连及睡眠复验 deferred。见 [Bug 与证据](Bugs/2026-09-21-rc003-voice-helper-generation.md)。
+- [x] Windows 宣传片本地初稿：64 秒 1080p 中文动效与原创配乐，包含默认键位、自定义、实验性增强权限、GPL、本项目／Mac 原版／Windows 上游链接及用户指定协作署名；全片明确交互动效示意。渲染与全帧解码 passed，源脚本和发布文案见 [marketing/promo](marketing/promo/README.md)。仅本地交付，未上传视频平台。
 
 ## 本地快捷键编码修复（2026-09-18）
 
 - [x] 修复 PageUp/Down 注入缺失扫描码；原生消息对照证明修复前 scan=00、修复后49/51且Ctrl及释放边沿正确。Windows平台库145项通过。
 - [ ] Codex前台遥控切换任务与闲置首用复测；返回/音量上报独立排查，保留用户自定义配置。
+
+## 2026-09-21 确认键长按反馈
+
+- [x] 补齐 Enter 物理标识：旧包实测 WebView `code` 为空；修复后安装版 Ctrl+Enter 四条可信事件、普通 Enter 两条事件及约 80 秒闲置后的首个软件注入 passed。七步 preflight（前端 163、Rust 288）通过，见 [Bug](Bugs/2026-09-21-enter-shortcut-identity.md)。
+- [ ] 确认键长按 Ctrl+Enter 在目标应用的实体动作和严格硬件冷首用复验；不能以软件注入或 SendInput 提交成功替代。

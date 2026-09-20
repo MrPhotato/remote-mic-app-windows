@@ -2,6 +2,41 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## RC003 可选三键增强接入（2026-09-20）
+
+- 在下节独立实验成功后，用户明确要求完善软件，授权可选三键 Helper 集成；以 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md) 为当前范围。主程序普通权限、基础语音不依赖注入，只读取 RC003 返回/音量±。
+- `helpers/rc003-input/guard.py`、`source_binding.js`、`observer.js` 实质改编同一固定上游 `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d` 的宿主定位、来源绑定和报告入口快照。保留 GPLv3 全文于 `helpers/rc003-input/licenses/`，并说明本地三键限制、只观察、不吞写报告、租约、父进程和选择关联等修改；本仓库本身为 GPL-3.0-only。
+- 独立 Helper 固定 Frida 17.18.0，Python binding 的 wxWindows Library Licence 与随包第三方许可保留在 Helper 许可目录。使用 [PyInstaller onedir](https://pyinstaller.org/en/stable/operating-mode.html) 打包固定运行环境；不使用管理员 onefile 临时解包执行。hash 锁定构建依赖与包内完整 manifest；主程序内嵌 manifest 摘要，提权后先复制到管理员控制目录并复核文件，再启动载荷。
+- Windows 主程序以公开 [ShellExecuteExW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecuteexw) 的 runas 启动独立引导进程；Helper 自行核对 loopback 端口所属父 PID、存活句柄以及公开设备 ContainerId 关联。UI 显式启用，不安装服务/驱动或改启动安全设置。
+- 引导路径兼容处理参考 [Tauri 2.11.5 的路径插件](https://github.com/tauri-apps/tauri/blob/7cd71369c00978a3783b6ae3e9972358abbe4ae6/crates/tauri/src/path/plugin.rs)（官方 Cargo 包 VCS 提交已核对，MIT/Apache-2.0），使用相同的 [dunce 1.0.5 `simplified`](https://docs.rs/dunce/1.0.5/dunce/fn.simplified.html) API，在 PowerShell 边界仅安全简化扩展盘符路径，不复制路径解析实现。PowerShell 5.1 的前缀失败已最小复现；不能安全简化的 UNC/长路径仍保留，部署能力未知。新包原始流程待验，证据及来源核对边界见 [缺陷记录](Bugs/2026-09-20-rc003-helper-bootstrap-path.md)。
+- Rust 新增独立三键状态来源、generation/sequence/epoch 失效机制，复用原有映射和高亮；这些主程序机制自行实现，不复制上游吞键或其它应用注入实现。未配置动作只高亮，Helper 中断先取消手势再释放该来源，原语音生命周期和普通键来源保持原有行为。
+- 打包最低系统沿用 Windows 10 1809，仅排除系统 `ucrtbase.dll`，保留 Python、Frida、VCRUNTIME 和 API-set 文件。[微软 UCRT 部署说明](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment?view=msvc-170)明确 Windows 10/11 始终使用系统 UCRT；[PyInstaller 6.19.0 官方依赖选择实现](https://github.com/pyinstaller/pyinstaller/blob/v6.19.0/PyInstaller/depend/dylib.py)也说明仅面向 Windows 10+ 时无需附带这类库。本机初包对此 DLL 的 Rust 复制返回 `os error 5`，安装后完整性检查也发现该副本缺失；只记录观察到的现象，不猜测 Windows 拒绝的具体机制。按系统支持范围移除冗余副本后重新生成清单和完整包验证。
+
+## RC003 Frida 独立诊断例外（2026-09-20）
+
+- 用户在明确获知管理员权限、向 `WUDFHost.exe` 注入监听代码和非公开输入接口的边界后，授权一次独立实验；不代表授权接入正式产品、修改驱动或启动安全设置。实验方案见 [Testing/WindowsRc003Frida.md](Testing/WindowsRc003Frida.md)。
+- 参考并实质改编 [ZSTDJan/windows-remote-mic-app](https://github.com/ZSTDJan/windows-remote-mic-app/tree/1e6b1d285f9cd50f30c5bc92ac7787a693fc993d) 固定提交 `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d` 的 `apps/windows/rc003/src/ovb_rc003/frida_hid_tap_runtime.py`、`frida_hid_tap_injector.py`：注册表 HostPid 定位、宿主独占性检查、`NtDeviceIoControlFile` 的 `0x80018483`/8 字节 metadata/9 字节 Report 1 识别及入口快照。该提交根目录 `LICENSE.md` 是 **GPLv3**，不是 MIT；来源与许可副本仅存本地 ignored 实验目录，不将其代码或第三方二进制接入或分发到产品。
+- 去掉上游吞键、清零、映射、套接字协议和持久 Gadget 注入流程。使用官方 [Frida Injected 模式](https://frida.re/docs/modes/#injected) 的 Python binding `17.15.3`，仅对唯一目标对应的宿主直接 attach；本机宿主另有一个 BLE HID 实例，因此复用上游 `DeviceIoControl` 活动调用帧、UMDF 设备对象与注册表 ContainerId 来源验证，在匹配选中容器之前不读取报告，不允许独占回退。白名单事件只用于验证可见性。所谓只观察指不写设备报告，Frida hook 本身仍临时修改目标进程代码，来源验证也读取了非公开 UMDF 实现。
+- 依据 [Frida Interceptor API](https://frida.re/docs/javascript-api/#interceptor) 与固定版本 Python binding 的 `Cancellable`、`Script.unload`、`Session.detach` 实现有界调用、租约到期解钩和正常退出清理。入口与返回快照不当作两次物理输入，也不作为真实硬件延迟证据。之前调研中的“Frida IOCTL 无捕获”仅是当时尝试结果，不能覆盖本次不同入口快照实现或证明纯软件不可能。
+- 本机 `17.15.3` direct attach 两次报 `ProcessNotRespondingError`，宿主存活；切换隔离的官方 `17.18.0` 后 attach/load/hook_ready 通过。该版 [官方说明](https://frida.re/news/2026/09/09/frida-17-18-0-released/) 与 [ACL 修复提交](https://github.com/frida/frida-core/commit/65e713c76202a9266b13061245c302be25c8bb03) 给 Frida 自己的临时目录/文件增加 LOCAL SERVICE 读执行权限，并完善自身管道权限，不修改设备、目标进程 ACL 或系统安全策略；版本对照与修复方向吻合，不能单凭对照认定唯一根因。上游 Gadget 本来就为自身文件授予 LOCAL SERVICE 读执行，因此旧 binding 失败不等于 Gadget 路线不通。
+
+## RC003 GameInput 免驱接口实验（2026-09-20）
+
+- 依据微软 [GameInput 3.4 公告](https://developer.microsoft.com/en-us/games/articles/2026/05/gameinput-update-now-available/) 的 raw HID 新能力，使用官方 [Microsoft.GameInput 3.5.274](https://www.nuget.org/packages/Microsoft.GameInput/3.5.274) 固定包进行独立诊断。该包 README 声明 3.5 支持应用目录并排部署；包内 `native/src/GameInput.cpp` 实际包含应用目录加载分支，不能用落后的 GitHub main loader 推断不支持。
+- 本地只读查询 MSI 数据库、读取内嵌 CAB 并解包；未执行 MSI 安装或行政安装序列。只将微软签名的 x64 `GameInputRedist.dll` 放在探针目录，由同包 `GameInput.lib` 加载；未升级系统已安装的 3.3.221.0 运行库/服务，未安装输入驱动或改变启动设置。不在仓库提交第三方二进制。
+- 探针自行编写，仅参考公开 [设备回调](https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/interfaces/igameinput/methods/igameinput_registerdevicecallback)、[设备信息](https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/structs/gameinputdeviceinfo)、[原始报告读取](https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/interfaces/igameinputrawdevicereport/methods/igameinputrawdevicereport_getrawdata)；没有复制竞品输入实现。包内官方头文件/静态库按其 MIT 许可仅用于本地构建。
+- 仅对唯一匹配的遥控器读取白名单按键状态，拒绝聚合设备和多匹配；不记录设备身份、其它键盘输入、语音数据，不注入或吞键。实际结论及边界见 [Testing/WindowsRc003GameInput.md](Testing/WindowsRc003GameInput.md)。
+
+## RC003 三键可选 HID 过滤驱动（2026-09-20）
+
+- 实质改编 [QL-4/RemoteMapper](https://github.com/QL-4/RemoteMapper/tree/be8b57330c26a70d8b8ec9ff1e60c23251a2fc31/driver/MiRemoteHidFilter)，固定提交 `be8b57330c26a70d8b8ec9ff1e60c23251a2fc31` 的 `driver/MiRemoteHidFilter/driver.c`、`driver.h`、`remap.c`、`remap.h`、INF 和 vcxproj；对应本仓库 `drivers/sayall-hid-filter/`。MIT，Copyright (c) 2026 QL-4；完整许可保留在该目录 `LICENSE`，随本地驱动包附带。不复用第三方二进制、证书、私钥或安装/卸载脚本。
+- 沿用 IRP_MJ_READ 转发、下层完成后原地等长改写 Report ID 1 首槽 `report[3]` 的做法。上游八键缩减为三键：usage `80→68`（F13/音量+）、`81→69`（F14/音量-）、`F1→6A`（F15/返回）。F5 语音、其它按键、释放、其它槽和 vendor reports 保持不变。新的服务名/ExtensionId 避免与原项目混用，增加失败路径和匿名 ETW 聚合计数。
+- 上游 [三键修复记录](https://github.com/QL-4/RemoteMapper/blob/cf89615487efcfcf4ff3f78e9bfc3b9bd69597ad/NOTES.md) 是复用依据；上游 Windows 11/HVCI 实测不等于本仓库真机通过。本机关闭映射后的独立 Raw Input 实验有 Up/Ok 正对照，返回/音量±均未收到；SetupDi 读取的 Hardware IDs 包含上游精确 `REV&00a4` 匹配。因此保留该匹配，不扩大到 VID-only 或键盘类过滤器。该产品 ID 不能独立证明 RC001 型号隔离，RC001 仍未验收。
+- 应用端别名仅在已选择的遥控器设备归因后解码；不进入无设备身份的全局钩子解码/武装，避免误吞普通键盘 F13–F15。代理音量不能当作已交付原生音量，仍执行用户配置的动作。未配置动作不新增隐式音量行为。
+- 构建采用微软官方 [WDK NuGet](https://learn.microsoft.com/en-us/windows-hardware/drivers/install-the-wdk-using-nuget) 与 [Windows-driver-samples 的包导入方式](https://github.com/microsoft/Windows-driver-samples/blob/main/Directory.Build.props)（2026-09-20 查阅，仅参考属性导入方式，不复制示例实现）；本地锁定 WDK `10.0.26100.6584`、SDK CPP `10.0.26100.1`、VS 2022。驱动仅为可选增强轨；普通用户主程序、基础语音路径不依赖它。不引入 Frida、虚拟 HID 或私有协议。
+- 验证与签名/安装边界见 [Testing/WindowsRc003Filter.md](Testing/WindowsRc003Filter.md)。2026-09-20 用户明确同意本地试验后，另行生成测试签名包，尚未修改 Secure Boot/BCD、安装内核驱动或发布。
+- 本地测试签名准备按微软公开 [New-SelfSignedCertificate](https://learn.microsoft.com/en-us/powershell/module/pki/new-selfsignedcertificate)、[测试证书安装](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/installing-test-certificates)、[测试签名验证](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/verifying-the-test-signature) 实现：一把本机不可导出的代码签名私钥，SYS→Inf2Cat→CAT 顺序，精确公钥信任及目录成员验证。只参考公开工具行为，无外部实现复制。启动模式与当前运行态按 [TESTSIGNING 文档](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option) 和 [NtQuerySystemInformation 文档](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) 分开验证。
+
 ## 鼠标动作扩展
 
 - 鼠标单击/双击参考 AutoHotkey v2 Click 的成对按下/释放行为，不复制其代码或引入依赖；通过 Windows SendInput 单批发送 2/4 个边沿，部分提交时补发释放，不新设双击等待常量。参考： https://www.autohotkey.com/docs/v2/lib/Click.htm 。
@@ -241,3 +276,87 @@
 - [Microsoft KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput) 说明 SCANCODE/EXTENDEDKEY 的物理按键编码语义。
 - [Chromium CodeFromNative](https://chromium.googlesource.com/chromium/src/+/e357d701c9b59b4fcb17d65b17bcb8ce3d04cf08/ui/events/win/events_win.cc) 从 Windows 消息扫描码生成 DOM code。仅参考行为，未复制外部实现。
 - 独立原生窗口实测旧 VK 注入的 PageUp/Down 消息 scan=00，Ctrl 状态正确；物理对照49/51。沿用已有扫描码发送路径补齐这两个键，不调整注入时序。证据与验证边界见 `Bugs/2026-09-18-page-navigation-scan-code.md`。
+
+## 首击提前退格与双击补偿可行性（2026-09-20，调研与候选）
+
+用户提出“单击先普通退格、双击补偿后保留标点删除”。依据 Microsoft [TextPattern 读写与跨进程调用边界](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-textpattern-overview)、[GetActiveComposition](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtexteditpattern-getactivecomposition) 和 [KEYBDINPUT Unicode 输入](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput) 核查：受控 UIA 方案需要首删前快照、组合态判断和实际恢复验证；未找到本仓库来源矩阵中已验证的乐观补偿先例，未复制实现。该轮已安装版保留既有 300ms 等待，源码候选将其仅用于双击分类，并加入有界预检、一次首删票据和精确边界补偿。候选已有下文真实软件执行记录；未经预热的冷态/闲置首用及实体遥控器仍未验证，不宣称零延迟或通用 Ctrl+Z 安全恢复。既有双击修复与新补偿方案分开记录，详见 [可行性调查](docs/investigations/2026-09-20-optimistic-backspace-feasibility.md)。
+
+## WebView 焦点所属窗口校验（2026-09-20）
+
+本机 RC003 双击已进入文字删除模块，但测试框的 UIA 元素进程与 Tauri 主窗口进程不同，旧版严格 PID 相等检查拒绝执行。依据 Microsoft [RawViewWalker](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-get_rawviewwalker)、[GetParentElement](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtreewalker-getparentelement) 与 [GetAncestor](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getancestor)，跨进程焦点改为证明最近原生宿主 HWND 的实际所属进程与 UIA 宿主进程一致，且其 GA_ROOT 精确等于当前前台窗口；不沿 owner 关系放行，不移除焦点、密码、取消和选区校验。自家测试框的公开 UIA 祖先链已验证符合该条件；实际删除结果单独记录于 [Bug 与验收证据](Bugs/2026-09-20-punctuation-webview-focus.md)。未复制外部代码，未改 300ms 双击窗口。
+
+## WebView 文本范围限定（2026-09-20）
+
+依据 Microsoft [DocumentRange](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextpattern-get_documentrange)、[MoveEndpointByUnit](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-moveendpointbyunit)、[MoveEndpointByRange](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-moveendpointbyrange) 和 [FindText](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-findtext) 的公开范围与端点语义独立实现。另只读参考 [Chromium 官方 TextRange provider](https://raw.githubusercontent.com/chromium/chromium/main/ui/accessibility/platform/ax_platform_node_textrangeprovider_win.cc) 的 `MoveEndpointByUnitHelper` 与 `FindText`：前者沿 AX 文本边界移动，后者把共同祖先中的文本偏移转换为叶节点位置；未复制外部实现，也不把 Chromium 当前主干视为本机 WebView2 的精确版本。
+
+本机自家固定测试框的只读实验发现：其 `DocumentRange` 长度为 12，原先从末尾向前移动 2048 个字符，实际得到长度 829、起点早于该控件文档的范围，随后标点查找与删除范围均为空。仅将起点限制到自身 `DocumentRange.Start` 后，前缀长度 12、标点范围长度 1、待删范围长度 6，全部与固定预期精确一致，文本和选区保持不变。原始失败及对照元数据保留在本地忽略目录 `target/local-launch/rc003-integration/own-boundary-clamped-observation.json`，输出仅布尔与数字。
+
+修复先验证空光标位于当前 TextPattern 自有文档内，再在读取文本之前限制克隆范围起点；重新检查范围两端、顺序及末端仍为原光标，保留精确文本、选区、焦点、取消与密码检查。日志记录是否限制起点、实际移动单位和拒绝原因，不记录文本。上述只读实验单独只证明范围构造修正；后续结合下节选区修复的真实产品函数已实际删除，证据分轮记录。最终安装版实体遥控器及跨应用兼容性仍须分别验收；此修复不改变双击等待策略。
+
+## UIA 选区异步确认与取消清理（2026-09-20）
+
+Microsoft [TextRange.Select](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-select) 定义选择范围操作。[Chromium 官方 provider 的 Select 实现](https://raw.githubusercontent.com/chromium/chromium/main/ui/accessibility/platform/ax_platform_node_textrangeprovider_win.cc) 将 `kSetSelection` 交给 delegate 后返回，未在该函数内等待 GetSelection 确认；仅参考行为，未复制实现，也未声称该主干与本机运行时精确一致。
+
+本机产品函数实证：从 Select 调用开始到第一次读取结束约 257 微秒（Select 自身约 145 微秒），仍得到原空光标；上下文保持 12 个 UTF-16 单位不变，约 3 毫秒后目标选区生效。后续只读比较证明目标选区与重建范围的 Compare 和两端 CompareEndpoints 一致，未采用放宽范围比较的替代方案。修复只在原空光标、精确目标选区两态之间有界观察，失焦、文本改变或第三种用户选区立即拒绝；使用既有操作预算、实际 UIA 查询及线程让出，不以固定休眠代替确认。取消清理独立限时，等已提交的选择请求落实后仅恢复自己的光标，并实际观察恢复；超时或 API 失败时向调用者明确报告恢复未确认，不把 S_OK 记为清理通过。
+
+新增等待、拒绝第三态、取消后迟到选择与恢复、预算边界测试；定向 `text_edit` 共 17 项 passed。自家 WebView 产品函数自动验证共 6 项 passed：普通后缀 12→6（264ms），末尾标点 6→6（138ms），普通退格 12→11（0ms，提交耗时），后缀重复 12→6（204ms、199ms），固定框闲置 152.542 秒后 12→6（探针 245ms，产品内部 244ms）。每项除 API 结果外均核对了最终实际文本与固定预期完全相等。探针调用前有自己的 UIA 保护性检查，可能预热 provider；闲置项不等于未经预热的冷态首按验证。成功选择观察均为 `pending_count=0`，不宣称此次成功运行直接覆盖了等待中间态。
+
+这些数值不能当作跨应用保证或遥控器端到端延迟；最终安装版实体 RC003 与其他应用覆盖分别待验收。取消及新提前退格/补偿的后续软件执行另见下段。补偿候选只以精确可验证的纯文本为范围，字符恢复不证明富文本格式恢复。版本化布尔、长度及耗时见 [软件 UIA 执行证据](Testing/evidence/punctuation-webview-uia-execution-20260920.json)；完整诊断保留于本地忽略目录 `target/local-launch/rc003-integration`，版本化证据不包含文本、设备身份、进程/窗口标识或个人路径。
+
+候选实现继续只使用上述公开 UIA / SendInput API，无外部实现复制。200ms 首删预检上限来自同日只读探针首轮 155ms 与热态 63–84ms 的候选判断，仍需实际首击与闲置场景确认；不据此宣称固定时延保证。新单击事务、手势及引擎分别通过 21、27、20 项定向测试，覆盖竞争、换代、取消、门控和部分输入警示；这些测试未发送真实键。完整候选限制与待验项目见[调查和候选边界](docs/investigations/2026-09-20-optimistic-backspace-feasibility.md)。
+
+后续 `15:10:14Z–15:12:39Z` 自家 WebView 真实软件执行得到 9 passed、1 failed：首击成对输入提交 28–48ms；普通后缀双击实际 12→11→6，英文/中文边界以 Unicode 成对输入分别恢复 6→5→6、3→2→3，单个 emoji 8→6；普通后缀重复通过。Select 后取消保持文本 12 不变并恢复光标，`cleanup_wait_caret pending_count=1` 实际观察到恢复的异步过程。无标点实际 5→4→0，但最终 UIA 校验拒绝，仍为 failed；空 ValuePattern 与单个 U+FFFC DocumentRange 的只读对照已记录，尚不作为修复通过。来源、每项计时及覆盖限制见 [提前退格执行证据](Testing/evidence/optimistic-backspace-webview-20260920.json)。这些是产品 Runtime/函数调用，未经过实体遥控器及手势；有 fixture UIA 预检，不证明未经预热的冷态首用或新安装通过。
+
+随后依据该公开 UIA 本机实证加入窄范围空字段确认：只接受可写 Edit、空 ValuePattern、单个 U+FFFC 文档及起点空光标，重复两次组合态、焦点和字段检查，普通嵌入对象仍拒绝。`15:16:02Z` 无标点修复复验 passed，实际 5→4→0、API 与精确预期均通过，首击提交 39ms、总动作 559ms；最新事务单元测试 23 passed。此修复独立实现，未复制外部代码；原失败与该次复验在同一证据中分开保留。
+
+## 提前退格兜底的输入活动保护（2026-09-20）
+
+审查发现候选把准备阶段的已知焦点变化也归入普通兜底，且原 200ms 截止路径只检查前台 HWND，同窗口内换字段可能避开该检查。修复在事务开始时记录公开 [GetLastInputInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlastinputinfo) 的当前会话最后输入 tick，普通兜底提交前必须再次读取成功并与记录相等；读取失败或不相等则拒绝。已知焦点、光标或上下文变化取消当前事务，同时阻断其截止线程，不能再转为兜底。准备完成路径仍保留精确 UIA 校验，不改变 200ms 上限；不复制外部实现。
+
+Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差、SendInput 自带时间都可能影响它。因此只能比较是否相等，不能把更小值解释为没有新输入，也不能把它当成纯物理输入计数。该 API 只报告调用会话的输入时间，不提供字段身份；相等不能证明没有程序性换焦或同 tick 的活动，检查与发送也不具原子性。本次只增加保守拒绝条件，不宣称普遍阻止同窗口换焦误删；此前真实软件成功证据走 prepared 路径，不能证明此兜底在实体遥控器或闲置首按场景已通过。
+
+新增 4 项不发送真实键的定向测试覆盖读取失败、tick 改变/倒退/回绕、精确 prepared 不依赖该 tick、旧代准备失败不取消后代、未发送首击静默及已请求双击单次拒绝并释放 busy；事务模块合计 27 passed、0 failed。独立源码审查确认失效判定与一次票据共用短锁，回调在锁外；这些证据只证明所测逻辑，不代替兜底实际输入验收。
+
+## 实体提前退格与已取消的短句提案（2026-09-20）
+
+安装版来源 `8e7b68acf1af3ab0ce09b21615416af268684c2b` 的本机 RC003 实体轮次已记录：首个事务 focus_changed 52ms 取消，后续 12 次 prepared 首删提交 36–55ms、7 次旧规则双击实际完成（5 次后缀删除、2 次尾标点补回）。[独立实体证据](Testing/evidence/eager-backspace-physical-round1-20260920.json) 保留逐事务匿名时间与计数；Up/Left/Right 先于返回，严格闲置首键 deferred。此结果不证明兜底、其它应用或 RC001。
+
+用户曾提出删除当前短句及连续尾部标点、非换行空白，保留更早标点或段落边界。候选复用上述公开 UIA/SendInput 方法并有文本编辑定向 19 项、事务 31 项测试 passed，未复制外部算法；随后用户明确取消该提案，未构建安装交付。保留历史实验，不挪用旧规则尾符补回记录宣称短句方案通过。
+
+## Codex 日常 12 键预设调整（2026-09-20）
+
+先核对 [默认方案调研](docs/investigations/2026-09-20-codex-remote-defaults.md) 与 [OpenAI 官方 Windows 命令表](https://learn.chatgpt.com/docs/reference/commands)，再更新当时的内置方案：菜单单/双/长为 Ctrl+Shift+P、Ctrl+Shift+M、Ctrl+Alt+A；TV 为 Ctrl+B、Ctrl+Alt+B、Ctrl+反引号；用户确认的音量＋/－为 Ctrl+PageUp/PageDown。Home、方向、Enter、Esc 和语音生命周期保留，当时返回采用立即普通退格、按住重复及双击 Ctrl+Z。此方案后来安装为 `e8718f1`，最终默认调整见下节。聊天或标签页是官方切换范围，不宣称只切内部 Agent；用户关闭侧边栏的操作习惯也不是这个限制的官方解法。
+
+预设复用显式应用与首次/最近备份，不自动覆盖已存配置。Ctrl+Z 使用既有公开快捷键注入，首击普通退格已发生后再撤销，具体撤销分组由当前编辑器决定，不把它描述成通用整段删除或安全精确恢复。先前短句版预设 24 tests、动作摘要/编辑页 39 tests 是历史候选结果；撤销版最新预设/页面定向 24 tests passed，日志为 `coding-preset-undo-tests.log`，实际输入、构建安装、Codex 前台实体动作及冷首用仍 deferred。参考官方命令事实与 [Codex Micro 操作职责](https://learn.chatgpt.com/docs/features/codex-micro)，未复制设备协议、第三方内部实现或新增语音手势；详见调研中的上下文及验收边界。
+
+2026-09-21 后续：普通退格＋Ctrl+Z 已由真实 SendInput 在自家输入框观察到 12→11→12；纯手势 32、引擎路由 21、预设 24 与编辑页 27 tests passed，阈值未改。仅普通键注入路径，编辑器撤销分组仍非产品保证。见 [实际软件证据](Testing/evidence/ordinary-backspace-undo-webview-20260921.json)；安装和实体边界另计。
+
+## 最终日常默认方案：普通返回与 TV 撤销（2026-09-21）
+
+同日默认方案修订：用户实体测试拒绝把 Ctrl+Z 放在返回双击，因为快速连续删除会触发撤销；旧安装版结果保留于 [Undo 实体记录](Testing/evidence/daily-undo-physical-20260921.json)。最终默认 `back.single=normal_backspace`、`back.double=disabled`、`back.long=disabled`，按住仍复用 Windows 重复参数，不改阈值、不删除可选撤销能力。新增 100ms 间隔六次按放及随后长按/释放、切换旧挂起双击状态的回归；手势定向 33 tests passed。当前安装版通过可见编辑界面只改返回双击一格，用户复验“正常了”；证据见 [普通返回实体回验](Testing/evidence/plain-back-physical-20260921.json)。
+
+用户最终批准 TV 单击 `Ctrl+Alt+B` 查看改动、双击 `Ctrl+B` 开关侧边栏、长按 `Ctrl+Z` 撤销，并明确不使用终端。沿用上述官方快捷键事实和已有公开 SendInput，不复制外部实现；Ctrl+Z 可自行移到任意可编辑格或禁用，撤销范围仍由前台应用决定。Home、Menu、方向、音量、OK、Power 和语音不变。最终预设/页面定向 24 tests passed；来源 `b67a397` 完整包已构建安装并经可见页面应用，36 格零差异且备份、应用列表、语音及音频端点检查通过。TV 实体三动作、完整 Codex 效果和严格闲置首用仍 deferred，详见 [最终包独立证据](Testing/evidence/final-profile-switch-install-20260921.json)。
+
+## 三键增强入口显式开关（2026-09-21）
+
+用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。组件及页面定向共 57 tests passed；安装版原生启停、等待初始化及用户方向键后进入 ready 已 passed，停止清理 exit 0 / error mask 0，主程序普通权限。此次未复制外部代码，未测失败/断连等实机边界见 TODO 与 WindowsRc003Input。
+
+## 完整 Helper 打包与独立更新签名校验（2026-09-21）
+
+复核既有 Tauri CLI 构建覆盖配置、`tauri-plugin-updater` 2.11.0 的公开 `verify_signature` 实现和 [GitHub Actions workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs)，修正 fork CI/Release 遗漏 Helper 构建、未显式生成 `.sig` 及旧上游下载地址的问题。PR CI 保留全套测试与安装生命周期，发布门禁改为当前 PR/head 的最新 run/attempt 成功，拒绝缺失关联、旧绿新红等状态。
+
+独立工具 `tools/release-signature-verify` 调用 [jedisct1/rust-minisign-verify](https://github.com/jedisct1/rust-minisign-verify) 的 `PublicKey::decode`、`Signature::decode` 和 `verify(..., true)`；沿用 Tauri 的 base64 包装和 legacy/prehashed 验证方式，不自写密码算法。依赖为 MIT 的 `minisign-verify 0.2.5`，crate 内 `.cargo_vcs_info.json` 指向提交 `3a91d03f86a8462a1af953c2854687d3f953d541`，该发布源标记 `dirty: true`，因此准确复现以锁文件中的 crate 校验值为准。该 crate `src/lib.rs` 的公开测试向量实质复制到本工具测试，保留 Frank Denis 来源说明。8 项正反测试及真实本地安装包验签 passed，不等于已经公开发布。
+
+Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 initialized-data 段中的完整清单字节；16 项合成正反例以及现有 96 文件本地实包检查 passed。新工作流尚未在 GitHub 运行，当前 Authenticode 未启用、自动更新仍关闭，后续远端完整流水线与公开发布独立记录。
+
+## 推送前生命周期复查（2026-09-21）
+
+沿用本仓库已验证的 BLE 连接代次与 Helper 中性状态守卫，复核旧日志发现语音流编号被误作连接编号；12 次不必要重绑的 ground truth 归档于 [Bug 记录](Bugs/2026-09-21-rc003-voice-helper-generation.md)。修复仅把同锁发布的真实连接编号接到 Helper，不调整时序常量、不复制外部实现。18 项 RC003 定向及 1 项 IPC 契约测试 passed，新包硬件验证 deferred。
+
+后续交叉复查补上清理之前的统一失效发布：共享快照与输入门控先变为不可用，再进入可能阻塞的 Windows 清理。19 项 RC003 定向测试 passed，包含清理被同步屏障阻塞时的真实线程观察测试；这证明代码发布顺序，不是实体断连或 Windows 清理成功的证据。
+
+按键设置继续复用已有 SettingsStore 的 Rust `Mutex` 串行策略，将锁覆盖到平台同步热加载，避免保存／导入／重置交错。11 项设置测试 passed，包含全部 9 种两操作组合及失败分支。没有新增第三方 API 或实现依赖；真实 IPC 和实体输入边界见 [并发事务 Bug](Bugs/2026-09-21-button-mapping-transaction.md)。
+
+## 确认键 Enter 扫描码兼容（2026-09-21）
+
+沿用本仓库 PageUp/PageDown 扫描码修复模式，并先核对 [Microsoft KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)：KEYEVENTF_SCANCODE 使用 wScan 标识物理键，KEYEVENTF_EXTENDEDKEY 区分扩展键。本机旧包自有 WebView 的原生事件实测显示 Ctrl+Enter 的 Enter `code` 为空；主 Enter 采用 0x1C、非扩展，保持现有成对注入，不调整时序、不复制第三方实现。公开 Chromium 源码页面本轮无法打开，不把未读取源码作为证据。目标应用对快捷键的上下文要求另行验收，见 [Bug 记录](Bugs/2026-09-21-enter-shortcut-identity.md)。

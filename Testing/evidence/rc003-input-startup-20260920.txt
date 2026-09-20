@@ -1,0 +1,24 @@
+# RC003 optional input integration: startup evidence only
+# UTC 2026-09-20. No physical integrated key events observed at this checkpoint.
+package_sha256=DA68D871369197998B5AD67CA6CE6853D037C5722030B041F49F58145C4C24A3
+helper_manifest_sha256=65de7e42cb2a2845e14e8a790f2047a1fa37a751581657bba533c809f9678ae2
+helper_payload_files=96
+helper_payload_integrity_failures=0
+installed_main_sha256=241CE21D867A506628940C40CF64C1E69167827BDAE00FE75E24930ABD9D2CEC
+built_main_sha256=5C510A3D8FBA527A7A0CBA82E517F51AEE12A9FA7831888239380D542F6CEB04
+main_comparison=same_length_only_three_bundle_marker_bytes_differ_UNK_to_NSS
+active_install_main_replacement=failed_cause_unknown
+install_after_confirmed_graceful_exit=passed
+main_token_elevation=0
+helper_token_elevation=1
+2026-09-20T11:10:34.733Z rc003_input payload_preflight manifest_match=true
+2026-09-20T11:10:34.738Z rc003_input bootstrap_path simplified=true
+2026-09-20T11:10:45.262Z rc003_input ipc phase=authenticated protocol=1
+2026-09-20T11:10:45.982Z rc003_input helper_diagnostic reason=capture_attach_started generation=1
+2026-09-20T11:10:45.982Z rc003_input helper_diagnostic reason=capture_attached generation=1
+2026-09-20T11:10:45.982Z rc003_input helper_diagnostic reason=capture_loaded generation=1
+checkpoint_phase=waiting
+checkpoint_reason=awaiting_neutral
+checkpoint_report_count=0
+checkpoint_edge_count=0
+integrated_physical_acceptance=pending_user_input

@@ -1,0 +1,167 @@
+{
+  "schema": 1,
+  "date": "2026-09-21",
+  "source_revision": "b67a397b5d62cbb8dcb5003bf5d65547d5fd4548",
+  "scope": "local_install_approved_profile_visible_enhancement_switch",
+  "build": "passed",
+  "graceful_exit": {
+    "at": "2026-09-21T01:03:11.8025617+08:00",
+    "normalExitRequested": true,
+    "exited": true,
+    "forced": false
+  },
+  "installation": {
+    "at": "2026-09-21T01:03:33.2703355+08:00",
+    "installerExitCode": 0,
+    "installerSha256": "b0bdaeba3a853627370fdf9356947015f64a87bc2358492b9c8ff485cd8f8705",
+    "main": {
+      "mainMatchesBuild": true,
+      "bundleMarkerOnly": true,
+      "builtSha256": "0170ac79e1d374b935a7e257c56f1ca235ae11ecc54b21e892c5f0e830717c22",
+      "installedSha256": "ad4fe87ed8e8b7a2d0bd44067e72ec727b866663603f3cc33d9848c3d7796d0b",
+      "installedBytes": 16185344
+    },
+    "helperManifestSha256": "9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441",
+    "helperFilesChecked": 96,
+    "helperFailures": 0,
+    "helperTotalFiles": 97
+  },
+  "profile": {
+    "at": "2026-09-20T17:03:47.163Z",
+    "enabled": true,
+    "cellsChecked": 36,
+    "mismatches": [],
+    "latestBackupExact": true,
+    "originalBackupExisted": true,
+    "originalBackupPreservedOrCreated": true,
+    "applicationsPreserved": true,
+    "voicePreserved": true,
+    "audioEndpointPreserved": true,
+    "error": false
+  },
+  "native_hint": {
+    "at": "2026-09-20T17:04:43.641Z",
+    "hint": "当前单按立即退格，按住持续删除，松开停止。",
+    "ordinaryImmediate": true,
+    "oldPunctuationExplanation": false,
+    "undoOptionExists": true
+  },
+  "switch_before": {
+    "at": "2026-09-20T17:03:47.971Z",
+    "count": 1,
+    "switchExists": true,
+    "checked": "false",
+    "disabled": false,
+    "label": "补齐返回、音量＋/－按键",
+    "text": "补齐返回、音量＋/－按键未启用已关闭RC003 · 需要管理员权限。开启时由辅助程序申请 Windows 授权；主程序保持普通权限，无需修改驱动。每次启动无线麦后需手动开启。按键动作以当前映射为准，未配置动作的增强按键只显示高亮。关闭会停止增强并释放增强按键。",
+    "beforeDiagram": true,
+    "aboveDiagram": true,
+    "visible": true,
+    "horizontalOverflow": false,
+    "testFixtureAbsent": true,
+    "status": {
+      "phase": "stopped",
+      "lastError": null,
+      "generation": 0,
+      "reportCount": 0,
+      "edgeCount": 0
+    }
+  },
+  "switch_on": {
+    "at": "2026-09-20T17:04:26.425Z",
+    "count": 1,
+    "switchExists": true,
+    "checked": "true",
+    "disabled": false,
+    "label": "补齐返回、音量＋/－按键",
+    "text": "补齐返回、音量＋/－按键正在准备…已开启RC003 · 需要管理员权限。开启时由辅助程序申请 Windows 授权；主程序保持普通权限，无需修改驱动。每次启动无线麦后需手动开启。按键动作以当前映射为准，未配置动作的增强按键只显示高亮。关闭会停止增强并释放增强按键。请按一下方向键并松开，完成首次初始化。",
+    "beforeDiagram": true,
+    "aboveDiagram": true,
+    "visible": true,
+    "horizontalOverflow": false,
+    "testFixtureAbsent": true,
+    "status": {
+      "phase": "waiting",
+      "lastError": "awaiting_neutral",
+      "generation": 1,
+      "reportCount": 0,
+      "edgeCount": 0
+    }
+  },
+  "switch_off": {
+    "at": "2026-09-20T17:04:27.168Z",
+    "count": 1,
+    "switchExists": true,
+    "checked": "false",
+    "disabled": false,
+    "label": "补齐返回、音量＋/－按键",
+    "text": "补齐返回、音量＋/－按键未启用已关闭RC003 · 需要管理员权限。开启时由辅助程序申请 Windows 授权；主程序保持普通权限，无需修改驱动。每次启动无线麦后需手动开启。按键动作以当前映射为准，未配置动作的增强按键只显示高亮。关闭会停止增强并释放增强按键。",
+    "beforeDiagram": true,
+    "aboveDiagram": true,
+    "visible": true,
+    "horizontalOverflow": false,
+    "testFixtureAbsent": true,
+    "status": {
+      "phase": "stopped",
+      "lastError": null,
+      "generation": 1,
+      "reportCount": 0,
+      "edgeCount": 0
+    }
+  },
+  "startup": {
+    "audio": "ready",
+    "source_verified": true,
+    "voice": "idle",
+    "connection": "ready",
+    "main_elevated": false
+  },
+  "helper_stop": {
+    "exit_code": 0,
+    "error_mask": 0,
+    "frontend_elapsed_ms": 163,
+    "helper_exited": true
+  },
+  "test_fixture": {
+    "production_ui_and_assets_contain_fixture": false,
+    "native_fixture_absent": true,
+    "temporary_fixture_removed": true
+  },
+  "validation": {
+    "physical_rc003_plain_back": "passed_on_e8718f1_configuration",
+    "switch_start_stop": "passed",
+    "button_page_tests": 37,
+    "profile_tests": 24,
+    "gesture_tests": 33,
+    "strict_idle_first": "deferred",
+    "component_tests": 12,
+    "native_layout": "passed",
+    "rc001": "deferred",
+    "codex_action_effects": "deferred",
+    "fmt": "passed",
+    "new_tv_physical_actions": "deferred",
+    "physical_initialization": "passed"
+  },
+  "publication": "none_local_only",
+  "switch_final": {
+    "at": "2026-09-20T17:06:40.217Z",
+    "count": 1,
+    "switchExists": true,
+    "checked": "true",
+    "disabled": false,
+    "label": "补齐返回、音量＋/－按键",
+    "text": "补齐返回、音量＋/－按键增强已就绪已开启RC003 · 需要管理员权限。开启时由辅助程序申请 Windows 授权；主程序保持普通权限，无需修改驱动。每次启动无线麦后需手动开启。按键动作以当前映射为准，未配置动作的增强按键只显示高亮。关闭会停止增强并释放增强按键。按下返回或音量键，在「按键映射」中检查高亮与已配置动作。",
+    "beforeDiagram": true,
+    "aboveDiagram": true,
+    "visible": true,
+    "horizontalOverflow": false,
+    "testFixtureAbsent": true,
+    "status": {
+      "phase": "ready",
+      "lastError": null,
+      "generation": 2,
+      "reportCount": 1,
+      "edgeCount": 0
+    }
+  }
+}

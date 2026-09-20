@@ -40,23 +40,27 @@ export function buildCodingProfile(current: ButtonMappings): ButtonMappings {
     long: shortcut("control", "comma"),
   };
   next.actions.menu = {
-    single: shortcut("control", "page_down"),
-    double: shortcut("control", "shift", "p"),
-    long: shortcut("control", "page_up"),
+    single: shortcut("control", "shift", "p"),
+    double: shortcut("control", "shift", "m"),
+    long: shortcut("control", "alt", "a"),
   };
   next.actions.tv = {
     single: shortcut("control", "alt", "b"),
-    double: shortcut("control", "backquote"),
-    long: shortcut("control", "p"),
+    double: shortcut("control", "b"),
+    long: shortcut("control", "z"),
   };
   next.actions.power = singleAction(shortcut("escape"));
   for (const key of ["up", "down", "left", "right"] as const) {
     next.actions[key] = singleAction(shortcut(key));
   }
   next.actions.ok = singleAction(shortcut("enter"));
-  next.actions.back = singleAction({ type: "normal_backspace" });
-  next.actions.volume_up = singleAction({ type: "disabled" });
-  next.actions.volume_down = singleAction({ type: "disabled" });
+  next.actions.back = {
+    single: { type: "normal_backspace" },
+    double: { type: "disabled" },
+    long: { type: "disabled" },
+  };
+  next.actions.volume_up = singleAction(shortcut("control", "page_up"));
+  next.actions.volume_down = singleAction(shortcut("control", "page_down"));
   return next;
 }
 

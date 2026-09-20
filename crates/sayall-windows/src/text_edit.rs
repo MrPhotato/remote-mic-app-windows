@@ -8,6 +8,11 @@
 
 const MAX_CONTEXT_UNITS: usize = 2048;
 
+#[cfg(windows)]
+pub(crate) use windows_impl::{
+    run_checked as delete_to_previous_punctuation_checked, verify_focused_edit,
+};
+
 #[derive(Debug, PartialEq, Eq)]
 struct DeletePlan {
     /// Last punctuation or paragraph break, retained by the deletion.
@@ -87,6 +92,12 @@ fn plan_delete(prefix: &str, reaches_document_start: bool) -> Result<DeletePlan,
     })
 }
 
+/// Retained portion of a complete, bounded prefix before the caret.
+pub(crate) fn retained_prefix(prefix: &str) -> Result<&str, &'static str> {
+    let plan = plan_delete(prefix, true)?;
+    Ok(&prefix[..prefix.len() - plan.suffix.len()])
+}
+
 /// Delete back to the closest punctuation or current paragraph start, retaining
 /// punctuation. An empty suffix succeeds without injecting any input.
 pub fn delete_to_previous_punctuation() -> Result<(), String> {
@@ -102,7 +113,7 @@ pub fn delete_to_previous_punctuation_with_cancel(
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
-        windows_impl::run(cancelled)
+        windows_impl::run_checked(cancelled).map_err(error_message)
     }
     #[cfg(not(windows))]
     {
@@ -112,8 +123,25 @@ pub fn delete_to_previous_punctuation_with_cancel(
 }
 
 #[cfg(windows)]
+pub(crate) fn error_message(reason: &str) -> String {
+    match reason {
+        "cancelled" => "按标点删除已取消。",
+        "selection_cleanup_unconfirmed" => "未能确认原光标已恢复，请检查当前选区后再继续编辑。",
+        "operation_timeout" => "读取文本超时，未发送删除键。",
+        "focus_changed" | "caret_changed" | "text_changed" | "selection_changed" => {
+            "输入焦点或文本已改变，已停止按标点删除。"
+        }
+        "context_limit" | "boundary_outside_context" => "当前段落过长，无法安全确定删除边界。",
+        "input_failed" => "删除按键未完整发送，请检查输入框。",
+        _ => "当前输入框不支持安全的按标点删除，未发送删除键。",
+    }
+    .to_owned()
+}
+
+#[cfg(windows)]
 mod windows_impl {
     use super::{plan_delete, MAX_CONTEXT_UNITS};
+    use std::cell::Cell;
     use std::time::{Duration, Instant};
     use windows::core::{Interface, BSTR};
     use windows::Win32::Foundation::{HWND, VARIANT_FALSE};
@@ -132,10 +160,13 @@ mod windows_impl {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_BACK, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, GA_ROOT,
+    };
 
     type EditResult<T> = Result<T, &'static str>;
     const OPERATION_BUDGET: Duration = Duration::from_secs(2);
+    const MAX_FOCUS_ANCESTORS: usize = 32;
 
     struct Budget<'a> {
         started: Instant,
@@ -166,13 +197,19 @@ mod windows_impl {
         crate::gatt_note(format!("text_edit action=delete_to_previous_punctuation phase={phase} terminal_result={result} reason={reason} elapsed_ms={}", started.elapsed().as_millis()));
     }
 
-    pub(super) fn run(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
+    pub(crate) fn run_checked(cancelled: &dyn Fn() -> bool) -> Result<(), &'static str> {
         let budget = Budget {
             started: Instant::now(),
             cancelled,
         };
         note("requested", "unknown", "user_requested", budget.started);
-        let result = unsafe { execute(&budget) };
+        let cleanup_unconfirmed = Cell::new(false);
+        let result = unsafe { execute(&budget, &cleanup_unconfirmed) };
+        let result = if cleanup_unconfirmed.get() {
+            Err("selection_cleanup_unconfirmed")
+        } else {
+            result
+        };
         match result {
             Ok(reason) => {
                 note(
@@ -189,19 +226,7 @@ mod windows_impl {
             }
             Err(reason) => {
                 note("completed", "failed", reason, budget.started);
-                Err(match reason {
-                    "cancelled" => "按标点删除已取消，未发送删除键。",
-                    "operation_timeout" => "读取文本超时，未发送删除键。",
-                    "focus_changed" | "caret_changed" | "text_changed" | "selection_changed" => {
-                        "输入焦点或文本已改变，已停止按标点删除。"
-                    }
-                    "context_limit" | "boundary_outside_context" => {
-                        "当前段落过长，无法安全确定删除边界。"
-                    }
-                    "input_failed" => "删除按键未完整发送，请检查输入框。",
-                    _ => "当前输入框不支持安全的按标点删除，未发送删除键。",
-                }
-                .to_owned())
+                Err(reason)
             }
         }
     }
@@ -248,6 +273,103 @@ mod windows_impl {
         String::from_utf16(&value).map_err(|_| "invalid_unicode")
     }
 
+    unsafe fn same_focused_element(
+        uia: &IUIAutomation,
+        element: &IUIAutomationElement,
+        foreground: HWND,
+    ) -> EditResult<()> {
+        if GetForegroundWindow() != foreground {
+            return Err("focus_changed");
+        }
+        let focused = uia.GetFocusedElement().map_err(|_| "focus_unavailable")?;
+        if !uia
+            .CompareElements(element, &focused)
+            .map_err(|_| "focus_unavailable")?
+            .as_bool()
+            || !element
+                .CurrentHasKeyboardFocus()
+                .map_err(|_| "focus_unavailable")?
+                .as_bool()
+        {
+            return Err("focus_changed");
+        }
+        Ok(())
+    }
+
+    struct NativeHost {
+        root: HWND,
+        process_matches: bool,
+    }
+
+    // Stop at the nearest HWND-bearing UIA element. An unrelated host must not
+    // become acceptable merely because a later ancestor reports another HWND.
+    fn verify_first_native_host(
+        foreground: HWND,
+        budget: &Budget<'_>,
+        mut next: impl FnMut() -> EditResult<Option<NativeHost>>,
+    ) -> EditResult<usize> {
+        for depth in 0..MAX_FOCUS_ANCESTORS {
+            budget.check()?;
+            let host = next()?;
+            budget.check()?;
+            if let Some(host) = host {
+                if !host.process_matches {
+                    return Err("foreground_host_process_mismatch");
+                }
+                if host.root.0.is_null() {
+                    return Err("foreground_host_unavailable");
+                }
+                if host.root != foreground {
+                    return Err("foreground_ancestry_mismatch");
+                }
+                return Ok(depth);
+            }
+        }
+        Err("foreground_ancestry_limit")
+    }
+
+    unsafe fn validate_foreground_ancestry(
+        uia: &IUIAutomation,
+        element: &IUIAutomationElement,
+        foreground: HWND,
+        budget: &Budget<'_>,
+    ) -> EditResult<usize> {
+        let walker = uia
+            .RawViewWalker()
+            .map_err(|_| "foreground_ancestry_unavailable")?;
+        let mut ancestor = element.clone();
+        let mut first = true;
+        verify_first_native_host(foreground, budget, || {
+            if !first {
+                ancestor = walker
+                    .GetParentElement(&ancestor)
+                    .map_err(|_| "foreground_ancestry_unavailable")?;
+                budget.check()?;
+            }
+            first = false;
+            let window = ancestor
+                .CurrentNativeWindowHandle()
+                .map_err(|_| "foreground_host_unavailable")?;
+            if window.0.is_null() {
+                return Ok(None);
+            }
+            if !IsWindow(Some(window)).as_bool() {
+                return Err("foreground_host_unavailable");
+            }
+            let mut native_pid = 0;
+            GetWindowThreadProcessId(window, Some(&mut native_pid));
+            let provider_pid = ancestor.CurrentProcessId().map_err(|_| "process_unknown")?;
+            Ok(Some(NativeHost {
+                // GA_ROOT deliberately excludes owner relationships: an owned
+                // popup or another top-level window is not the foreground host.
+                root: GetAncestor(window, GA_ROOT),
+                process_matches: native_pid != 0
+                    && provider_pid > 0
+                    && provider_pid as u32 == native_pid,
+            }))
+        })
+    }
+
     unsafe fn validate_focus(
         uia: &IUIAutomation,
         element: &IUIAutomationElement,
@@ -255,21 +377,7 @@ mod windows_impl {
         budget: &Budget<'_>,
     ) -> EditResult<()> {
         budget.check()?;
-        if GetForegroundWindow() != foreground {
-            return Err("focus_changed");
-        }
-        let focused = uia.GetFocusedElement().map_err(|_| "focus_changed")?;
-        if !uia
-            .CompareElements(element, &focused)
-            .map_err(|_| "focus_changed")?
-            .as_bool()
-            || !element
-                .CurrentHasKeyboardFocus()
-                .map_err(|_| "focus_changed")?
-                .as_bool()
-        {
-            return Err("focus_changed");
-        }
+        same_focused_element(uia, element, foreground)?;
         if !element
             .CurrentIsEnabled()
             .map_err(|_| "element_unavailable")?
@@ -286,10 +394,39 @@ mod windows_impl {
         }
         let mut pid = 0;
         GetWindowThreadProcessId(foreground, Some(&mut pid));
-        if pid == 0 || element.CurrentProcessId().map_err(|_| "process_unknown")? as u32 != pid {
-            return Err("foreground_process_mismatch");
+        let element_pid = element.CurrentProcessId().map_err(|_| "process_unknown")?;
+        if pid == 0 || element_pid <= 0 {
+            return Err("process_unknown");
+        }
+        if element_pid as u32 != pid {
+            // Hosted editors (for example WebView2) can expose focused UIA
+            // elements from a different process. Prove their window ancestry
+            // instead of trusting arbitrary providers or process parentage.
+            let depth = validate_foreground_ancestry(uia, element, foreground, budget)?;
+            same_focused_element(uia, element, foreground)?;
+            let mut current_pid = 0;
+            GetWindowThreadProcessId(foreground, Some(&mut current_pid));
+            if current_pid != pid {
+                return Err("focus_changed");
+            }
+            budget.check()?;
+            crate::gatt_note(format!(
+                "text_edit action=delete_to_previous_punctuation phase=focus_binding terminal_result=passed reason=foreground_ancestor_verified ancestor_depth={depth} elapsed_ms={}",
+                budget.started.elapsed().as_millis()
+            ));
         }
         budget.check()
+    }
+
+    /// Share the same hosted-editor identity checks and caller's elapsed budget.
+    pub(crate) unsafe fn verify_focused_edit(
+        uia: &IUIAutomation,
+        element: &IUIAutomationElement,
+        foreground: HWND,
+        started: Instant,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), &'static str> {
+        validate_focus(uia, element, foreground, &Budget { started, cancelled })
     }
 
     unsafe fn no_held_keys() -> EditResult<()> {
@@ -303,8 +440,50 @@ mod windows_impl {
         }
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum SelectionState {
+        Caret,
+        Deletion,
+        Other,
+    }
+
+    fn wait_for_selection(
+        expected: SelectionState,
+        budget: &Budget<'_>,
+        phase: &str,
+        mut observe: impl FnMut(bool) -> EditResult<SelectionState>,
+    ) -> EditResult<()> {
+        let started = Instant::now();
+        let mut pending_count = 0;
+        let result = (|| loop {
+            budget.check()?;
+            let state = observe(pending_count == 0)?;
+            budget.check()?;
+            if state == SelectionState::Other {
+                return Err("selection_changed");
+            }
+            if state == expected {
+                return Ok(());
+            }
+            pending_count += 1;
+            // Each iteration observes the provider again; no guessed settling
+            // delay or unchecked sleep replaces an exact selection check.
+            std::thread::yield_now();
+        })();
+        crate::gatt_note(format!(
+            "text_edit action=delete_to_previous_punctuation phase={phase} terminal_result={} reason={} target={expected:?} pending_count={pending_count} observed_ms={} elapsed_ms={}",
+            if result.is_ok() { "passed" } else { "failed" },
+            result.as_ref().err().copied().unwrap_or("selection_observed"),
+            started.elapsed().as_millis(),
+            budget.started.elapsed().as_millis()
+        ));
+        result
+    }
+
     struct SelectionRollback<'a> {
         committed: bool,
+        selection_observed: bool,
+        cleanup_unconfirmed: &'a Cell<bool>,
         uia: &'a IUIAutomation,
         element: &'a IUIAutomationElement,
         pattern: &'a IUIAutomationTextPattern,
@@ -315,42 +494,102 @@ mod windows_impl {
         before: &'a str,
         suffix: &'a str,
         started: Instant,
+        select_started: Instant,
+        select_call_us: u128,
     }
 
     impl SelectionRollback<'_> {
-        unsafe fn restore_if_unchanged(&self) -> EditResult<()> {
-            // Cleanup deliberately ignores the operation's cancellation/budget:
-            // leaving our wide selection could turn the next ordinary Backspace
-            // into a bulk deletion. Each UIA call retains its 300ms RPC timeout.
-            if GetForegroundWindow() != self.foreground {
-                return Err("cleanup_focus_changed");
-            }
+        unsafe fn observe_selection(
+            &self,
+            budget: &Budget<'_>,
+            log_snapshot: bool,
+        ) -> EditResult<SelectionState> {
+            budget.check()?;
             let actual = selected(self.pattern)?;
-            if !actual
+            let selection_read_us = self.select_started.elapsed().as_micros();
+            budget.check()?;
+            same_focused_element(self.uia, self.element, self.foreground)?;
+            budget.check()?;
+            let range_matches = actual
                 .Compare(self.deletion)
-                .map_err(|_| "cleanup_range_unknown")?
-                .as_bool()
-                || text(&actual)? != self.suffix
-                || text(self.prefix)? != self.before
-            {
-                return Err("cleanup_selection_or_text_changed");
+                .map_err(|_| "selection_changed")?
+                .as_bool();
+            let caret_matches = actual
+                .Compare(self.caret)
+                .map_err(|_| "selection_changed")?
+                .as_bool();
+            budget.check()?;
+            let actual_text = text(&actual)?;
+            let current_prefix = text(self.prefix)?;
+            budget.check()?;
+            let text_matches = actual_text == self.suffix;
+            let context_matches = current_prefix == self.before;
+            let selection_empty = empty(&actual)?;
+            let deletion_unchanged = text(self.deletion)? == self.suffix;
+            budget.check()?;
+            let state = if range_matches && text_matches {
+                SelectionState::Deletion
+            } else if caret_matches && selection_empty && actual_text.is_empty() {
+                SelectionState::Caret
+            } else {
+                SelectionState::Other
+            };
+            if log_snapshot {
+                crate::gatt_note(format!(
+                    "text_edit action=delete_to_previous_punctuation phase=selection_verify terminal_result=observed state={state:?} range_matches={range_matches} caret_matches={caret_matches} actual_utf16_units={} suffix_matches={text_matches} prefix_utf16_units={} context_matches={context_matches} actual_empty={selection_empty} deletion_unchanged={deletion_unchanged} select_call_us={} selection_read_us={selection_read_us} elapsed_ms={}",
+                    actual_text.encode_utf16().count(),
+                    current_prefix.encode_utf16().count(),
+                    self.select_call_us,
+                    self.started.elapsed().as_millis()
+                ));
             }
-            // The focus comparison is the final COM read before changing the
-            // selection. A changed input inside the same window is also rejected.
-            let focused = self
-                .uia
-                .GetFocusedElement()
-                .map_err(|_| "cleanup_focus_changed")?;
-            if !self
-                .uia
-                .CompareElements(self.element, &focused)
-                .map_err(|_| "cleanup_focus_changed")?
-                .as_bool()
-                || GetForegroundWindow() != self.foreground
-            {
-                return Err("cleanup_focus_changed");
+            if !context_matches || !deletion_unchanged {
+                return Err("text_changed");
             }
-            self.caret.Select().map_err(|_| "cleanup_restore_failed")
+            // Selection, context and focus must describe one unchanged editor.
+            same_focused_element(self.uia, self.element, self.foreground)?;
+            budget.check()?;
+            Ok(state)
+        }
+
+        unsafe fn restore_if_unchanged(&self) -> EditResult<&'static str> {
+            // A cancelled Select can still arrive later. Cleanup has its own
+            // finite budget and ignores cancellation, but keeps every focus,
+            // context and exact-range guard. Each RPC retains its 300ms timeout.
+            let cleanup = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let initial = self.observe_selection(&cleanup, true)?;
+            if self.selection_observed && initial == SelectionState::Caret {
+                return Ok("original_caret_already_present");
+            }
+            let mut first = Some(initial);
+            wait_for_selection(
+                SelectionState::Deletion,
+                &cleanup,
+                "cleanup_wait_selection",
+                |log| match first.take() {
+                    Some(state) => Ok(state),
+                    None => self.observe_selection(&cleanup, log),
+                },
+            )?;
+            // A newer user selection must not be overwritten while the request
+            // settles. Only our still-exact deletion range may be restored.
+            match self.observe_selection(&cleanup, false)? {
+                SelectionState::Caret => return Ok("original_caret_already_present"),
+                SelectionState::Other => return Err("selection_changed"),
+                SelectionState::Deletion => {}
+            }
+            cleanup.check()?;
+            self.caret.Select().map_err(|_| "cleanup_restore_failed")?;
+            wait_for_selection(
+                SelectionState::Caret,
+                &cleanup,
+                "cleanup_wait_caret",
+                |log| self.observe_selection(&cleanup, log),
+            )?;
+            Ok("original_caret_restored")
         }
     }
 
@@ -360,20 +599,30 @@ mod windows_impl {
                 return;
             }
             let outcome = unsafe { self.restore_if_unchanged() };
+            if let Err(reason) = outcome {
+                // Known newer user state is deliberately preserved. Failure to
+                // observe the provider (including timeout) is not a confirmed
+                // restoration and must reach the caller, not only the log.
+                if !matches!(
+                    reason,
+                    "focus_changed" | "text_changed" | "selection_changed"
+                ) {
+                    self.cleanup_unconfirmed.set(true);
+                }
+            }
             note(
                 "selection_cleanup",
-                if outcome.is_ok() {
-                    "submitted"
-                } else {
-                    "skipped"
-                },
-                outcome.err().unwrap_or("original_caret_restored"),
+                if outcome.is_ok() { "passed" } else { "skipped" },
+                outcome.unwrap_or_else(|reason| reason),
                 self.started,
             );
         }
     }
 
-    unsafe fn execute(budget: &Budget<'_>) -> EditResult<&'static str> {
+    unsafe fn execute(
+        budget: &Budget<'_>,
+        cleanup_unconfirmed: &Cell<bool>,
+    ) -> EditResult<&'static str> {
         budget.check()?;
         CoInitializeEx(None, COINIT_MULTITHREADED)
             .ok()
@@ -431,22 +680,62 @@ mod windows_impl {
             }
         }
         budget.check()?;
+        let document = pattern.DocumentRange().map_err(|_| "range_unsupported")?;
+        if caret
+            .CompareEndpoints(START, &document, START)
+            .map_err(|_| "range_unsupported")?
+            < 0
+            || caret
+                .CompareEndpoints(END, &document, END)
+                .map_err(|_| "range_unsupported")?
+                > 0
+        {
+            return Err("caret_outside_document");
+        }
         let prefix = caret.Clone().map_err(|_| "range_unsupported")?;
-        prefix
+        let moved = prefix
             .MoveEndpointByUnit(START, TextUnit_Character, -(MAX_CONTEXT_UNITS as i32))
             .map_err(|_| "range_unsupported")?;
+        // Some hosted providers navigate beyond this editor into the page's AX
+        // text. Bound the cloned range to this TextPattern's own DocumentRange
+        // before reading text or searching for punctuation.
+        let clamped = prefix
+            .CompareEndpoints(START, &document, START)
+            .map_err(|_| "range_unsupported")?
+            < 0;
+        if clamped {
+            prefix
+                .MoveEndpointByRange(START, &document, START)
+                .map_err(|_| "prefix_clamp_failed")?;
+        }
         if prefix
             .CompareEndpoints(END, &caret, END)
             .map_err(|_| "range_unsupported")?
             != 0
         {
-            return Err("range_unsupported");
+            return Err("prefix_caret_mismatch");
         }
-        let document = pattern.DocumentRange().map_err(|_| "range_unsupported")?;
-        let at_start = prefix
+        let start_order = prefix
             .CompareEndpoints(START, &document, START)
-            .map_err(|_| "range_unsupported")?
-            == 0;
+            .map_err(|_| "range_unsupported")?;
+        if start_order < 0
+            || prefix
+                .CompareEndpoints(END, &document, END)
+                .map_err(|_| "range_unsupported")?
+                > 0
+            || prefix
+                .CompareEndpoints(START, &prefix, END)
+                .map_err(|_| "range_unsupported")?
+                > 0
+        {
+            return Err("prefix_outside_document");
+        }
+        budget.check()?;
+        crate::gatt_note(format!(
+            "text_edit action=delete_to_previous_punctuation phase=context_bound terminal_result=passed reason=document_range_verified clamped={clamped} moved_units={moved} elapsed_ms={}",
+            budget.started.elapsed().as_millis()
+        ));
+        let at_start = start_order == 0;
         let before = text(&prefix)?;
         let plan = plan_delete(&before, at_start)?;
         if plan.suffix.is_empty() {
@@ -497,6 +786,8 @@ mod windows_impl {
         budget.check()?;
         let mut rollback = SelectionRollback {
             committed: false,
+            selection_observed: false,
+            cleanup_unconfirmed,
             uia: &uia,
             element: &element,
             pattern: &pattern,
@@ -507,18 +798,16 @@ mod windows_impl {
             before: &before,
             suffix: &plan.suffix,
             started: budget.started,
+            select_started: Instant::now(),
+            select_call_us: 0,
         };
         deletion.Select().map_err(|_| "selection_failed")?;
+        rollback.select_call_us = rollback.select_started.elapsed().as_micros();
+        wait_for_selection(SelectionState::Deletion, budget, "selection_wait", |log| {
+            rollback.observe_selection(budget, log)
+        })?;
+        rollback.selection_observed = true;
         let actual = selected(&pattern)?;
-        if !actual
-            .Compare(&deletion)
-            .map_err(|_| "selection_changed")?
-            .as_bool()
-            || text(&actual)? != plan.suffix
-            || text(&prefix)? != before
-        {
-            return Err("selection_changed");
-        }
         editable(&actual)?;
         validate_focus(&uia, &element, foreground, budget)?;
         no_held_keys()?;
@@ -554,6 +843,254 @@ mod windows_impl {
             .map_err(|_| "input_failed")?;
         rollback.committed = true;
         Ok("backspace_submitted")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::cell::Cell;
+
+        fn window(value: usize) -> HWND {
+            HWND(value as *mut core::ffi::c_void)
+        }
+
+        fn host(root: usize, process_matches: bool) -> Option<NativeHost> {
+            Some(NativeHost {
+                root: window(root),
+                process_matches,
+            })
+        }
+
+        #[test]
+        fn pending_selection_waits_for_the_exact_target() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let mut states = [
+                SelectionState::Caret,
+                SelectionState::Caret,
+                SelectionState::Deletion,
+            ]
+            .into_iter();
+            assert_eq!(
+                wait_for_selection(
+                    SelectionState::Deletion,
+                    &budget,
+                    "test_selection_wait",
+                    |_| Ok(states.next().unwrap())
+                ),
+                Ok(())
+            );
+            assert_eq!(states.len(), 0);
+        }
+
+        #[test]
+        fn pending_selection_rejects_newer_selection_focus_or_text() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            for rejected in [
+                Ok(SelectionState::Other),
+                Err("focus_changed"),
+                Err("text_changed"),
+            ] {
+                let expected = rejected.err().unwrap_or("selection_changed");
+                let mut states = [
+                    Ok(SelectionState::Caret),
+                    rejected,
+                    Ok(SelectionState::Deletion),
+                ]
+                .into_iter();
+                assert_eq!(
+                    wait_for_selection(
+                        SelectionState::Deletion,
+                        &budget,
+                        "test_selection_wait",
+                        |_| states.next().unwrap()
+                    ),
+                    Err(expected)
+                );
+                assert_eq!(
+                    states.len(),
+                    1,
+                    "a newer user state must never be waited away"
+                );
+            }
+        }
+
+        #[test]
+        fn cancelled_pending_select_can_settle_and_confirm_cleanup_independently() {
+            let cancelled = Cell::new(false);
+            let check = || cancelled.get();
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &check,
+            };
+            assert_eq!(
+                wait_for_selection(
+                    SelectionState::Deletion,
+                    &budget,
+                    "test_selection_wait",
+                    |_| {
+                        cancelled.set(true);
+                        Ok(SelectionState::Caret)
+                    }
+                ),
+                Err("cancelled")
+            );
+
+            let cleanup = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let mut late_selection = [SelectionState::Caret, SelectionState::Deletion].into_iter();
+            assert_eq!(
+                wait_for_selection(
+                    SelectionState::Deletion,
+                    &cleanup,
+                    "test_cleanup_wait_selection",
+                    |_| Ok(late_selection.next().unwrap())
+                ),
+                Ok(())
+            );
+            assert_eq!(late_selection.len(), 0);
+            // A successful caret.Select submission is not yet a restoration.
+            let mut restoration = [
+                SelectionState::Deletion,
+                SelectionState::Deletion,
+                SelectionState::Caret,
+            ]
+            .into_iter();
+            assert_eq!(
+                wait_for_selection(
+                    SelectionState::Caret,
+                    &cleanup,
+                    "test_cleanup_wait_caret",
+                    |_| Ok(restoration.next().unwrap())
+                ),
+                Ok(())
+            );
+            assert_eq!(restoration.len(), 0);
+        }
+
+        #[test]
+        fn pending_selection_and_cleanup_have_finite_budgets() {
+            let budget = Budget {
+                started: Instant::now() - OPERATION_BUDGET - Duration::from_millis(1),
+                cancelled: &|| false,
+            };
+            for expected in [SelectionState::Caret, SelectionState::Deletion] {
+                assert_eq!(
+                    wait_for_selection(expected, &budget, "test_selection_wait", |_| panic!(
+                        "expired budget must not query provider"
+                    )),
+                    Err("operation_timeout")
+                );
+            }
+        }
+
+        #[test]
+        fn cross_process_focus_requires_a_matching_native_ancestor() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let mut ancestors = [None, None, host(1, true)].into_iter();
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || Ok(ancestors.next().unwrap())),
+                Ok(2)
+            );
+        }
+
+        #[test]
+        fn first_foreign_or_invalid_native_host_cannot_be_bypassed() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            for (root, process_matches, reason) in [
+                (2, true, "foreground_ancestry_mismatch"),
+                (0, true, "foreground_host_unavailable"),
+                (1, false, "foreground_host_process_mismatch"),
+            ] {
+                let mut ancestors = [None, host(root, process_matches), host(1, true)].into_iter();
+                assert_eq!(
+                    verify_first_native_host(window(1), &budget, || Ok(ancestors.next().unwrap())),
+                    Err(reason)
+                );
+                assert_eq!(
+                    ancestors.len(),
+                    1,
+                    "must not search past the nearest native host"
+                );
+            }
+        }
+
+        #[test]
+        fn missing_or_cyclic_native_ancestry_is_bounded() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let mut visits = 0;
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || {
+                    visits += 1;
+                    Ok(None)
+                }),
+                Err("foreground_ancestry_limit")
+            );
+            assert_eq!(visits, MAX_FOCUS_ANCESTORS);
+        }
+
+        #[test]
+        fn native_ancestry_api_failure_is_not_an_identity_fallback() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || Err(
+                    "foreground_ancestry_unavailable"
+                )),
+                Err("foreground_ancestry_unavailable")
+            );
+        }
+
+        #[test]
+        fn native_ancestry_cancelled_during_read_cannot_pass() {
+            let cancelled = Cell::new(false);
+            let check = || cancelled.get();
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &check,
+            };
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || {
+                    cancelled.set(true);
+                    Ok(host(1, true))
+                }),
+                Err("cancelled")
+            );
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || panic!("already cancelled")),
+                Err("cancelled")
+            );
+        }
+
+        #[test]
+        fn native_ancestry_budget_is_shared_with_the_text_operation() {
+            let budget = Budget {
+                started: Instant::now() - OPERATION_BUDGET - Duration::from_millis(1),
+                cancelled: &|| false,
+            };
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || panic!("budget already expired")),
+                Err("operation_timeout")
+            );
+        }
     }
 }
 

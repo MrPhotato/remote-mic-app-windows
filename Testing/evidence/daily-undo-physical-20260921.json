@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "source_revision": "e8718f1372cecf6085c1bda8b6b43e5ee39b35b6",
+  "recorded_local_date": "2026-09-21",
+  "captured_at_utc": "2026-09-20T16:33:11.928Z",
+  "rc003_only": true,
+  "relevant_log_entries_match_requested_installed_source": true,
+  "default_back_double_undo_enabled_during_capture": true,
+  "user_rejected_default_double_undo": true,
+  "user_reported_rapid_deletion_was_undone": true,
+  "user_requested_default_double_disabled": true,
+  "ctrl_z_remains_user_assignable": true,
+  "all_functionality_passed": false,
+  "ready_idle_check": {
+    "ready": true,
+    "observed_quiet_interval_ms": 237274,
+    "zero_new_semantic_edges": true,
+    "zero_new_helper_reports": true,
+    "zero_new_text_input_events": true,
+    "verified_at_utc": "2026-09-20T16:28:47.361Z",
+    "strict_cold_first_back_verified": false,
+    "intervening_left_press_observed": true,
+    "left_down_at_utc": "2026-09-20T16:31:47.537Z",
+    "first_back_down_at_utc": "2026-09-20T16:31:48.525Z",
+    "left_to_first_back_down_ms": 988
+  },
+  "first_back": {
+    "actual_deletion_observed": true,
+    "before_length": 200,
+    "after_length": 199,
+    "ui_semantic_down_to_trusted_backspace_down_ms": 7,
+    "ui_semantic_down_to_dom_length_change_ms": 18,
+    "backend_map_fire_to_dom_length_change_ms": 20,
+    "physical_radio_transport_latency_measured": false
+  },
+  "observed_inputs": {
+    "semantic_back_down_up_pairs": 12,
+    "helper_semantic_back_edges": 24,
+    "back_single_map_actions": 8,
+    "back_double_ctrl_z_map_actions": 4,
+    "trusted_backspace_down_up_pairs": 8,
+    "trusted_control_down_up_pairs": 4,
+    "trusted_z_down_up_pairs": 4,
+    "all_observed_key_events_trusted": true,
+    "all_z_events_control_modified": true,
+    "all_semantic_and_keyboard_edges_paired": true,
+    "initial_length": 200,
+    "final_length": 200
+  },
+  "ctrl_z_results": {
+    "actual_length_increases_observed": true,
+    "restoration_count": 4,
+    "changes": [
+      {
+        "ms_after_first_back_down": 443,
+        "before_length": 199,
+        "after_length": 200,
+        "increase_count": 1
+      },
+      {
+        "ms_after_first_back_down": 3343,
+        "before_length": 196,
+        "after_length": 200,
+        "increase_count": 4
+      },
+      {
+        "ms_after_first_back_down": 5952,
+        "before_length": 198,
+        "after_length": 200,
+        "increase_count": 2
+      },
+      {
+        "ms_after_first_back_down": 7143,
+        "before_length": 199,
+        "after_length": 200,
+        "increase_count": 1
+      }
+    ],
+    "restored_more_than_one_prior_character_in_some_cases": true
+  },
+  "hold_and_release_scope": {
+    "minimum_back_hold_ms": 62,
+    "maximum_back_hold_ms": 187,
+    "held_repeat_tested": false,
+    "held_repeat_release_stop_verified": false,
+    "final_quiet_interval_after_last_recorded_key_event_ms": 76243
+  },
+  "privacy": {
+    "text_content_recorded": false,
+    "device_identity_recorded": false,
+    "process_or_window_identifiers_recorded": false
+  }
+}

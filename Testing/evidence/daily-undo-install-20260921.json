@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "date": "2026-09-21",
+  "source_revision": "e8718f1372cecf6085c1bda8b6b43e5ee39b35b6",
+  "scope": "local_nsis_install_launch_profile_and_native_ui",
+  "build": "passed",
+  "graceful_exit": {
+    "at": "2026-09-20T16:20:33.932Z",
+    "previous_source": "8e7b68acf1af3ab0ce09b21615416af268684c2b",
+    "helper_exit_code": 0,
+    "error_mask": 0,
+    "forced": false
+  },
+  "installation": {
+    "at": "2026-09-21T00:20:52.5572089+08:00",
+    "installerExitCode": 0,
+    "installerSha256": "e9360373bff5e97b14037dc7df5e4d1ed9d29b570b2cf417f543876a3f8cc9b2",
+    "main": {
+      "mainMatchesBuild": true,
+      "bundleMarkerOnly": true,
+      "builtSha256": "3d73eb138a3ce33b8f199e8a2a2e792c32157d06b09a86bca21800ab0ba34eb6",
+      "installedSha256": "b06412b66cb5c4397cae3c585e508ff7bea7d6a0e6c9f0616640550cccc66e86",
+      "installedBytes": 16181248
+    },
+    "helperManifestSha256": "9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441",
+    "helperFilesChecked": 96,
+    "helperFailures": 0,
+    "helperTotalFiles": 97
+  },
+  "startup": {
+    "source_verified": true,
+    "main_elevated": false,
+    "connection": "ready",
+    "audio": "ready",
+    "voice": "idle",
+    "helper": "authenticated_waiting_for_physical_neutral"
+  },
+  "profile": {
+    "at": "2026-09-20T16:22:05.063Z",
+    "enabled": true,
+    "mismatches": [],
+    "latestBackupExact": true,
+    "originalBackupExisted": false,
+    "originalBackupPreservedOrCreated": true,
+    "applicationsPreserved": true,
+    "voicePreserved": true,
+    "audioEndpointPreserved": true,
+    "error": false
+  },
+  "native_hint": {
+    "at": "2026-09-20T16:22:05.366Z",
+    "hint": "当前返回第一击立即退格，双击时第二击发送一次 Ctrl + Z 撤销；具体撤销内容由当前应用决定。按住持续删除，松开停止。",
+    "immediateUndoHint": true,
+    "oldPunctuationExplanation": false,
+    "obsoleteWaitHint": false,
+    "undoOptionExists": true
+  },
+  "validation": {
+    "gesture_tests": 32,
+    "mapping_tests": 21,
+    "profile_tests": 24,
+    "button_page_tests": 34,
+    "ordinary_input_probe": "passed",
+    "physical_rc003": "deferred",
+    "idle_first": "deferred",
+    "codex_switching": "deferred",
+    "rc001": "deferred"
+  },
+  "publication": "none_local_only"
+}

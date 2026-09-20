@@ -188,6 +188,20 @@ impl SendInputRuntime {
             });
             return self.record(result, "LockWorkStation");
         }
+        crate::ble::gatt_note(format!(
+            "shortcut_tap phase=encoding keys={} physical_keys={} enter_scan={}",
+            chord.keys.len(),
+            chord
+                .keys
+                .iter()
+                .filter(|key| key.physical_scan_code().is_some())
+                .count(),
+            if chord.keys.contains(&crate::send_input::KeyCode::Enter) {
+                "1c"
+            } else {
+                "none"
+            }
+        ));
         let result = send_key_tap_with(&chord, real_send_input_batch);
         self.record(result, "SendInput")
     }
@@ -431,6 +445,42 @@ mod tests {
                     expected_extended
                 );
                 assert_eq!(key.dwFlags.contains(KEYEVENTF_KEYUP), expected_up);
+            }
+        }
+    }
+
+    #[test]
+    fn enter_chords_preserve_main_enter_identity_and_release_modifiers() {
+        for modifier in [
+            None,
+            Some(KeyCode::Control),
+            Some(KeyCode::LeftControl),
+            Some(KeyCode::RightControl),
+            Some(KeyCode::Shift),
+        ] {
+            let mut keys: Vec<_> = modifier.into_iter().collect();
+            keys.push(KeyCode::Enter);
+            let events = crate::send_input::plan_key_tap(&KeyChord { keys }).unwrap();
+            let enter_edges: Vec<_> = events
+                .iter()
+                .filter(|event| event.key == KeyCode::Enter)
+                .copied()
+                .collect();
+            assert_eq!(enter_edges.len(), 2);
+            for (edge, up) in enter_edges.into_iter().zip([false, true]) {
+                let input = build_input(edge);
+                let key = unsafe { input.Anonymous.ki };
+                assert_eq!(key.wVk.0, 0);
+                assert_eq!(key.wScan, 0x1C);
+                assert!(key.dwFlags.contains(KEYEVENTF_SCANCODE));
+                assert!(!key.dwFlags.contains(KEYEVENTF_EXTENDEDKEY));
+                assert_eq!(key.dwFlags.contains(KEYEVENTF_KEYUP), up);
+            }
+            if let Some(modifier) = modifier {
+                assert_eq!(events.first().unwrap().key, modifier);
+                assert!(!events.first().unwrap().is_key_up);
+                assert_eq!(events.last().unwrap().key, modifier);
+                assert!(events.last().unwrap().is_key_up);
             }
         }
     }

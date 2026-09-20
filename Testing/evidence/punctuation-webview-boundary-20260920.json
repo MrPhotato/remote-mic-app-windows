@@ -1,0 +1,153 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "model": "rc003",
+  "trial_result": "failed",
+  "installed_main_sha256": "d859fa0d821c095cfa2e7537c3b1e8b6ef90cbc06cee091a91d758dbd4c74b08",
+  "scope": "own_app_webview_fixture",
+  "single_gestures": 3,
+  "double_gestures": 5,
+  "initial_fixture_length": 12,
+  "input_length_changes": [
+    {
+      "at": "2026-09-20T13:27:44.126+00:00",
+      "length": 11
+    },
+    {
+      "at": "2026-09-20T13:27:46.245+00:00",
+      "length": 10
+    },
+    {
+      "at": "2026-09-20T13:28:22.921+00:00",
+      "length": 9
+    }
+  ],
+  "text_operations": [
+    {
+      "at": "2026-09-20T13:27:52.677Z",
+      "phase": "completed",
+      "terminal_result": "failed",
+      "reason": "focus_changed",
+      "elapsed_ms": 44
+    },
+    {
+      "at": "2026-09-20T13:27:55.205Z",
+      "phase": "focus_binding",
+      "terminal_result": "passed",
+      "reason": "foreground_ancestor_verified",
+      "ancestor_depth": 3,
+      "elapsed_ms": 15
+    },
+    {
+      "at": "2026-09-20T13:27:55.225Z",
+      "phase": "completed",
+      "terminal_result": "failed",
+      "reason": "boundary_mismatch",
+      "elapsed_ms": 35
+    },
+    {
+      "at": "2026-09-20T13:27:56.982Z",
+      "phase": "focus_binding",
+      "terminal_result": "passed",
+      "reason": "foreground_ancestor_verified",
+      "ancestor_depth": 3,
+      "elapsed_ms": 13
+    },
+    {
+      "at": "2026-09-20T13:27:57.001Z",
+      "phase": "completed",
+      "terminal_result": "failed",
+      "reason": "boundary_mismatch",
+      "elapsed_ms": 32
+    },
+    {
+      "at": "2026-09-20T13:28:21.336Z",
+      "phase": "focus_binding",
+      "terminal_result": "passed",
+      "reason": "foreground_ancestor_verified",
+      "ancestor_depth": 3,
+      "elapsed_ms": 13
+    },
+    {
+      "at": "2026-09-20T13:28:21.350Z",
+      "phase": "completed",
+      "terminal_result": "failed",
+      "reason": "boundary_mismatch",
+      "elapsed_ms": 27
+    },
+    {
+      "at": "2026-09-20T13:28:22.103Z",
+      "phase": "focus_binding",
+      "terminal_result": "passed",
+      "reason": "foreground_ancestor_verified",
+      "ancestor_depth": 3,
+      "elapsed_ms": 10
+    },
+    {
+      "at": "2026-09-20T13:28:22.116Z",
+      "phase": "completed",
+      "terminal_result": "failed",
+      "reason": "boundary_mismatch",
+      "elapsed_ms": 23
+    }
+  ],
+  "range_probe": {
+    "at": "2026-09-20T13:31:38.9368887Z",
+    "fixtureConfirmed": true,
+    "documentLength": 12,
+    "prefixMoved": -829,
+    "prefixWasOutsideDocument": true,
+    "fixtureUnchanged": true,
+    "selectionUnchanged": true,
+    "cases": [
+      {
+        "case": "original",
+        "prefixLength": 829,
+        "prefixIsExpected": false,
+        "prefixStartVsDocumentStart": -1,
+        "prefixEndMatchesCaret": true,
+        "boundaryLength": 0,
+        "boundaryIsComma": false,
+        "deletionLength": 0,
+        "deletionIsExpected": false,
+        "deletionEmpty": true,
+        "deletionEndMatchesCaret": true,
+        "deletionStartInDocument": true,
+        "deletionEndInDocument": true
+      },
+      {
+        "case": "clamped",
+        "prefixLength": 12,
+        "prefixIsExpected": true,
+        "prefixStartVsDocumentStart": 0,
+        "prefixEndMatchesCaret": true,
+        "boundaryLength": 1,
+        "boundaryIsComma": true,
+        "deletionLength": 6,
+        "deletionIsExpected": true,
+        "deletionEmpty": false,
+        "deletionEndMatchesCaret": true,
+        "deletionStartInDocument": true,
+        "deletionEndInDocument": true
+      },
+      {
+        "case": "document_to_caret",
+        "prefixLength": 12,
+        "prefixIsExpected": true,
+        "prefixStartVsDocumentStart": 0,
+        "prefixEndMatchesCaret": true,
+        "boundaryLength": 1,
+        "boundaryIsComma": true,
+        "deletionLength": 6,
+        "deletionIsExpected": true,
+        "deletionEmpty": false,
+        "deletionEndMatchesCaret": true,
+        "deletionStartInDocument": true,
+        "deletionEndInDocument": true
+      }
+    ]
+  },
+  "range_probe_actions": "read_only_no_select_no_injection",
+  "conclusion": "foreground_ancestry_fix_confirmed_for_4_operations; prefix_escapes_own_document; clamped_ranges_exactly_match_fixture; product_clamp_deletion_not_yet_verified",
+  "privacy": "Only semantic counts, timestamps, hashes and range predicates; no text, paths or device identifiers."
+}

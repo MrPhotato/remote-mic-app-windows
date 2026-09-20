@@ -1,0 +1,48 @@
+{
+  "status": "local_checks_passed_remote_deferred",
+  "source_base": "587a0cc292e37d7ba5aed05ca3fc887adf2fe99f",
+  "ci_preflight": {
+    "steps_passed": 6,
+    "frontend_test_files": 17,
+    "frontend_tests_passed": 163,
+    "rust_test_binaries_passed": [26, 4, 220, 1, 1, 28],
+    "rust_tests_ignored": 7,
+    "scope": "before_new_connection_epoch_and_mapping_transaction_fixes"
+  },
+  "helper_bundle": {
+    "files": 96,
+    "bytes": 152651996,
+    "embedded_manifest_bytes": 14911,
+    "result": "passed",
+    "synthetic_gate_cases_passed": 16
+  },
+  "signature_verifier": {
+    "tests_passed": 8,
+    "tampered_payload_rejected": true,
+    "local_installer_sha256": "b0bdaeba3a853627370fdf9356947015f64a87bc2358492b9c8ff485cd8f8705",
+    "real_installer_signature": "passed",
+    "authenticode": "NotSigned"
+  },
+  "staging_fixture": {
+    "assets": 6,
+    "checksums": 5,
+    "fork_url_correct": true,
+    "real_signature_passed": true,
+    "stale_staging_rejected": true,
+    "wrong_version_rejected": true,
+    "invalid_repository_rejected": true
+  },
+  "release_ci_gate_fixture_cases_passed": 23,
+  "final_candidate_preflight": {
+    "version": "0.2.7",
+    "includes_connection_epoch_and_mapping_transaction_fixes": true,
+    "steps_passed": 6,
+    "frontend_tests_passed": 163,
+    "rust_test_binaries_passed": [26, 4, 223, 1, 1, 31],
+    "rust_tests_ignored": 7
+  },
+  "remote_push": "not_performed",
+  "remote_ci": "deferred",
+  "release": "not_created",
+  "privacy": "no_private_keys_tokens_device_ids_or_personal_paths"
+}

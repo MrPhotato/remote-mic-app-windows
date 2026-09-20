@@ -81,6 +81,40 @@ fn get_runtime_snapshot(
 }
 
 #[tauri::command]
+fn get_rc003_input_status(
+    state: tauri::State<'_, AppState>,
+) -> sayall_windows::rc003_input::Rc003InputStatus {
+    state.platform.rc003_input_status()
+}
+
+#[tauri::command]
+async fn start_rc003_input(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<sayall_windows::rc003_input::Rc003InputStatus, String> {
+    let platform = Arc::clone(&state.platform);
+    let resource = app
+        .path()
+        .resource_dir()
+        .map_err(|_| "无法定位增强组件")?
+        .join("rc003-helper");
+    // Both a local build and the installer place the same immutable payload beside the app.
+    tauri::async_runtime::spawn_blocking(move || platform.start_rc003_input(resource))
+        .await
+        .map_err(|_| "三键增强启动任务未完成".to_owned())?
+}
+
+#[tauri::command]
+async fn stop_rc003_input(
+    state: tauri::State<'_, AppState>,
+) -> Result<sayall_windows::rc003_input::Rc003InputStatus, String> {
+    let platform = Arc::clone(&state.platform);
+    tauri::async_runtime::spawn_blocking(move || platform.stop_rc003_input())
+        .await
+        .map_err(|_| "三键增强停止任务未完成".to_owned())
+}
+
+#[tauri::command]
 fn get_diagnostic_report(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -267,10 +301,9 @@ async fn save_button_mappings(
     let platform = Arc::clone(&state.platform);
     let result =
         match tauri::async_runtime::spawn_blocking(move || -> Result<ButtonMappings, String> {
-            let saved = settings.save_button_mappings(mappings)?;
-            // 持久化成功后热加载到引擎与门控（保存即生效）。
-            platform.set_button_mappings(saved.clone());
-            Ok(saved)
+            settings.save_button_mappings_and_apply(mappings, |saved| {
+                platform.set_button_mappings(saved.clone());
+            })
         })
         .await
         {
@@ -303,9 +336,9 @@ async fn reset_button_mappings(
     let platform = Arc::clone(&state.platform);
     let result =
         match tauri::async_runtime::spawn_blocking(move || -> Result<ButtonMappings, String> {
-            let saved = settings.save_button_mappings(ButtonMappings::default())?;
-            platform.set_button_mappings(saved.clone());
-            Ok(saved)
+            settings.save_button_mappings_and_apply(ButtonMappings::default(), |saved| {
+                platform.set_button_mappings(saved.clone());
+            })
         })
         .await
         {
@@ -380,9 +413,9 @@ async fn import_button_mapping_configuration(
             let Some(path) = sayall_windows::file_dialog::pick_button_mapping_import_path()? else {
                 return Ok(None);
             };
-            let imported = settings.import_button_mappings(&path)?;
-            // 文件完整校验并持久化成功后才热加载，失败时运行态保持原值。
-            platform.set_button_mappings(imported.clone());
+            let imported = settings.import_button_mappings_and_apply(&path, |saved| {
+                platform.set_button_mappings(saved.clone());
+            })?;
             Ok(Some(imported))
         },
     )
@@ -1377,6 +1410,9 @@ pub fn run() {
     #[cfg(feature = "runtime-simulation")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_runtime_snapshot,
+        get_rc003_input_status,
+        start_rc003_input,
+        stop_rc003_input,
         get_diagnostic_report,
         open_log_directory,
         scan_paired_remotes,
@@ -1420,6 +1456,9 @@ pub fn run() {
     #[cfg(not(feature = "runtime-simulation"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         get_runtime_snapshot,
+        get_rc003_input_status,
+        start_rc003_input,
+        stop_rc003_input,
         get_diagnostic_report,
         open_log_directory,
         scan_paired_remotes,

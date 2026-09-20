@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "date": "2026-09-21",
+  "source_revision": "6e49fd5eb1ee98811a29557fa0b2e96dabe08436",
+  "version": "0.2.7",
+  "build_channel": "local",
+  "installer": {
+    "at": "2026-09-21T02:14:34.3623529+08:00",
+    "installerExitCode": 0,
+    "installerSha256": "6e67ec6f3b669635078f338cd924ae6eb6a04599353747a6b424c189cfef960b",
+    "main": {
+      "mainMatchesBuild": true,
+      "bundleMarkerOnly": true,
+      "builtSha256": "be6a53a544146dc67a37451470a21682fb8ba4aeb184ece2d7568cd6b53e2acb",
+      "installedSha256": "29f8a9e8c4feaf94461b1dbba66bb3b4c8207ff742627a3a451ad06a842024d5",
+      "installedBytes": 16126976
+    },
+    "helperManifestSha256": "9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441",
+    "helperFilesChecked": 96,
+    "helperFailures": 0,
+    "helperTotalFiles": 97
+  },
+  "startup": {
+    "version": "0.2.7",
+    "enhancement_phase": "stopped",
+    "audio_phase": "ready",
+    "voice_state": "idle",
+    "result": "passed",
+    "temporary_fixture_absent": true,
+    "connection_phase": "ready"
+  },
+  "native_save_concurrency": {
+    "concurrentPairs": 4,
+    "callsPassed": true,
+    "originalRestored": true,
+    "actionsPreserved": true,
+    "applicationsPreserved": true,
+    "note": "native IPC execution; hardware and import dialog not exercised"
+  },
+  "configuration": {
+    "voice_hotkey_file_unchanged": true,
+    "button_mapping_file_unchanged": true,
+    "settings_file_unchanged": true
+  },
+  "production_simulation_absent": true,
+  "helper_integrity": "passed",
+  "new_hardware_voice_and_keys": "deferred",
+  "new_hardware_disconnect_sleep_and_cold_first": "deferred",
+  "remote_push": "not_performed",
+  "release": "not_created",
+  "privacy": "no_identity_configuration_contents_personal_paths_or_credentials"
+}

@@ -1,0 +1,300 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "trial": "own_webview_read_only_backspace_preflight",
+  "sources": {
+    "observations": "target/local-launch/rc003-integration/preflight-probe-cold-warm.jsonl",
+    "observations_sha256": "0f608459495cad8982e10900cbc390dfb66c1233bfe6e1310bd21cf167c2b64b",
+    "probe_source": "crates/sayall-windows/examples/text_edit_preflight_probe.rs",
+    "probe_source_sha256": "0651e3f3e7f27b393317374d27c0fd1d0c86b1206586435ef44ef04e80cb514e"
+  },
+  "scope": {
+    "fixture": "fixed_test_input_in_own_app",
+    "read_only": true,
+    "changes_focus": false,
+    "changes_selection": false,
+    "changes_text": false,
+    "sends_input": false,
+    "other_control_text_read": false,
+    "rpc_timeout_ms": 300,
+    "sample_budget_ms": 2000
+  },
+  "results": {
+    "sample_count": 11,
+    "passed_count": 11,
+    "failed_count": 0,
+    "all_samples": {
+      "fixture_text_matches": true,
+      "fixture_unchanged": true,
+      "prefix_needed_clamp": true,
+      "single_empty_selection": true,
+      "verified_host_depth": 3,
+      "writable_confirmed": true
+    },
+    "composition_all_samples": {
+      "active_composition_hresult": 0,
+      "inactive_confirmed": true,
+      "pattern_available": true,
+      "range_present": false
+    }
+  },
+  "performance": {
+    "process_first_total_ms": 155.0391,
+    "warm_count": 10,
+    "warm_total": {
+      "min_ms": 62.9532,
+      "median_ms": 73.3624,
+      "max_ms": 84.3119
+    },
+    "process_first_stages_ms": {
+      "composition_ms": 1.5574,
+      "context_clamp_read_ms": 13.0519,
+      "final_validation_ms": 4.0956,
+      "fixture_lookup_ms": 105.2382,
+      "focus_host_ms": 5.7342,
+      "mta_init_ms": 5.5645,
+      "selection_writable_ms": 1.0018,
+      "uia_init_ms": 18.4379
+    },
+    "warm_stages": {
+      "composition_ms": {
+        "min_ms": 0.2065,
+        "median_ms": 0.2315,
+        "max_ms": 0.5047
+      },
+      "context_clamp_read_ms": {
+        "min_ms": 11.0879,
+        "median_ms": 11.4455,
+        "max_ms": 13.8214
+      },
+      "final_validation_ms": {
+        "min_ms": 3.5989,
+        "median_ms": 5.1386,
+        "max_ms": 7.1102
+      },
+      "fixture_lookup_ms": {
+        "min_ms": 39.7674,
+        "median_ms": 44.2129,
+        "max_ms": 55.4181
+      },
+      "focus_host_ms": {
+        "min_ms": 5.642,
+        "median_ms": 6.8425,
+        "max_ms": 12.4727
+      },
+      "mta_init_ms": {
+        "min_ms": 0.0015,
+        "median_ms": 0.0019,
+        "max_ms": 0.0029
+      },
+      "selection_writable_ms": {
+        "min_ms": 0.5302,
+        "median_ms": 0.7742,
+        "max_ms": 2.3423
+      },
+      "uia_init_ms": {
+        "min_ms": 0.0752,
+        "median_ms": 0.0918,
+        "max_ms": 0.1136
+      }
+    }
+  },
+  "samples": [
+    {
+      "index": 0,
+      "mode": "process_first",
+      "result": "passed",
+      "total_ms": 155.0391,
+      "timings_ms": {
+        "composition_ms": 1.5574,
+        "context_clamp_read_ms": 13.0519,
+        "final_validation_ms": 4.0956,
+        "fixture_lookup_ms": 105.2382,
+        "focus_host_ms": 5.7342,
+        "mta_init_ms": 5.5645,
+        "selection_writable_ms": 1.0018,
+        "uia_init_ms": 18.4379
+      }
+    },
+    {
+      "index": 1,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 70.1352,
+      "timings_ms": {
+        "composition_ms": 0.5047,
+        "context_clamp_read_ms": 12.9898,
+        "final_validation_ms": 3.5989,
+        "fixture_lookup_ms": 44.3425,
+        "focus_host_ms": 7.3562,
+        "mta_init_ms": 0.0016,
+        "selection_writable_ms": 0.9056,
+        "uia_init_ms": 0.0845
+      }
+    },
+    {
+      "index": 2,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 73.6355,
+      "timings_ms": {
+        "composition_ms": 0.241,
+        "context_clamp_read_ms": 12.3904,
+        "final_validation_ms": 7.1102,
+        "fixture_lookup_ms": 43.894,
+        "focus_host_ms": 8.8508,
+        "mta_init_ms": 0.0022,
+        "selection_writable_ms": 0.6429,
+        "uia_init_ms": 0.1136
+      }
+    },
+    {
+      "index": 3,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 73.0893,
+      "timings_ms": {
+        "composition_ms": 0.2138,
+        "context_clamp_read_ms": 13.4177,
+        "final_validation_ms": 4.4968,
+        "fixture_lookup_ms": 46.6066,
+        "focus_host_ms": 6.888,
+        "mta_init_ms": 0.0019,
+        "selection_writable_ms": 0.8502,
+        "uia_init_ms": 0.0992
+      }
+    },
+    {
+      "index": 4,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 84.3119,
+      "timings_ms": {
+        "composition_ms": 0.2703,
+        "context_clamp_read_ms": 11.2713,
+        "final_validation_ms": 3.69,
+        "fixture_lookup_ms": 55.4181,
+        "focus_host_ms": 12.4727,
+        "mta_init_ms": 0.0015,
+        "selection_writable_ms": 0.6983,
+        "uia_init_ms": 0.0813
+      }
+    },
+    {
+      "index": 5,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 75.5466,
+      "timings_ms": {
+        "composition_ms": 0.222,
+        "context_clamp_read_ms": 11.4348,
+        "final_validation_ms": 6.0492,
+        "fixture_lookup_ms": 48.8463,
+        "focus_host_ms": 6.2088,
+        "mta_init_ms": 0.0025,
+        "selection_writable_ms": 2.3423,
+        "uia_init_ms": 0.1122
+      }
+    },
+    {
+      "index": 6,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 76.2282,
+      "timings_ms": {
+        "composition_ms": 0.2825,
+        "context_clamp_read_ms": 13.8214,
+        "final_validation_ms": 7.0442,
+        "fixture_lookup_ms": 44.0833,
+        "focus_host_ms": 9.8677,
+        "mta_init_ms": 0.0018,
+        "selection_writable_ms": 0.5945,
+        "uia_init_ms": 0.0762
+      }
+    },
+    {
+      "index": 7,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 77.785,
+      "timings_ms": {
+        "composition_ms": 0.3051,
+        "context_clamp_read_ms": 11.2033,
+        "final_validation_ms": 4.958,
+        "fixture_lookup_ms": 53.437,
+        "focus_host_ms": 5.9873,
+        "mta_init_ms": 0.0029,
+        "selection_writable_ms": 1.1714,
+        "uia_init_ms": 0.1073
+      }
+    },
+    {
+      "index": 8,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 62.9532,
+      "timings_ms": {
+        "composition_ms": 0.2145,
+        "context_clamp_read_ms": 11.0879,
+        "final_validation_ms": 4.2706,
+        "fixture_lookup_ms": 39.7674,
+        "focus_host_ms": 5.642,
+        "mta_init_ms": 0.0024,
+        "selection_writable_ms": 1.5541,
+        "uia_init_ms": 0.1026
+      }
+    },
+    {
+      "index": 9,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 66.7294,
+      "timings_ms": {
+        "composition_ms": 0.2155,
+        "context_clamp_read_ms": 11.2518,
+        "final_validation_ms": 6.0314,
+        "fixture_lookup_ms": 41.4941,
+        "focus_host_ms": 6.797,
+        "mta_init_ms": 0.0017,
+        "selection_writable_ms": 0.5302,
+        "uia_init_ms": 0.0752
+      }
+    },
+    {
+      "index": 10,
+      "mode": "warm",
+      "result": "passed",
+      "total_ms": 67.834,
+      "timings_ms": {
+        "composition_ms": 0.2065,
+        "context_clamp_read_ms": 11.4561,
+        "final_validation_ms": 5.3191,
+        "fixture_lookup_ms": 43.6705,
+        "focus_host_ms": 6.276,
+        "mta_init_ms": 0.0015,
+        "selection_writable_ms": 0.5538,
+        "uia_init_ms": 0.0767
+      }
+    }
+  ],
+  "boundaries": {
+    "process_first_is_not_cold_application_or_idle_first_use": true,
+    "real_idle_first_use_tested": false,
+    "fixture_lookup_cost_included": true,
+    "production_latency_measured": false,
+    "optimistic_backspace_integrated": false,
+    "unicode_restore_tested": false,
+    "active_ime_composition_case_tested": false,
+    "other_providers_tested": false,
+    "note": "A new probe process and ten subsequent samples against one already-running owned WebView fixture. Never subtract fixture lookup time and present the remainder as measured product latency."
+  },
+  "privacy": {
+    "text_content": false,
+    "device_identity": false,
+    "personal_paths": false,
+    "window_titles": false,
+    "process_ids": false,
+    "native_handles": false,
+    "credentials": false
+  }
+}

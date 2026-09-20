@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "recorded_date": "2026-09-21",
+  "source_revision": "b67a397b5d62cbb8dcb5003bf5d65547d5fd4548",
+  "source_log": "installed-app-final-profile.log",
+  "observed_result": "failed",
+  "observed_voice_sessions": 12,
+  "observed_link_generations": [
+    1
+  ],
+  "helper_restarts": [
+    {
+      "voice_generation": 1,
+      "voice_started_utc": "2026-09-20T17:21:06.549Z",
+      "helper_generation": 3,
+      "helper_waiting_utc": "2026-09-20T17:21:06.549Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 2,
+      "voice_started_utc": "2026-09-20T17:22:23.273Z",
+      "helper_generation": 4,
+      "helper_waiting_utc": "2026-09-20T17:22:23.273Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 3,
+      "voice_started_utc": "2026-09-20T17:24:03.857Z",
+      "helper_generation": 5,
+      "helper_waiting_utc": "2026-09-20T17:24:03.857Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 4,
+      "voice_started_utc": "2026-09-20T17:25:35.149Z",
+      "helper_generation": 6,
+      "helper_waiting_utc": "2026-09-20T17:25:35.149Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 5,
+      "voice_started_utc": "2026-09-20T17:26:13.146Z",
+      "helper_generation": 7,
+      "helper_waiting_utc": "2026-09-20T17:26:13.146Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 6,
+      "voice_started_utc": "2026-09-20T17:26:38.646Z",
+      "helper_generation": 8,
+      "helper_waiting_utc": "2026-09-20T17:26:38.646Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 7,
+      "voice_started_utc": "2026-09-20T17:27:23.288Z",
+      "helper_generation": 9,
+      "helper_waiting_utc": "2026-09-20T17:27:23.288Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 8,
+      "voice_started_utc": "2026-09-20T17:28:19.888Z",
+      "helper_generation": 10,
+      "helper_waiting_utc": "2026-09-20T17:28:19.888Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 9,
+      "voice_started_utc": "2026-09-20T17:28:41.832Z",
+      "helper_generation": 11,
+      "helper_waiting_utc": "2026-09-20T17:28:41.833Z",
+      "delay_ms": 1
+    },
+    {
+      "voice_generation": 10,
+      "voice_started_utc": "2026-09-20T17:35:22.255Z",
+      "helper_generation": 12,
+      "helper_waiting_utc": "2026-09-20T17:35:22.255Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 11,
+      "voice_started_utc": "2026-09-20T17:35:27.579Z",
+      "helper_generation": 13,
+      "helper_waiting_utc": "2026-09-20T17:35:27.579Z",
+      "delay_ms": 0
+    },
+    {
+      "voice_generation": 12,
+      "voice_started_utc": "2026-09-20T17:35:52.599Z",
+      "helper_generation": 14,
+      "helper_waiting_utc": "2026-09-20T17:35:52.599Z",
+      "delay_ms": 0
+    }
+  ],
+  "root_cause": "helper_selection_used_voice_stream_generation_instead_of_ble_connection_generation",
+  "automated_validation": {
+    "failed": 0,
+    "ipc_contract_tests": 1,
+    "rc003_filtered_lib_tests": 18,
+    "result": "passed"
+  },
+  "cleanup_publication_followup": {
+    "discovery": "code_review_only_not_new_hardware_failure",
+    "boundary": "publish_unavailable_phase_and_new_link_generation_before_potentially_blocking_cleanup",
+    "regression": "rc003_connection_loss_is_visible_while_cleanup_is_blocked",
+    "initial_phases": ["Ready", "Streaming", "Draining", "AwaitingCapabilities", "Reconnecting", "Failed"],
+    "checks": ["state_lock_released_during_blocked_cleanup", "new_connection_generation_visible", "helper_unavailable", "ordinary_gate_disconnected", "voice_generation_unchanged", "cleanup_failure_does_not_reopen_old_state"],
+    "rc003_filtered_lib_tests": 19,
+    "failed": 0,
+    "result": "passed",
+    "hardware_validation": "deferred"
+  },
+  "corrected_hardware_validation": "deferred",
+  "privacy": "Only UTC times, public source revision, anonymous generations and counts retained; no device identity, input or audio content."
+}

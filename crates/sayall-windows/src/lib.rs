@@ -31,6 +31,8 @@ pub use ble::{
     diagnostic_log_directory, gatt_note, initialize_diagnostic_log, DiagnosticLogMetadata,
 };
 #[cfg(windows)]
+pub mod backspace_transaction;
+#[cfg(windows)]
 mod ime;
 pub mod key_gate;
 #[cfg(windows)]
@@ -42,6 +44,7 @@ mod power;
 pub mod raw_input;
 #[cfg(windows)]
 mod raw_input_windows;
+pub mod rc003_input;
 #[cfg(any(windows, test))]
 mod reconnect;
 #[cfg(windows)]
@@ -167,6 +170,10 @@ pub struct ConnectionSnapshot {
     pub capabilities: Option<AtvvCapabilities>,
     pub voice_state: VoiceSessionState,
     pub decoded_samples: u64,
+    /// Internal BLE link identity, published with phase/model under the state lock.
+    /// `generation` below remains the ATVV voice-stream generation exposed to IPC.
+    #[serde(skip)]
+    pub connection_generation: u64,
     pub generation: u64,
     pub reconnect_attempt: u32,
     pub power_notifications_available: bool,
@@ -215,11 +222,28 @@ impl Default for ConnectionSnapshot {
             capabilities: None,
             voice_state: VoiceSessionState::Idle,
             decoded_samples: 0,
+            connection_generation: 0,
             generation: 0,
             reconnect_attempt: 0,
             power_notifications_available: false,
             last_error: None,
         }
+    }
+}
+
+impl ConnectionSnapshot {
+    fn rc003_input_availability(
+        &self,
+        raw_input_ready: bool,
+        input_epoch: u64,
+    ) -> (bool, u64, u64) {
+        let available = self.remote_model == RemoteModel::Rc003
+            && matches!(
+                self.phase,
+                ConnectionPhase::Ready | ConnectionPhase::Streaming | ConnectionPhase::Draining
+            )
+            && raw_input_ready;
+        (available, self.connection_generation, input_epoch)
     }
 }
 
@@ -245,6 +269,8 @@ pub struct WindowsPlatform {
     raw_input: Arc<raw_input_windows::RawInputRuntime>,
     #[cfg(windows)]
     send_input: Arc<send_input_windows::SendInputRuntime>,
+    #[cfg(windows)]
+    rc003_input: Arc<rc003_input::Rc003InputRuntime>,
 }
 
 impl fmt::Debug for WindowsPlatform {
@@ -305,6 +331,21 @@ impl Default for WindowsPlatform {
                 Arc::clone(&raw_input_snapshot),
                 button_mapping.sender(),
             ));
+            let rc003_input = Arc::new(rc003_input::Rc003InputRuntime::new(
+                button_mapping.sender(),
+                Arc::new({
+                    let runtime = Arc::clone(&runtime);
+                    let raw_snapshot = Arc::clone(&raw_input_snapshot);
+                    let mapping = Arc::clone(&button_mapping);
+                    move || {
+                        let connection = runtime.snapshot();
+                        connection.rc003_input_availability(
+                            lock(&raw_snapshot).phase == RawInputPhase::Ready,
+                            mapping.rc003_tap_epoch(),
+                        )
+                    }
+                }),
+            ));
             // 遥控器 HID 活动通知接线（断连时遥控器醒来按键 → 立即重连）。
             let wake_runtime = Arc::clone(&runtime);
             key_suppressor::set_remote_hid_activity_notify(Box::new(move || {
@@ -321,6 +362,7 @@ impl Default for WindowsPlatform {
                 audio,
                 raw_input,
                 send_input,
+                rc003_input,
             }
         }
 
@@ -349,6 +391,43 @@ impl WindowsPlatform {
         Arc::clone(&self.usage)
     }
 
+    pub fn rc003_input_status(&self) -> rc003_input::Rc003InputStatus {
+        #[cfg(windows)]
+        {
+            self.rc003_input.snapshot()
+        }
+        #[cfg(not(windows))]
+        {
+            rc003_input::Rc003InputStatus::stopped()
+        }
+    }
+
+    pub fn start_rc003_input(
+        &self,
+        payload: std::path::PathBuf,
+    ) -> Result<rc003_input::Rc003InputStatus, String> {
+        #[cfg(windows)]
+        {
+            self.rc003_input.start(payload)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = payload;
+            Err("三键增强仅支持 Windows".into())
+        }
+    }
+
+    pub fn stop_rc003_input(&self) -> rc003_input::Rc003InputStatus {
+        #[cfg(windows)]
+        {
+            self.rc003_input.stop(std::time::Duration::from_secs(5))
+        }
+        #[cfg(not(windows))]
+        {
+            rc003_input::Rc003InputStatus::stopped()
+        }
+    }
+
     /// 退出前的优雅关闭（2026-09-16）：关闭 BLE 会话并**在有界时间内等待其完成**
     /// （`ble_session_cleanup` 落盘）后才返回。
     ///
@@ -357,7 +436,11 @@ impl WindowsPlatform {
     /// （见 `graceful_exit` 模块头部的证据）。
     #[cfg(windows)]
     pub fn shutdown_ble_for_exit(&self, timeout: std::time::Duration) -> Result<(), PlatformError> {
-        self.runtime.shutdown_blocking(timeout)
+        let started = std::time::Instant::now();
+        self.rc003_input
+            .stop(timeout.min(std::time::Duration::from_secs(2)));
+        self.runtime
+            .shutdown_blocking(timeout.saturating_sub(started.elapsed()))
     }
 
     #[cfg(not(windows))]
@@ -529,6 +612,7 @@ impl WindowsPlatform {
     pub fn connect_remote(&self, device_id: String) -> Result<ConnectionSnapshot, PlatformError> {
         #[cfg(windows)]
         {
+            self.rc003_input.select_remote(Some(device_id.clone()));
             self.runtime.connect(device_id)
         }
 
@@ -542,6 +626,7 @@ impl WindowsPlatform {
     pub fn disconnect_remote(&self) -> Result<ConnectionSnapshot, PlatformError> {
         #[cfg(windows)]
         {
+            self.rc003_input.select_remote(None);
             self.runtime.disconnect()
         }
 
@@ -554,6 +639,7 @@ impl WindowsPlatform {
     pub fn restore_remote(&self, device_id: String) -> Result<ConnectionSnapshot, PlatformError> {
         #[cfg(windows)]
         {
+            self.rc003_input.select_remote(Some(device_id.clone()));
             self.runtime.restore(device_id)
         }
 
@@ -834,6 +920,82 @@ pub enum PlatformError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rc003_helper_selection_survives_twelve_voice_sessions_on_one_link() {
+        // Replay the observed failure: voice generations 1..12 on BLE link 1.
+        let mut connection = ConnectionSnapshot {
+            phase: ConnectionPhase::Ready,
+            remote_model: RemoteModel::Rc003,
+            connection_generation: 1,
+            ..ConnectionSnapshot::default()
+        };
+        let selected = connection.rc003_input_availability(true, 0);
+        assert_eq!(selected, (true, 1, 0));
+        for generation in 1..=12 {
+            connection.generation = generation;
+            for (phase, voice_state) in [
+                (ConnectionPhase::Streaming, VoiceSessionState::Streaming),
+                (ConnectionPhase::Draining, VoiceSessionState::Draining),
+                (ConnectionPhase::Ready, VoiceSessionState::Idle),
+            ] {
+                connection.phase = phase;
+                connection.voice_state = voice_state;
+                assert_eq!(connection.rc003_input_availability(true, 0), selected);
+            }
+        }
+        assert_eq!(connection.generation, 12); // Voice bookkeeping is unchanged.
+    }
+
+    #[test]
+    fn rc003_helper_selection_still_changes_for_link_and_listener_lifecycle() {
+        let mut connection = ConnectionSnapshot {
+            phase: ConnectionPhase::Ready,
+            remote_model: RemoteModel::Rc003,
+            connection_generation: 1,
+            generation: 12,
+            ..ConnectionSnapshot::default()
+        };
+        let previous = connection.rc003_input_availability(true, 0);
+        // A complete reconnect between supervisor polls must still be detected,
+        // even if the new voice stream happens to reuse an old stream generation.
+        connection.connection_generation = 3;
+        connection.generation = 12;
+        let reconnected = connection.rc003_input_availability(true, 0);
+        assert_eq!(reconnected, (true, 3, 0));
+        assert_ne!(reconnected, previous);
+        assert_ne!(connection.rc003_input_availability(true, 1), reconnected);
+        assert!(!connection.rc003_input_availability(false, 0).0);
+        for phase in [
+            ConnectionPhase::Connecting,
+            ConnectionPhase::AwaitingCapabilities,
+            ConnectionPhase::Reconnecting,
+            ConnectionPhase::Suspended,
+            ConnectionPhase::Disconnected,
+            ConnectionPhase::Failed,
+        ] {
+            connection.phase = phase;
+            assert!(!connection.rc003_input_availability(true, 0).0);
+        }
+        connection.phase = ConnectionPhase::Ready;
+        connection.remote_model = RemoteModel::Rc001;
+        assert!(!connection.rc003_input_availability(true, 0).0);
+    }
+
+    #[test]
+    fn rc003_connection_generation_does_not_change_the_public_voice_contract() {
+        let connection = ConnectionSnapshot {
+            connection_generation: 4,
+            generation: 12,
+            ..ConnectionSnapshot::default()
+        };
+        let serialized = serde_json::to_value(&connection).unwrap();
+        assert_eq!(serialized["generation"], 12);
+        assert!(serialized.get("connectionGeneration").is_none());
+        let restored: ConnectionSnapshot = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.generation, 12);
+        assert_eq!(restored.connection_generation, 0);
+    }
 
     #[test]
     fn accepts_only_approved_remote_names() {
