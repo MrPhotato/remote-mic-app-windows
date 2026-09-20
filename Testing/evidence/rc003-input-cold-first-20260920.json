@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "app_version": "0.2.6",
+  "remote_model": "rc003",
+  "trial": "back_as_first_physical_key_after_ready_idle",
+  "sources": [
+    "target/local-launch/rc003-integration/cold-first-observation.json",
+    "target/local-launch/rc003-integration/installed-app-final.log"
+  ],
+  "installed_helper_manifest_sha256": "65de7e42cb2a2845e14e8a790f2047a1fa37a751581657bba533c809f9678ae2",
+  "result": {
+    "strict_ready_idle_first_back": "passed",
+    "actual_text_deletion": "passed",
+    "user_confirmed_first_physical_key_was_back": true,
+    "intervening_logged_button_edges": 0,
+    "no_direction_key_priming": true,
+    "generation_unchanged": true
+  },
+  "idle": {
+    "prior_voice_release_control_utc": "2026-09-20T12:49:50.766Z",
+    "helper_ready_utc": "2026-09-20T12:49:50.803Z",
+    "prior_audio_finish_utc": "2026-09-20T12:49:50.930Z",
+    "first_back_down_utc": "2026-09-20T12:53:36.462Z",
+    "since_prior_voice_release_ms": 225696,
+    "since_helper_ready_ms": 225659,
+    "since_audio_finish_ms": 225532,
+    "measurement_prepared_utc": "2026-09-20T12:52:49.867Z"
+  },
+  "observed": {
+    "semantic_edges": [
+      {
+        "at_utc": "2026-09-20T12:53:36.462Z",
+        "button": "back",
+        "is_pressed": true
+      },
+      {
+        "at_utc": "2026-09-20T12:53:36.522Z",
+        "button": "back",
+        "is_pressed": false
+      }
+    ],
+    "highlights": [
+      {
+        "at_utc": "2026-09-20T12:53:36.462Z",
+        "back_active": true
+      },
+      {
+        "at_utc": "2026-09-20T12:53:36.522Z",
+        "back_active": false
+      }
+    ],
+    "map_fire_utc": "2026-09-20T12:53:36.461Z",
+    "map_fire_action": "normal_backspace",
+    "frontend_gesture": {
+      "at_utc": "2026-09-20T12:53:36.462Z",
+      "button": "back",
+      "trigger": "single"
+    },
+    "trusted_backspace_events": [
+      {
+        "at_utc": "2026-09-20T12:53:36.465Z",
+        "event": "keydown",
+        "trusted": true
+      },
+      {
+        "at_utc": "2026-09-20T12:53:36.469Z",
+        "event": "keyup",
+        "trusted": true
+      }
+    ],
+    "text_length_before": 183,
+    "text_length_after": 182,
+    "text_input_utc": "2026-09-20T12:53:36.465Z"
+  },
+  "helper_status": {
+    "before": {
+      "phase": "ready",
+      "generation": 3,
+      "report_count": 24,
+      "edge_count": 21
+    },
+    "after": {
+      "phase": "ready",
+      "generation": 3,
+      "report_count": 26,
+      "edge_count": 23
+    }
+  },
+  "boundary": "One RC003 first-use trial after about 225.7 seconds ready. No preceding direction control was pressed in the idle interval. This does not establish all idle durations, sleep/crash recovery, RC001 support, or speech-recognition output.",
+  "privacy": {
+    "device_identity": false,
+    "personal_paths": false,
+    "text_content": false,
+    "raw_hid_reports": false,
+    "raw_audio": false,
+    "credentials": false,
+    "process_ids": false
+  }
+}

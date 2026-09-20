@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "app_version": "0.2.6",
+  "remote_model": "rc003",
+  "trial": "basic_voice_to_virtual_cable_render_with_optional_helper_active",
+  "sources": [
+    "target/local-launch/rc003-integration/installed-app-final.log",
+    "target/local-launch/rc003-integration/voice-observation.json"
+  ],
+  "installed_helper_manifest_sha256": "65de7e42cb2a2845e14e8a790f2047a1fa37a751581657bba533c809f9678ae2",
+  "result": {
+    "remote_to_virtual_cable_output": "passed",
+    "user_confirmed_trial_completed": true,
+    "speech_recognition_to_text": "not_verified",
+    "main_remained_live": true
+  },
+  "audio": {
+    "backend": "wasapi",
+    "direction": "render",
+    "endpoint_kind": "virtual_cable",
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_format": "s16",
+    "submitted_samples": 72480,
+    "queued_samples_at_finish": 0,
+    "submitted_audio_seconds": 4.53,
+    "duration_is_sample_count_based_not_latency": true
+  },
+  "timeline": [
+    {
+      "at_utc": "2026-09-20T12:49:46.134Z",
+      "event": "voice_start_control_observed"
+    },
+    {
+      "at_utc": "2026-09-20T12:49:46.316Z",
+      "event": "audio_session_begin_requested"
+    },
+    {
+      "at_utc": "2026-09-20T12:49:46.318Z",
+      "event": "audio_session_begin_completed",
+      "result": "passed"
+    },
+    {
+      "at_utc": "2026-09-20T12:49:46.319Z",
+      "event": "virtual_cable_stream_started",
+      "result": "passed"
+    },
+    {
+      "at_utc": "2026-09-20T12:49:50.766Z",
+      "event": "voice_stop_control_observed"
+    },
+    {
+      "at_utc": "2026-09-20T12:49:50.929Z",
+      "event": "audio_session_finish_requested"
+    },
+    {
+      "at_utc": "2026-09-20T12:49:50.930Z",
+      "event": "audio_session_finish_completed",
+      "result": "passed"
+    }
+  ],
+  "helper_during_voice": {
+    "previous_generation": 2,
+    "next_generation": 3,
+    "rebind_waiting_utc": "2026-09-20T12:49:46.318Z",
+    "capture_attached_and_loaded_utc": "2026-09-20T12:49:46.483Z",
+    "ready_after_neutral_utc": "2026-09-20T12:49:50.803Z",
+    "arm_accepted_utc": "2026-09-20T12:49:50.804Z",
+    "neutral_sequence": 1,
+    "final_phase": "ready",
+    "final_report_count": 24,
+    "final_edge_count": 21,
+    "boundary": "Rebinding was observed during the voice lifecycle; this does not make basic voice dependent on the optional helper."
+  },
+  "verification_boundary": {
+    "recipient_input_selection_confirmed": false,
+    "recognized_text_observed": false,
+    "reason": "The user later asked whether the receiving application should select CABLE Output as its input; no receiving application recognition/text result was established.",
+    "strict_idle_first_back_key": "pending_separate_trial"
+  },
+  "privacy": {
+    "device_identity": false,
+    "personal_paths": false,
+    "raw_control_packets": false,
+    "raw_audio": false,
+    "transcript": false,
+    "credentials": false,
+    "process_ids": false
+  }
+}

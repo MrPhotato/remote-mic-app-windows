@@ -1,0 +1,180 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "app_version": "0.2.6",
+  "remote_model": "rc003",
+  "trial": "first_physical_keys_after_initial_neutral_wait",
+  "sources": [
+    "target/local-launch/rc003-integration/warm-observation.json",
+    "target/local-launch/rc003-integration/installed-app-final.log"
+  ],
+  "observed_window_utc": {
+    "start": "2026-09-20T12:43:05.018Z",
+    "end": "2026-09-20T12:43:14.867Z"
+  },
+  "user_confirmation": {
+    "reported_ui_responding": true,
+    "proves_text_editing": false
+  },
+  "initialization": {
+    "generation": 1,
+    "capture_loaded_utc": "2026-09-20T11:10:45.982Z",
+    "neutral_accepted_utc": "2026-09-20T12:43:05.047Z",
+    "neutral_sequence": 1,
+    "waiting_for_first_neutral_ms": 5539065,
+    "waiting_state": "awaiting_neutral",
+    "ready_idle_first_use_tested": false
+  },
+  "result": {
+    "paired_edges_and_matching_ui_highlights": "passed",
+    "complete_pairs": {
+      "up": 2,
+      "back": 3,
+      "volume_up": 3,
+      "volume_down": 3
+    },
+    "observed_semantic_edges": 22,
+    "observed_highlight_transitions": 22,
+    "final_active_highlights": [],
+    "helper_final_status": {
+      "phase": "ready",
+      "last_error": null,
+      "generation": 1,
+      "report_count": 19,
+      "edge_count": 18
+    },
+    "helper_counts_exclude_up_control": true
+  },
+  "paired_observations": [
+    {
+      "button": "up",
+      "down_utc": "2026-09-20T12:43:05.018Z",
+      "up_utc": "2026-09-20T12:43:05.117Z",
+      "highlight_on_utc": "2026-09-20T12:43:05.018Z",
+      "highlight_off_utc": "2026-09-20T12:43:05.117Z"
+    },
+    {
+      "button": "back",
+      "down_utc": "2026-09-20T12:43:07.813Z",
+      "up_utc": "2026-09-20T12:43:07.939Z",
+      "highlight_on_utc": "2026-09-20T12:43:07.813Z",
+      "highlight_off_utc": "2026-09-20T12:43:07.940Z"
+    },
+    {
+      "button": "back",
+      "down_utc": "2026-09-20T12:43:08.331Z",
+      "up_utc": "2026-09-20T12:43:08.520Z",
+      "highlight_on_utc": "2026-09-20T12:43:08.332Z",
+      "highlight_off_utc": "2026-09-20T12:43:08.520Z"
+    },
+    {
+      "button": "back",
+      "down_utc": "2026-09-20T12:43:08.838Z",
+      "up_utc": "2026-09-20T12:43:09.026Z",
+      "highlight_on_utc": "2026-09-20T12:43:08.839Z",
+      "highlight_off_utc": "2026-09-20T12:43:09.027Z"
+    },
+    {
+      "button": "volume_up",
+      "down_utc": "2026-09-20T12:43:11.721Z",
+      "up_utc": "2026-09-20T12:43:11.848Z",
+      "highlight_on_utc": "2026-09-20T12:43:11.722Z",
+      "highlight_off_utc": "2026-09-20T12:43:11.849Z"
+    },
+    {
+      "button": "volume_up",
+      "down_utc": "2026-09-20T12:43:12.039Z",
+      "up_utc": "2026-09-20T12:43:12.227Z",
+      "highlight_on_utc": "2026-09-20T12:43:12.039Z",
+      "highlight_off_utc": "2026-09-20T12:43:12.228Z"
+    },
+    {
+      "button": "volume_up",
+      "down_utc": "2026-09-20T12:43:12.556Z",
+      "up_utc": "2026-09-20T12:43:12.682Z",
+      "highlight_on_utc": "2026-09-20T12:43:12.557Z",
+      "highlight_off_utc": "2026-09-20T12:43:12.682Z"
+    },
+    {
+      "button": "volume_down",
+      "down_utc": "2026-09-20T12:43:13.061Z",
+      "up_utc": "2026-09-20T12:43:13.250Z",
+      "highlight_on_utc": "2026-09-20T12:43:13.061Z",
+      "highlight_off_utc": "2026-09-20T12:43:13.250Z"
+    },
+    {
+      "button": "volume_down",
+      "down_utc": "2026-09-20T12:43:13.454Z",
+      "up_utc": "2026-09-20T12:43:13.577Z",
+      "highlight_on_utc": "2026-09-20T12:43:13.454Z",
+      "highlight_off_utc": "2026-09-20T12:43:13.578Z"
+    },
+    {
+      "button": "volume_down",
+      "down_utc": "2026-09-20T12:43:13.828Z",
+      "up_utc": "2026-09-20T12:43:13.954Z",
+      "highlight_on_utc": "2026-09-20T12:43:13.829Z",
+      "highlight_off_utc": "2026-09-20T12:43:13.955Z"
+    },
+    {
+      "button": "up",
+      "down_utc": "2026-09-20T12:43:14.686Z",
+      "up_utc": "2026-09-20T12:43:14.866Z",
+      "highlight_on_utc": "2026-09-20T12:43:14.687Z",
+      "highlight_off_utc": "2026-09-20T12:43:14.867Z"
+    }
+  ],
+  "back_mapping": {
+    "map_fire_action": "normal_backspace",
+    "map_fire_trigger": "Single",
+    "map_fire_count": 3,
+    "map_fire_utc": [
+      "2026-09-20T12:43:07.811Z",
+      "2026-09-20T12:43:08.330Z",
+      "2026-09-20T12:43:08.837Z"
+    ],
+    "frontend_gestures": [
+      {
+        "at_utc": "2026-09-20T12:43:07.815Z",
+        "button": "back",
+        "trigger": "single"
+      },
+      {
+        "at_utc": "2026-09-20T12:43:08.333Z",
+        "button": "back",
+        "trigger": "single"
+      },
+      {
+        "at_utc": "2026-09-20T12:43:08.839Z",
+        "button": "back",
+        "trigger": "single"
+      }
+    ],
+    "actual_text_editing_effect": "not_proven",
+    "input_length_observation_count": 1,
+    "input_lengths": [
+      {
+        "at_utc": "2026-09-20T11:10:34.534Z",
+        "length": 200
+      }
+    ],
+    "limitation": "Only the initial length 200 was observed; no post-key text-length change was recorded. Action dispatch and gesture events do not prove actual Backspace effect."
+  },
+  "pending": [
+    "actual_backspace_effect",
+    "long_hold_behavior",
+    "first_use_after_ready_idle",
+    "stop_helper_while_held",
+    "active_helper_cleanup_and_upgrade",
+    "voice_regression"
+  ],
+  "privacy": {
+    "device_identity": false,
+    "personal_paths": false,
+    "raw_hid_reports": false,
+    "text_content": false,
+    "audio_content": false,
+    "credentials": false
+  },
+  "boundary": "Capture remained awaiting_neutral for about 92 minutes before the first physical control press. This is initial arming evidence, not an idle-after-ready test or input-latency measurement."
+}
