@@ -1,0 +1,19 @@
+{
+  "result": "passed",
+  "video": "SayAll-Windows-Promo-1080p.mp4",
+  "duration_seconds": 64,
+  "width": 1920,
+  "height": 1080,
+  "fps": 24,
+  "decoded_frames": 1536,
+  "video_codec": "h264",
+  "pixel_format": "yuv420p",
+  "audio_codec": "aac",
+  "audio_source": "original_synthesized_soundtrack",
+  "voiceover": false,
+  "sha256": "4ce2a15d0b23069533c05bd6230b4d9d2c216a0421dc7ef3bb68fa91cf940f7c",
+  "bytes": 2601713,
+  "external_publication": "not_performed",
+  "visual_review": "nine_encoded_scene_frames",
+  "disclosure": "interaction_illustration_not_hardware_recording"
+}
