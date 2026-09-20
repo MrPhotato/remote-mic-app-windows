@@ -1,12 +1,12 @@
 # 按标点删除在 WebView 焦点检查阶段被拒绝
 
 - 发现日期：2026-09-20。
-- 状态：软件真 UIA 修复回归通过；包含最终范围及选区修复的安装版 RC003 实体复测待执行。
+- 状态：旧规则安装版已有后续 12 次首删及 7 次双击实体通过，保留首个焦点变化取消与严格闲置 deferred；当前短句提案已由用户取消、未交付。最新即时退格＋双击 Ctrl+Z 预设另待实际验证。
 - 影响范围：SayAll 0.2.6 本地三键增强安装包，Windows 11 x64（build 26200），本机 RC003；受测目标为应用内 WebView 测试输入框。其它应用及 RC001 未由本轮证明。
 - 功能点：返回键单击普通退格、可选双击删到上一个标点。
 - 现象：用户反馈单击与双击均无响应；实测双击动作已派发但被焦点检查拒绝，普通退格在同一观测窗口有实际删除，不能把两条路径合并为一个“输入未收到”结论。
 - 复现条件：返回单击配置 `normal_backspace`，双击配置 `delete_to_punctuation`；准备初始长度 12、预期按标点删除后长度 6 的固定测试框，聚焦后实体双击返回。
-- 正常预期：短双击执行一次按标点删除并保留标点；孤立单击在双击窗口结束后普通退格；按住仍连续退格，失败不能误删其它目标。
+- 原始复现版本的预期：短双击执行一次按标点删除并保留标点；孤立单击在双击窗口结束后普通退格；按住仍连续退格，失败不能误删其它目标。后续提前首删和当前短句新语义另节记录，不回写为原版行为。
 - 证据：[脱敏失败与普通退格对照](../Testing/evidence/punctuation-webview-focus-20260920.json)，原始观测在 ignored `target/local-launch/rc003-integration/punctuation-double-observation.json` 与 `installed-app-final.log`。
 
 ## 观测窗口与失败事实
@@ -125,3 +125,24 @@
 `15:16:02Z` 的独立修复复验 passed：首击提交 39ms、总动作 559ms，实际 5→4→0，API、焦点与精确预期均通过；产品记录 `empty_result_verify ... writable_empty_value_placeholder_confirmed` 后 `exact_result_verified`。新分支只接受可写 Edit 的空 ValuePattern、单个 U+FFFC 文档和起点空光标，并重复两次组合态、焦点及空字段检查；没有放宽普通嵌入对象检查。执行方另确认最终 DOM 光标为 0/0。最新事务定向测试 23 passed、0 failed。原失败与修复复验分别保留，累计为 10 项软件执行 passed、1 项历史 failed。
 
 本轮没有实体遥控器、手势分类或新安装验证，fixture 预检可能预热 UIA provider，也没有真实闲置首用。单次首删用例随后关闭 Runtime，不能据此宣称手势窗口到期不会重删。复杂字素、活动 IME、已有选区、其它应用及富文本格式仍未通过本轮证明。
+
+## 第五轮安装版 RC003 实体返回：旧尾标点规则
+
+来源 `8e7b68acf1af3ab0ce09b21615416af268684c2b` 已正常升级并核验主程序/Helper，安装快照见 [安装证据](../Testing/evidence/eager-backspace-install-20260920.json)。后续 `15:35:45.697Z–15:36:12.082Z` 的 [独立实体证据](../Testing/evidence/eager-backspace-physical-round1-20260920.json) 记录 20 对返回边沿、13 次首击事务和 7 次双击。
+
+- 首个事务在 52ms 以 `focus_changed` 取消，没有提交首删；记录保留，具体焦点变化原因未知，不将整轮写成全部首按通过。
+- passed：后续 12 次 prepared 首删，提交 36–55ms；7 次 double_complete 均有 `exact_result_verified`，其中 5 次删剩余后缀、2 次恢复旧规则要求保留的尾标点。
+- 测试框记录 17 对可信 Backspace DOWN/UP；文本重新增多包含人工重填，只把各事务精确核验及两次 Unicode 补回归属于对应动作。
+- deferred：返回前已有 Up、Left、Right，未满足“闲置后的第一个实体键就是返回”；旧软件探针及基础普通退格的闲置证据不替代此项。
+
+这轮证明焦点归属、DocumentRange 和异步选区修复后的安装版旧规则能够完成实际删除。它不证明后续新语义、其它应用、RC001 或所有焦点/取消/生命周期条件通过。
+
+## 后续产品调整：短句提案取消，改为即时退格＋双击撤销
+
+用户曾要求双击连同当前短句尾部的连续标点和非换行空白一起删除。候选曾有文本编辑定向 19 passed、事务 31 passed，随后用户明确取消该需求，未构建安装交付。第五轮的 2 次旧尾符恢复仍是历史旧规则结果，不标成短句方案通过。
+
+最新 Coding 预设改为返回单击立即普通退格、按住连删、双击发送 Ctrl+Z。双击发生时首击已删除，撤销范围及分组由编辑器决定，不保证整段撤销，也不保证只恢复该次首删。音量＋/－仍切上一/下一任务或标签页，TV 单击仍开关侧边栏；菜单/TV 的其余动作与官方来源见 [新方案调研](../docs/investigations/2026-09-20-codex-remote-defaults.md)。首次/最近备份保留；新预设及即时首删接线的实际输入、安装、实体和冷首用均独立 deferred，不以旧标点成功或预设测试替代。
+
+撤销版预设与 Coding 页面定向 24 tests passed（`coding-preset-undo-tests.log`），覆盖映射表、说明和原有备份恢复行为；测试没有发送真实键，不能证明 Ctrl+Z 在目标编辑器中撤销了哪些内容。
+
+2026-09-21 普通退格＋撤销的软件执行已 passed，实际固定输入框 12→11→12，见 [独立证据](../Testing/evidence/ordinary-backspace-undo-webview-20260921.json)。这条新默认路径无需原来的 UIA 文字事务。候选短句测试的两次超时失败归档于 [已取消实验](../Testing/evidence/current-clause-guard-timeout-20260920.json)，未纳入当前实现。

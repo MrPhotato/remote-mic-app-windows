@@ -36,15 +36,15 @@ const backupDate = computed(() => backup.value ? new Date(backup.value.createdAt
 const canApply = computed(() => nativeRuntime && current.value !== null && !loading.value && !busy.value && !backupError.value);
 const presetLabels: Partial<Record<RemoteButton, Partial<Record<ButtonTrigger, string>>>> = {
   home: { single: "打开 Codex", double: "新任务 · Ctrl + N", long: "设置 · Ctrl + ," },
-  menu: { single: "下一任务/标签页", double: "命令菜单", long: "上一任务/标签页" },
-  tv: { single: "查看改动", double: "打开/收起终端", long: "搜索文件" },
+  menu: { single: "命令菜单 · Ctrl + Shift + P", double: "选择模型 · Ctrl + Shift + M", long: "待处理项 · Ctrl + Alt + A" },
+  tv: { single: "开关侧边栏 · Ctrl + B", double: "查看改动 · Ctrl + Alt + B", long: "打开/收起终端 · Ctrl + `" },
   power: { single: "取消当前操作 · Esc" },
   ok: { single: "确认/发送 · Enter" },
-  back: { single: "退格 · Backspace", long: "按住连续退格" },
+  back: { single: "退格 · Backspace", double: "撤销 · Ctrl + Z", long: "按住连续退格" },
   up: { long: "按住连续向上" }, down: { long: "按住连续向下" },
   left: { long: "按住连续向左" }, right: { long: "按住连续向右" },
-  volume_up: { single: "未配置动作", double: "未配置动作", long: "未配置动作" },
-  volume_down: { single: "未配置动作", double: "未配置动作", long: "未配置动作" },
+  volume_up: { single: "上一任务/标签页 · Ctrl + PageUp", double: "未配置动作", long: "按住连续切换上一项" },
+  volume_down: { single: "下一任务/标签页 · Ctrl + PageDown", double: "未配置动作", long: "按住连续切换下一项" },
 };
 
 function presetLabel(button: RemoteButton, gesture: ButtonTrigger): string {
@@ -169,7 +169,7 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
-      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。方向键与退格按住连续操作。双击返回按标点删除可在「自定义按键」中另选。RC003 可启用三键增强后检查返回与音量键；本预设未配置音量动作，增强音量键只显示高亮，如需调音量请另设音量快捷键。</p>
+      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。返回首按立即普通退格，双击时先删后发送 Ctrl + Z 撤销；具体撤销内容由当前编辑器决定。方向键与退格按住连续操作。音量＋/－用于切换上一/下一任务或标签页；RC003 请先启用三键增强。搜索文件可从命令菜单进入。</p>
       <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter：在输入框中可能发送内容，在审批提示中可能批准操作。电源键在本方案中配置为 Esc，用于关闭弹层或取消当前操作。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>

@@ -12,6 +12,8 @@
 - passed：监督线程及启动路径定向测试先有 5 passed；后续清理退出状态日志改进后为 6 passed、0 failed。
   停止令牌与换代/转发共用短锁；阻塞读写在锁外。
 - passed：前端全量 17 文件、145 tests；随后连接/监听前置提示定向 7 tests passed；修正未设置音量键的动作摘要后，ButtonsPage 定向 27 tests passed。
+- passed（历史候选，用户已取消且未交付）：当前短句及连续尾符删除的文本编辑定向 19 tests、事务 31 tests；当时的 Coding 预设 24 tests，动作摘要与编辑页 39 tests。日志为 `backspace-text-edit-tests.log`、`backspace-transaction-tests.log`、`coding-preset-final-tests.log`、`clause-label-tests.log`。不能将这些结果作为后来即时退格＋Ctrl+Z 方案的引擎或实体验证。
+- passed（最新预设的前端定向）：返回双击 Ctrl+Z 的 `coding-profile` 与 `CodingPage` 共 24 tests，日志 `coding-preset-undo-tests.log`；不发送真实键，不证明即时退格引擎、撤销分组或实体效果。
 - passed：本轮已实测安装包的 Helper 21 项 Python 测试及 JS observer 测试。包括父进程失联、
   租约超时、旧代/非法帧、初始按住、中性状态、源切换和发布租约/创建 capture 交错。
 - passed：本轮已实测安装包的 Helper 96 个文件的 SHA-256、根 manifest 副本与对应源码一致性；
@@ -22,7 +24,7 @@
   该候选完整包已于 `2026-09-20T13:22:21Z` 完成正常退出后的安装及全部 96 项文件校验，
   主程序与构建产物仅有 NSIS 标记三字节差异。候选同时包含 WebView 焦点修复和来源失效时取消文字编辑；
   已重新以普通权限启动，增强 Helper 已认证并加载，等待真实中性状态及实体复验。
-  新清理退出状态尚未实测，不能替换下述旧包的按键/语音/停止验证证据。
+  后续正常退出时新清理日志已实际确认 exit 0 / error mask 0，见本文升级节；不能替换下述旧包的按键/语音/停止验证证据。
   候选安装摘要及删除回归边界见 [WebView 焦点证据](evidence/punctuation-webview-focus-20260920.json)。
 
 完整编译和测试日志保存在 ignored `target/local-launch/rc003-integration/`；
@@ -49,9 +51,13 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 | 返回、音量加、音量减高亮的成对 DOWN/UP | passed（各 3 对，UI 高亮逐一对应；上键前后共 2 对正对照） |
 | 返回映射派发与单击手势 | passed；首轮只有派发证据，随后文本框试验确认实际退格 |
 | 实际退格效果与按住连续删除 | passed（单击 200→199，按住 199→183；17 对可信键盘事件与文本变化对应） |
-| 已就绪后闲置首用 | passed（另一次严格试验：ready 后 225.659 秒首个实体键为返回，183→182；没有方向键预热） |
+| 基础普通退格已就绪后闲置首用 | passed（旧动作配置：ready 后 225.659 秒首个实体键为返回，183→182；没有方向键预热）；即时退格＋双击撤销配置另计 |
+| 提前首删与旧规则双击，安装版 `8e7b68a` | 后续 12 首删、7 双击 passed；首个事务 focus_changed 取消；该轮严格闲置首按 deferred |
+| 删除当前短句及连续尾符提案 | 用户已取消，未交付；保留历史测试，不作为待验交付项 |
+| 即时退格＋双击 Ctrl+Z | 用户最新选择；实际输入、构建安装、实体及冷首用 deferred |
+| 新 Coding 预设的实际 Codex 效果 | 自动测试 passed；音量聊天/标签页、TV 侧边栏及其它动作实体效果 deferred |
 | Helper 停止时仍按住的键清理，不触发取消后的动作 | passed（合成 UP 1 次，停止后 4 秒无继续删除） |
-| 主程序正常退出与升级 | 正常退出 passed；运行中覆盖首次 failed；预先退出后安装 passed；活动 Helper 升级待验 |
+| 主程序正常退出与升级 | 正常退出 passed；运行中覆盖首次 failed；活动 Helper 正常退出并确认 exit 0 后安装 `8e7b68a` passed |
 | 活动 Helper 退出与宿主存活 | Helper 退出 passed；此前 13 个宿主 PID 均仍存在，创建时间/句柄身份未核验 |
 | 基础语音回归：遥控器到虚拟声卡输出 | passed（16 kHz 单声道，提交 72,480 样本，finish 后 queued=0） |
 | 第三方语音识别到文字端到端 | 未验证（接收应用输入选择尚未确认，无识别文字证据） |
@@ -169,4 +175,22 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 
 升级前使用应用正常退出事件，主进程确认退出；同一运行轮次的日志出现 helper_exited=true、helper_process cleanup_exited exit_code=0、cleanup_result passed / helper_cleanup_completed / error_mask=0。这是 `9057f5de…7d8441` Helper 的实际正常清理结果，不是强杀或单元模拟；没有单独采集驱动宿主存活证据，不扩展为崩溃/睡眠恢复通过。
 
-新主程序 startup connection/audio ready，voice idle，主程序 main_elevated=false；返回单击/双击映射保持 normal_backspace/delete_to_punctuation。增强已通过 manifest 预检并启动，首次状态 waiting/awaiting_neutral，等待实体方向键释放来完成初始化。新安装版的实体返回、未经探针预热的闲置首按、其他应用 UIA 兼容性仍分别待验证。软件函数实测、取消清理及边界补回的结果见 [WebView 执行证据](evidence/optimistic-backspace-webview-20260920.json)。
+新主程序 startup connection/audio ready，voice idle，主程序 main_elevated=false；返回单击/双击映射保持 normal_backspace/delete_to_punctuation。增强通过 manifest 预检并启动，首次状态 waiting/awaiting_neutral，随后 `15:32:23.162Z` 实体上键释放完成初始化。该安装快照中的 physical_rc003_return=deferred 表示当时状态，后续实体结果见下一节；未经预热的严格闲置首按与其它应用 UIA 兼容性仍待验证。软件函数实测、取消清理及边界补回的结果见 [WebView 执行证据](evidence/optimistic-backspace-webview-20260920.json)。
+
+## 安装版旧规则实体返回测试与后续需求边界
+
+`8e7b68acf1af3ab0ce09b21615416af268684c2b` 在 `15:35:45.697Z–15:36:12.082Z` 接收 20 对实体返回边沿，派发 13 次 Single 和 7 次 Double。首个事务在 52ms 因 `focus_changed` 取消，没有发送首删；后续 12 次 prepared 首删提交耗时 36–55ms，7 次双击均以实际文本精确核验完成，其中 5 次删除剩余后缀、2 次按旧规则补回被首删的尾标点。测试框记录 17 对可信 Backspace DOWN/UP，补回另由 Unicode 提交与最终文本检查证明。见 [本轮实体证据](evidence/eager-backspace-physical-round1-20260920.json)。
+
+记录中的文本长度增加包含人工重新填充，不能全归因于遥控器。该轮返回前先按了 Up、Left、Right，严格闲置首键条件未满足，记 deferred；此前基础普通退格的严格闲置通过也不自动证明新提前首删路径。首次焦点变化的具体原因未确定。
+
+用户曾要求双击删除当前短句及连续尾符；该候选有文本编辑 19 项、事务 31 项测试 passed，但随后被用户取消，未构建安装交付。旧规则的两次尾符补回不属于短句提案通过，也不能转为后来 Ctrl+Z 方案的证据。
+
+最新要求是返回单击立即普通退格、按住重复、双击发送 Ctrl+Z：首击已经删除，第二击触发编辑器撤销；具体撤销范围与分组由当前编辑器决定，不承诺整段撤销或精确恢复某次首删。该方案的实际输入、安装版实体按键和未经预热闲置首用仍 deferred；独立可选按标点删除功能不因此改成 Ctrl+Z。
+
+新内置预设保留用户确认的音量＋/－ Ctrl+PageUp/PageDown、TV 单击 Ctrl+B；菜单为命令/模型/待处理项，TV 双击/长按为查看改动/终端，返回双击改为 Ctrl+Z。首次及最近备份保留，升级不会自动覆盖当前配置。组合键官方来源和聊天/标签页范围见 [默认方案调研](../docs/investigations/2026-09-20-codex-remote-defaults.md)。新方案尚未构建安装或在 Codex 前台通过实体动作验证，不宣称只切 Agent。
+
+
+## 普通退格与撤销实际软件验证（2026-09-21）
+
+[实际执行证据](evidence/ordinary-backspace-undo-webview-20260921.json)：自家固定 WebView 输入框由真实 SendInput 普通 Backspace 删除一次（12→11），随后 Ctrl+Z 恢复原值（11→12），最终焦点及光标 12/12 正确。探针只读 UIA 核验，不进入 backspace_transaction 或选择删除；首删观察 30ms、总输入动作 54ms，不能当作遥控端到端或冷首按延迟。手势 32 tests、引擎路由 21 tests passed，覆盖无 UIA 能力也直接首删/一次撤销、普通重复及原标点路径保留；预设页面 24、按键编辑页 27 tests passed。实体 RC003、新安装及 Codex 实际动作仍待验。
+

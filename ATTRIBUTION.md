@@ -316,3 +316,17 @@ Microsoft [TextRange.Select](https://learn.microsoft.com/en-us/windows/win32/api
 Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差、SendInput 自带时间都可能影响它。因此只能比较是否相等，不能把更小值解释为没有新输入，也不能把它当成纯物理输入计数。该 API 只报告调用会话的输入时间，不提供字段身份；相等不能证明没有程序性换焦或同 tick 的活动，检查与发送也不具原子性。本次只增加保守拒绝条件，不宣称普遍阻止同窗口换焦误删；此前真实软件成功证据走 prepared 路径，不能证明此兜底在实体遥控器或闲置首按场景已通过。
 
 新增 4 项不发送真实键的定向测试覆盖读取失败、tick 改变/倒退/回绕、精确 prepared 不依赖该 tick、旧代准备失败不取消后代、未发送首击静默及已请求双击单次拒绝并释放 busy；事务模块合计 27 passed、0 failed。独立源码审查确认失效判定与一次票据共用短锁，回调在锁外；这些证据只证明所测逻辑，不代替兜底实际输入验收。
+
+## 实体提前退格与已取消的短句提案（2026-09-20）
+
+安装版来源 `8e7b68acf1af3ab0ce09b21615416af268684c2b` 的本机 RC003 实体轮次已记录：首个事务 focus_changed 52ms 取消，后续 12 次 prepared 首删提交 36–55ms、7 次旧规则双击实际完成（5 次后缀删除、2 次尾标点补回）。[独立实体证据](Testing/evidence/eager-backspace-physical-round1-20260920.json) 保留逐事务匿名时间与计数；Up/Left/Right 先于返回，严格闲置首键 deferred。此结果不证明兜底、其它应用或 RC001。
+
+用户曾提出删除当前短句及连续尾部标点、非换行空白，保留更早标点或段落边界。候选复用上述公开 UIA/SendInput 方法并有文本编辑定向 19 项、事务 31 项测试 passed，未复制外部算法；随后用户明确取消该提案，未构建安装交付。保留历史实验，不挪用旧规则尾符补回记录宣称短句方案通过。
+
+## Codex 日常 12 键预设调整（2026-09-20）
+
+先核对 [默认方案调研](docs/investigations/2026-09-20-codex-remote-defaults.md) 与 [OpenAI 官方 Windows 命令表](https://learn.chatgpt.com/docs/reference/commands)，再更新内置方案：菜单单/双/长为 Ctrl+Shift+P、Ctrl+Shift+M、Ctrl+Alt+A；TV 为 Ctrl+B、Ctrl+Alt+B、Ctrl+反引号；用户确认的音量＋/－为 Ctrl+PageUp/PageDown。Home、方向、Enter、Esc 和语音生命周期保留，返回按最新用户要求采用立即普通退格、按住重复及双击 Ctrl+Z。聊天或标签页是官方切换范围，不宣称只切内部 Agent；用户关闭侧边栏的操作习惯也不是这个限制的官方解法。
+
+预设复用显式应用与首次/最近备份，不自动覆盖已存配置。Ctrl+Z 使用既有公开快捷键注入，首击普通退格已发生后再撤销，具体撤销分组由当前编辑器决定，不把它描述成通用整段删除或安全精确恢复。先前短句版预设 24 tests、动作摘要/编辑页 39 tests 是历史候选结果；撤销版最新预设/页面定向 24 tests passed，日志为 `coding-preset-undo-tests.log`，实际输入、构建安装、Codex 前台实体动作及冷首用仍 deferred。参考官方命令事实与 [Codex Micro 操作职责](https://learn.chatgpt.com/docs/features/codex-micro)，未复制设备协议、第三方内部实现或新增语音手势；详见调研中的上下文及验收边界。
+
+2026-09-21 后续：普通退格＋Ctrl+Z 已由真实 SendInput 在自家输入框观察到 12→11→12；纯手势 32、引擎路由 21、预设 24 与编辑页 27 tests passed，阈值未改。仅普通键注入路径，编辑器撤销分组仍非产品保证。见 [实际软件证据](Testing/evidence/ordinary-backspace-undo-webview-20260921.json)；安装和实体边界另计。

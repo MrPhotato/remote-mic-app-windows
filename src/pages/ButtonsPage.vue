@@ -1132,6 +1132,7 @@ onUnmounted(() => {
             <button v-if="editingTarget.trigger === 'double'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'delete_to_punctuation' }" :disabled="busy" @click="applyAction({ type: 'delete_to_punctuation' })">删到上一个标点（保留标点）</button>
           </div>
           <p class="muted editor-note">普通退格：单按 Backspace，按住按 Windows 键盘重复速度连续删除；长按随单击生效，无需另配。</p>
+          <p class="muted editor-note">默认方案将返回双击设为 Ctrl + Z：第一击立即退格，第二击发送一次撤销。撤销范围由当前应用决定。</p>
           <p v-if="editingTarget.trigger === 'double' || actionsOf('back').double.type === 'delete_to_punctuation'" class="muted editor-note">双击删除从光标向左删到上一处标点，并保留标点。仅支持可读取文本的编辑区，不支持时不删除。开启双击后，单击会等待约 0.3 秒；按住仍可连续删除。</p>
         </section>
         <section class="action-section codex-shortcuts" aria-labelledby="codex-shortcuts-title">

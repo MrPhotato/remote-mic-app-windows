@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "scope": "own_webview_real_uia_candidate_current_clause",
+  "status": "failed_before_guard_deduplication",
+  "constant_changes": false,
+  "first_attempt": {
+    "at": "2026-09-20T15:51:56.6270381Z",
+    "first_submit_ms": 163,
+    "action_ms": 2447,
+    "before_length": 15,
+    "after_length": 14,
+    "exact_target": false,
+    "reason": "outer_verification_budget_exhausted_by_repeated_original_focus_checks",
+    "selection_cleanup": "original_caret_restored"
+  },
+  "repeat_attempt": {
+    "case": "fast_clause_cluster",
+    "at": "2026-09-20T23:52:43.3496878+08:00",
+    "exitCode": 1,
+    "output": [
+      "phase=foreground accepted=true matched=true elapsed_ms=0",
+      "phase=first_submit ok=true elapsed_ms=173",
+      "result=failed case=fast_clause_cluster api_ok=false focus_match=true expected_match=false before_len=15 after_len=14 action_ms=2461 elapsed_ms=3675"
+    ],
+    "observation": {
+      "events": [
+        {
+          "at": 1789919564432,
+          "length": 14
+        }
+      ],
+      "length": 14,
+      "caretStart": 14,
+      "caretEnd": 14
+    }
+  },
+  "boundary": {
+    "physical_remote": "deferred",
+    "codex_editor": "deferred"
+  }
+}

@@ -1104,7 +1104,10 @@ fn fire_gesture(
             crate::ble::gatt_note(format!(
                 "map_fire button={button:?} trigger={trigger:?} action=normal_backspace"
             ));
-            if eager_first {
+            if eager_first
+                && mappings.action_for(button, ButtonTrigger::Double)
+                    == ButtonAction::DeleteToPunctuation
+            {
                 let result_state = Arc::clone(state);
                 let report = Box::new(move |result: Result<(), String>| {
                     if let Err(error) = result {
@@ -1115,12 +1118,19 @@ fn fire_gesture(
                     lock_state(state).last_error = Some(error);
                 }
             } else {
-                // Repeats are ordinary backspaces. They invalidate any saved
-                // first-click context before changing the text again.
+                // Backspace + Undo needs no text snapshot or compensation.
+                // Its first press and all repeats are ordinary key taps.
                 injector.cancel_eager_backspace();
-                if let Err(error) = injector.tap(&KeyChord {
+                let started = Instant::now();
+                let result = injector.tap(&KeyChord {
                     keys: vec![KeyCode::Backspace],
-                }) {
+                });
+                crate::ble::gatt_note(format!(
+                    "map_backspace phase=ordinary_submit result={} eager_first={eager_first} target_result=unknown elapsed_ms={}",
+                    if result.is_ok() { "submitted" } else { "failed" },
+                    started.elapsed().as_millis()
+                ));
+                if let Err(error) = result {
                     lock_state(state).last_error = Some(format!("退格发送失败：{error}"));
                     crate::ble::gatt_note("map_backspace result=err".into());
                 }
@@ -1470,6 +1480,71 @@ mod tests {
             generation,
             sequence,
             pressed_mask,
+        }
+    }
+
+    #[test]
+    fn backspace_undo_uses_ordinary_taps_without_a_text_transaction() {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _gate = crate::key_gate::KeyGate::start();
+        for capable in [false, true] {
+            for masks in [vec![1], vec![1, 0, 1, 0]] {
+                let mut mappings = eager_mappings();
+                let undo = KeyChord {
+                    keys: vec![KeyCode::Control, KeyCode::Z],
+                };
+                mappings
+                    .actions
+                    .get_mut(&RemoteButton::Back)
+                    .unwrap()
+                    .double = ButtonAction::Shortcut {
+                    chord: undo.clone(),
+                };
+                let recording = Arc::new(RecordingInjector {
+                    eager_enabled: capable,
+                    ..RecordingInjector::default()
+                });
+                let state = Arc::new(Mutex::new(EngineState::default()));
+                let (sender, receiver) = mpsc::channel();
+                sender
+                    .send(EngineMessage::Rc003TapStart { generation: 2 })
+                    .unwrap();
+                sender.send(eager_state(2, 1, 0)).unwrap();
+                for (index, mask) in masks.iter().enumerate() {
+                    sender
+                        .send(eager_state(2, index as u64 + 2, *mask))
+                        .unwrap();
+                }
+                sender.send(EngineMessage::Shutdown).unwrap();
+                engine_worker(
+                    receiver,
+                    Arc::new(RwLock::new(mappings)),
+                    state.clone(),
+                    Arc::new(Mutex::new(RawInputSnapshot::default())),
+                    Arc::new(RwLock::new(Vec::new())),
+                    Arc::new(RwLock::new(Vec::new())),
+                    recording.clone(),
+                    Arc::new(UsageCounters::default()),
+                    Arc::new(AtomicU64::new(0)),
+                );
+                let mut expected = vec![KeyChord {
+                    keys: vec![KeyCode::Backspace],
+                }];
+                if masks.len() == 4 {
+                    expected.push(undo);
+                }
+                assert_eq!(*recording.taps.lock().unwrap(), expected);
+                assert!(recording
+                    .eager_calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|call| matches!(call, EagerCall::Tap)));
+                assert!(!recording.eager_active.load(Ordering::SeqCst));
+                assert_eq!(lock_state(&state).last_error, None);
+            }
         }
     }
 

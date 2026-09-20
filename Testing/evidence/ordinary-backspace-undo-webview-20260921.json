@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "at": "2026-09-20T16:03:27.7619673+00:00",
+  "scope": "own_webview_real_send_input_and_read_only_uia",
+  "case": "ordinary_undo",
+  "exitCode": 0,
+  "output": [
+    "phase=foreground accepted=true matched=true elapsed_ms=0",
+    "phase=ordinary_backspace api_ok=true expected_match=true before_len=12 after_len=11 elapsed_ms=30",
+    "phase=ordinary_undo api_ok=true elapsed_ms=1 total_action_ms=54",
+    "result=passed case=ordinary_undo api_ok=true focus_match=true expected_match=true before_len=12 after_len=12 action_ms=54 elapsed_ms=625"
+  ],
+  "observation": {
+    "events": [
+      {
+        "at": 1789920208448,
+        "length": 11
+      },
+      {
+        "at": 1789920208508,
+        "length": 12
+      }
+    ],
+    "length": 12,
+    "caretStart": 12,
+    "caretEnd": 12
+  },
+  "physical_remote": "deferred",
+  "codex_editor": "deferred",
+  "remarks": "probe preflight may warm UIA; no idle-first claim; no text selection or transaction path used"
+}

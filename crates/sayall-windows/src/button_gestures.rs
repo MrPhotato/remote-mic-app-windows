@@ -15,6 +15,8 @@
 //!   双击模式先等待，避免首击提前删掉标点；第二击按住转为普通删除。
 //!   显式启用 eager 返回键模式时，首击 DOWN 先发 Single，窗口到期不重复补发；
 //!   双击仍在第二击 UP 触发。宿主必须先接好首删快照与补偿事务再启用。
+//!   返回键“普通退格 + 双击 Ctrl+Z”自动提前首击，不依赖 UIA 或补偿能力；
+//!   之后双击只触发一次撤销，具体撤销范围由前台应用决定。
 //! - 语音键不进入本识别器（保持按下开始/释放结束的实时生命周期）。
 //!
 //! 纯状态机：不持锁、不触 IO，时间由调用方注入，便于单元测试。
@@ -25,7 +27,16 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use crate::raw_input::RemoteButton;
-use crate::send_input::{ButtonAction, ButtonMappings, ButtonTrigger};
+use crate::send_input::{ButtonAction, ButtonMappings, ButtonTrigger, KeyCode};
+
+fn is_plain_undo(action: &ButtonAction) -> bool {
+    matches!(action, ButtonAction::Shortcut { chord }
+    if chord.keys.len() == 2
+        && chord.keys.contains(&KeyCode::Z)
+        && chord.keys.iter().any(|key| matches!(
+            key, KeyCode::Control | KeyCode::LeftControl | KeyCode::RightControl
+        )))
+}
 
 /// 双击判定窗口（第一击释放至第二击按下的最大间隔），Mac 同款。
 pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
@@ -48,8 +59,8 @@ pub struct GestureConfig {
     pub repeat: Option<Duration>,
     pub repeat_delay: Duration,
     pub normal_backspace: bool,
-    /// Runtime-only opt-in for Back: NormalBackspace + DeleteToPunctuation.
-    /// configure() always leaves this false; no persisted mapping is changed.
+    /// Back + NormalBackspace + exact Ctrl+Z is immediate by configuration.
+    /// DeleteToPunctuation requires the host's explicit runtime opt-in instead.
     pub eager_backspace: bool,
     /// 会切换交互桌面的单击动作必须等本次实体按键完整释放后执行，确保
     /// 原始 DOWN/UP 先由门控成对处理，不把迟到边沿带到锁屏/解锁阶段。
@@ -89,7 +100,9 @@ impl GestureConfig {
             repeat,
             repeat_delay: REPEAT_START_DELAY,
             normal_backspace,
-            eager_backspace: false,
+            eager_backspace: button == RemoteButton::Back
+                && normal_backspace
+                && is_plain_undo(&actions.double),
             defer_single_until_release,
         })
     }
@@ -163,13 +176,14 @@ impl GestureRecognizer {
 
     /// Call after configure[_with_keyboard_repeat] only when the host can safely
     /// execute an early single and compensate it on a later punctuation double.
-    /// Other buttons/action pairs retain their existing gesture timing.
+    /// Preserve the automatic Ctrl+Z mode; other pairs keep their existing timing.
     pub fn enable_eager_backspace(&mut self, mappings: &ButtonMappings) {
         let actions = mappings.actions(RemoteButton::Back);
         if let Some((config, state)) = self.buttons.get_mut(&RemoteButton::Back) {
             let enabled = mappings.enabled
                 && actions.single == ButtonAction::NormalBackspace
-                && actions.double == ButtonAction::DeleteToPunctuation
+                && (actions.double == ButtonAction::DeleteToPunctuation
+                    || is_plain_undo(&actions.double))
                 && config.normal_backspace
                 && config.double_enabled;
             if config.eager_backspace != enabled {
@@ -179,8 +193,9 @@ impl GestureRecognizer {
         }
     }
 
-    /// Query immediately before press(), using the same `now`. Only this Single
-    /// starts a snapshot transaction; repeat/conversion Singles use ordinary tap.
+    /// Query immediately before press(), using the same `now`. The host decides
+    /// whether the first Single is a plain Backspace (undo mode) or a transaction;
+    /// repeat/conversion Singles always use ordinary tap.
     /// An expired double window is a new first press even before advance() runs.
     pub fn first_press_would_be_eager(&self, button: RemoteButton, now: Instant) -> bool {
         self.buttons.get(&button).is_some_and(|(config, state)| {
@@ -501,6 +516,195 @@ mod tests {
         recognizer.configure(&mappings);
         recognizer.enable_eager_backspace(&mappings);
         recognizer
+    }
+
+    fn undo_mappings(keys: Vec<KeyCode>) -> ButtonMappings {
+        let mut mappings = deletion_mappings(false);
+        mappings
+            .actions
+            .get_mut(&RemoteButton::Back)
+            .unwrap()
+            .double = ButtonAction::Shortcut {
+            chord: KeyChord { keys },
+        };
+        mappings
+    }
+
+    #[test]
+    fn undo_first_is_immediate_without_opt_in_and_second_release_fires_once() {
+        for control in [
+            KeyCode::Control,
+            KeyCode::LeftControl,
+            KeyCode::RightControl,
+        ] {
+            for keys in [vec![control, KeyCode::Z], vec![KeyCode::Z, control]] {
+                let mappings = undo_mappings(keys);
+                let mut r = GestureRecognizer::new();
+                r.configure(&mappings); // No UIA capability or runtime opt-in.
+                let t = Instant::now();
+                assert!(r.first_press_would_be_eager(RemoteButton::Back, t));
+                assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+                assert!(r.press(RemoteButton::Back, t).is_empty());
+                assert!(r
+                    .release(RemoteButton::Back, t + Duration::from_millis(10))
+                    .is_empty());
+                // An injector that also supports punctuation must not clear or
+                // reset the already configured undo mode's pending first click.
+                r.enable_eager_backspace(&mappings);
+                assert!(!r.first_press_would_be_eager(
+                    RemoteButton::Back,
+                    t + Duration::from_millis(100)
+                ));
+                assert!(r
+                    .press(RemoteButton::Back, t + Duration::from_millis(100))
+                    .is_empty());
+                assert_eq!(
+                    r.release(RemoteButton::Back, t + Duration::from_millis(110)),
+                    vec![ButtonTrigger::Double]
+                );
+                assert!(r
+                    .release(RemoteButton::Back, t + Duration::from_millis(120))
+                    .is_empty());
+                assert!(r.advance(t + Duration::from_secs(1)).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn undo_eager_mode_requires_the_exact_back_normal_backspace_pair() {
+        let t = Instant::now();
+        for keys in [
+            vec![KeyCode::Z],
+            vec![KeyCode::Control, KeyCode::Y],
+            vec![KeyCode::Control, KeyCode::Shift, KeyCode::Z],
+            vec![KeyCode::Control, KeyCode::Alt, KeyCode::Z],
+            vec![KeyCode::Control, KeyCode::Z, KeyCode::Z],
+        ] {
+            let mappings = undo_mappings(keys);
+            let mut r = GestureRecognizer::new();
+            r.configure(&mappings);
+            r.enable_eager_backspace(&mappings);
+            assert!(!r.first_press_would_be_eager(RemoteButton::Back, t));
+            assert!(r.press(RemoteButton::Back, t).is_empty());
+        }
+        let mappings = undo_mappings(vec![KeyCode::Control, KeyCode::Z]);
+        let actions = mappings.actions(RemoteButton::Back);
+        for (button, single) in [
+            (RemoteButton::Up, ButtonAction::NormalBackspace),
+            (
+                RemoteButton::Back,
+                ButtonAction::Shortcut {
+                    chord: KeyChord {
+                        keys: vec![KeyCode::Backspace],
+                    },
+                },
+            ),
+        ] {
+            let mut different = mappings.clone();
+            different.actions.clear();
+            different.actions.insert(
+                button,
+                ButtonActions {
+                    single,
+                    ..actions.clone()
+                },
+            );
+            let mut r = GestureRecognizer::new();
+            r.configure(&different);
+            r.enable_eager_backspace(&different);
+            assert!(!r.first_press_would_be_eager(button, t));
+            assert!(r.press(button, t).is_empty());
+        }
+    }
+
+    #[test]
+    fn undo_first_or_second_hold_repeats_backspace_without_undo() {
+        for second in [false, true] {
+            let mappings = undo_mappings(vec![KeyCode::Control, KeyCode::Z]);
+            let mut r = GestureRecognizer::new();
+            r.configure_with_keyboard_repeat(
+                &mappings,
+                Duration::from_millis(500),
+                Duration::from_millis(40),
+            );
+            let t = Instant::now();
+            assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+            let held = if second {
+                assert!(r
+                    .release(RemoteButton::Back, t + Duration::from_millis(10))
+                    .is_empty());
+                let second = t + Duration::from_millis(100);
+                assert!(r.press(RemoteButton::Back, second).is_empty());
+                second
+            } else {
+                t
+            };
+            assert!(r.advance(held + Duration::from_millis(499)).is_empty());
+            for elapsed in [500, 540] {
+                assert_eq!(
+                    r.advance(held + Duration::from_millis(elapsed)),
+                    vec![(RemoteButton::Back, ButtonTrigger::Single)]
+                );
+            }
+            assert!(r
+                .release(RemoteButton::Back, held + Duration::from_millis(550))
+                .is_empty());
+            assert!(r.advance(t + Duration::from_secs(2)).is_empty());
+        }
+    }
+
+    #[test]
+    fn undo_late_second_press_is_a_new_single_and_expiry_does_not_replay_it() {
+        let mappings = undo_mappings(vec![KeyCode::Control, KeyCode::Z]);
+        let mut r = GestureRecognizer::new();
+        r.configure(&mappings);
+        let t = Instant::now();
+        assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+        assert!(r
+            .release(RemoteButton::Back, t + Duration::from_millis(10))
+            .is_empty());
+        let late = t + Duration::from_millis(310);
+        assert!(r.first_press_would_be_eager(RemoteButton::Back, late));
+        assert_eq!(
+            r.press(RemoteButton::Back, late),
+            vec![ButtonTrigger::Single]
+        );
+        assert!(r
+            .release(RemoteButton::Back, late + Duration::from_millis(10))
+            .is_empty());
+        assert!(r.advance(t + Duration::from_secs(1)).is_empty());
+    }
+
+    #[test]
+    fn undo_cancellation_discards_pending_double_and_hold() {
+        for all in [false, true] {
+            for stage in 0..4 {
+                let mappings = undo_mappings(vec![KeyCode::Control, KeyCode::Z]);
+                let mut r = GestureRecognizer::new();
+                r.configure(&mappings);
+                let t = Instant::now();
+                assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+                if stage >= 1 {
+                    r.release(RemoteButton::Back, t + Duration::from_millis(10));
+                }
+                if stage >= 2 {
+                    r.press(RemoteButton::Back, t + Duration::from_millis(100));
+                }
+                if stage == 3 {
+                    r.advance(t + Duration::from_secs(1));
+                }
+                if all {
+                    r.release_all();
+                } else {
+                    r.cancel_button(RemoteButton::Back);
+                }
+                assert!(r
+                    .release(RemoteButton::Back, t + Duration::from_secs(2))
+                    .is_empty());
+                assert!(r.advance(t + Duration::from_secs(3)).is_empty());
+                assert!(r.next_deadline().is_none());
+            }
+        }
     }
 
     #[test]

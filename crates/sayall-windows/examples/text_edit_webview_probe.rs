@@ -1,6 +1,6 @@
 //! Opt-in verification of the caller-selected SayAll WebView fixture only.
 //! Supply an observed PID and main HWND: --run --pid <pid> --hwnd <hwnd>
-//! --case <keep_ascii|keep_boundary|single>. Decimal or 0x HWND is accepted.
+//! --case <keep_ascii|keep_boundary|single|ordinary_undo>. Decimal or 0x HWND is accepted.
 //! The controller prepares the fixed value and end caret; this probe never sets
 //! a whole value. Output contains only fixed classifications, booleans, lengths,
 //! and timings. No process enumeration, arbitrary text, or third-party targets.
@@ -46,7 +46,7 @@ mod probe {
         UIA_TextPatternId, UIA_ValuePatternId,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_BACK, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+        GetAsyncKeyState, VK_BACK, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_Z,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
@@ -93,6 +93,7 @@ mod probe {
                         "keep_ascii"
                             | "keep_boundary"
                             | "single"
+                            | "ordinary_undo"
                             | "cancel_selection"
                             | "fast_single"
                             | "fast_double"
@@ -217,6 +218,94 @@ mod probe {
                 == 0)
     }
 
+    unsafe fn ordinary_undo(
+        args: &Arguments,
+        process: &Process,
+        uia: &IUIAutomation,
+        fixture: &IUIAutomationElement,
+        value: &IUIAutomationValuePattern,
+    ) -> ProbeResult<bool> {
+        use sayall_windows::send_input::{KeyChord, KeyCode};
+        use sayall_windows::send_input_windows::SendInputRuntime;
+
+        let started = Instant::now();
+        let runtime = SendInputRuntime::new();
+        // Caller has just verified the fixed value, end caret, held keys and
+        // exact own focus. This branch never selects or changes UIA text.
+        let first_ok = runtime
+            .tap(KeyChord {
+                keys: vec![KeyCode::Backspace],
+            })
+            .is_ok();
+        if !first_ok {
+            println!(
+                "phase=ordinary_backspace api_ok=false expected_match=false elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+            return Ok(false);
+        }
+        let observation = Instant::now();
+        let after = loop {
+            if !own_focus(args, process, uia, fixture) {
+                return Err("own_focus_lost_after_backspace");
+            }
+            let actual = value
+                .CurrentValue()
+                .map_err(|_| "fixture_value_unavailable")?
+                .to_string();
+            if actual == "alpha, brav"
+                || actual != "alpha, bravo"
+                || observation.elapsed() >= Duration::from_millis(500)
+            {
+                break actual;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let first_match = after == "alpha, brav";
+        println!(
+            "phase=ordinary_backspace api_ok=true expected_match={first_match} before_len=12 after_len={} elapsed_ms={}",
+            after.encode_utf16().count(), started.elapsed().as_millis()
+        );
+        if !first_match {
+            return Ok(false);
+        }
+        // Never issue Undo unless this exact one-character deletion was
+        // observed and the same owned fixture still has the same empty caret.
+        if value
+            .CurrentValue()
+            .map_err(|_| "fixture_value_unavailable")?
+            .to_string()
+            != "alpha, brav"
+            || !end_caret(fixture)?
+            || value
+                .CurrentIsReadOnly()
+                .map_err(|_| "fixture_state_unavailable")?
+                .as_bool()
+            || [
+                VK_BACK, VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, VK_Z,
+            ]
+            .iter()
+            .any(|key| GetAsyncKeyState(i32::from(key.0)) < 0)
+            || !own_focus(args, process, uia, fixture)
+        {
+            return Err("own_undo_precondition_changed");
+        }
+        let undo_started = Instant::now();
+        let undo_ok = runtime
+            .tap(KeyChord {
+                keys: vec![KeyCode::Control, KeyCode::Z],
+            })
+            .is_ok();
+        println!(
+            "phase=ordinary_undo api_ok={undo_ok} elapsed_ms={} total_action_ms={}",
+            undo_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+        // The common verifier below must observe the exact initial value again;
+        // a successful SendInput call alone is not an Undo success.
+        Ok(undo_ok)
+    }
+
     pub(super) fn run() -> ProbeResult<bool> {
         let args = arguments()?;
         let started = Instant::now();
@@ -302,6 +391,7 @@ mod probe {
                 "keep_boundary" => ("alpha,", "alpha,"),
                 "single" | "fast_single" | "fast_cancel" => ("alpha, bravo", "alpha, brav"),
                 "cancel_selection" => ("alpha, bravo", "alpha, bravo"),
+                "ordinary_undo" => ("alpha, bravo", "alpha, bravo"),
                 "fast_double" => ("alpha, bravo", "alpha,"),
                 "fast_boundary" => ("alpha,", "alpha,"),
                 "fast_zh" => ("文字。", "文字。"),
@@ -359,7 +449,9 @@ mod probe {
                 return Err("input_precondition_changed");
             }
             let action_started = Instant::now();
-            let api_ok = if args.case.starts_with("fast_") {
+            let api_ok = if args.case == "ordinary_undo" {
+                ordinary_undo(&args, &process, &uia, &fixture, &value)?
+            } else if args.case.starts_with("fast_") {
                 use std::sync::{mpsc, Arc};
                 let window = args.hwnd.0 as usize;
                 let expected_pid = args.pid;
