@@ -335,8 +335,8 @@ Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差�
 
 同日默认方案修订：用户实体测试拒绝把 Ctrl+Z 放在返回双击，因为快速连续删除会触发撤销；旧安装版结果保留于 [Undo 实体记录](Testing/evidence/daily-undo-physical-20260921.json)。最终默认 `back.single=normal_backspace`、`back.double=disabled`、`back.long=disabled`，按住仍复用 Windows 重复参数，不改阈值、不删除可选撤销能力。新增 100ms 间隔六次按放及随后长按/释放、切换旧挂起双击状态的回归；手势定向 33 tests passed。当前安装版通过可见编辑界面只改返回双击一格，用户复验“正常了”；证据见 [普通返回实体回验](Testing/evidence/plain-back-physical-20260921.json)。
 
-用户最终批准 TV 单击 `Ctrl+Alt+B` 查看改动、双击 `Ctrl+B` 开关侧边栏、长按 `Ctrl+Z` 撤销，并明确不使用终端。沿用上述官方快捷键事实和已有公开 SendInput，不复制外部实现；Ctrl+Z 可自行移到任意可编辑格或禁用，撤销范围仍由前台应用决定。Home、Menu、方向、音量、OK、Power 和语音不变。最终预设/页面定向 24 tests passed；最新完整配置尚未构建安装，TV 实体三动作、完整 Codex 效果和严格闲置首用仍 deferred，不复用 `e8718f1` 历史安装证明新配置通过。
+用户最终批准 TV 单击 `Ctrl+Alt+B` 查看改动、双击 `Ctrl+B` 开关侧边栏、长按 `Ctrl+Z` 撤销，并明确不使用终端。沿用上述官方快捷键事实和已有公开 SendInput，不复制外部实现；Ctrl+Z 可自行移到任意可编辑格或禁用，撤销范围仍由前台应用决定。Home、Menu、方向、音量、OK、Power 和语音不变。最终预设/页面定向 24 tests passed；来源 `b67a397` 完整包已构建安装并经可见页面应用，36 格零差异且备份、应用列表、语音及音频端点检查通过。TV 实体三动作、完整 Codex 效果和严格闲置首用仍 deferred，详见 [最终包独立证据](Testing/evidence/final-profile-switch-install-20260921.json)。
 
 ## 三键增强入口显式开关（2026-09-21）
 
-用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。组件及页面定向共 57 tests passed，安装版原生启停验收仍 deferred。此次未复制外部代码，验收和剩余边界见 TODO 与 WindowsRc003Input。
+用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。组件及页面定向共 57 tests passed；安装版原生启停、等待初始化及用户方向键后进入 ready 已 passed，停止清理 exit 0 / error mask 0，主程序普通权限。此次未复制外部代码，未测失败/断连等实机边界见 TODO 与 WindowsRc003Input。

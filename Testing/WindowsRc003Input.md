@@ -207,6 +207,12 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 
 用户在上述安装版的实体试用中发现快速连续退格会触发双击撤销，取消返回双击默认绑定；原结果保留于 [Undo 默认方案实体记录](evidence/daily-undo-physical-20260921.json)。通过可见编辑器只把返回双击改为 disabled，保留普通退格及按住重复，用户随后确认快速连按与长按正常，记 passed，见 [普通返回实体回验](evidence/plain-back-physical-20260921.json)。这属于原安装版上的配置回验，不是最新完整包的安装证明；严格闲置首键、其它应用和 RC001 仍 deferred。
 
-最终用户批准方案已更新到源码：TV 单击 Ctrl+Alt+B 查看改动、双击 Ctrl+B 开关侧边栏、长按 Ctrl+Z 撤销；Back 单击 normal_backspace、Double/Long disabled，按住仍重复。用户不使用终端，Ctrl+Z 仍可配置到任意可编辑格或关闭；Home、Menu、方向、音量、OK、Power 和语音保持原方案。最终预设/页面定向 24 tests passed，普通返回快速重复手势定向 33 tests passed；最新包尚未构建安装，TV 三动作与完整 Codex 效果不可记 passed。
+最终用户批准方案：TV 单击 Ctrl+Alt+B 查看改动、双击 Ctrl+B 开关侧边栏、长按 Ctrl+Z 撤销；Back 单击 normal_backspace、Double/Long disabled，按住仍重复。用户不使用终端，Ctrl+Z 仍可配置到任意可编辑格或关闭；Home、Menu、方向、音量、OK、Power 和语音保持原方案。最终预设/页面定向 24 tests passed，普通返回快速重复手势定向 33 tests passed；TV 三动作与完整 Codex 前台效果仍不可记 passed。
 
-图例上方的显眼增强开关已完成组件 12、ButtonsPage 37、CodingPage 8 项定向测试。日志为 `rc003-enhancement-switch-component-tests.log` 与 `rc003-enhancement-switch-tests.log`；首轮仅新增测试的局部变量作用域错误已修复并单独重跑组件通过。开关原生启停及显式授权、初始化、断连状态和正常停止释放仍待新安装版验收，不能以旧按钮或后端既有证据代替。
+图例上方的显眼增强开关已完成组件 12、ButtonsPage 37、CodingPage 8 项定向测试。日志为 `rc003-enhancement-switch-component-tests.log` 与 `rc003-enhancement-switch-tests.log`；首轮仅新增测试的局部变量作用域错误已修复并单独重跑组件通过。原生开启、初始化及正常停止结果如下；失败、断连、按住中关闭等未在该 UI 版本重做的场景不扩大为本轮实机 passed。
+
+来源 `b67a397b5d62cbb8dcb5003bf5d65547d5fd4548` 的本地包构建、正常升级和启动 passed：旧 Helper exit 0 / error mask 0，BLE 正常释放，安装器 exit 0；主程序与产物仅 NSIS 标记不同，96 项 Helper 散列无差异。实际点击应用最终方案后，36 格全部正确，最初备份保留、最近备份与应用前一致，应用列表/语音热键/音频端点不变。新页面显示普通退格说明，保留任意配置的“撤销”选项，测试输入框不存在。
+
+原生开关开启后进入 awaiting_neutral；关闭实际完成 Helper 清理（exit 0 / error mask 0，前端调用 163ms）。再次开启后用户按上键并松开，`2026-09-20T17:06:19.299Z` 实际进入 ready，界面回读“增强已就绪”，主程序仍普通权限。图例上方唯一开关完整可见、无横向溢出。上述本地结果见 [最终安装及开关证据](evidence/final-profile-switch-install-20260921.json)。没有发布或上传资产。
+
+复现命令：`npm test -- --maxWorkers=2 --minWorkers=1 src/lib/coding-profile.test.ts src/pages/CodingPage.test.ts`、`cargo test -p sayall-windows button_gestures::tests --lib --locked`、`cargo fmt --all -- --check`、`./scripts/build-local.ps1 -SkipTests -SkipHelperBuild -Installer`。开关/编辑页测试与旧输入证据复用上列对应源码结果，不声称重新执行所有硬件场景。
