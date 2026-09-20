@@ -330,3 +330,7 @@ Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差�
 预设复用显式应用与首次/最近备份，不自动覆盖已存配置。Ctrl+Z 使用既有公开快捷键注入，首击普通退格已发生后再撤销，具体撤销分组由当前编辑器决定，不把它描述成通用整段删除或安全精确恢复。先前短句版预设 24 tests、动作摘要/编辑页 39 tests 是历史候选结果；撤销版最新预设/页面定向 24 tests passed，日志为 `coding-preset-undo-tests.log`，实际输入、构建安装、Codex 前台实体动作及冷首用仍 deferred。参考官方命令事实与 [Codex Micro 操作职责](https://learn.chatgpt.com/docs/features/codex-micro)，未复制设备协议、第三方内部实现或新增语音手势；详见调研中的上下文及验收边界。
 
 2026-09-21 后续：普通退格＋Ctrl+Z 已由真实 SendInput 在自家输入框观察到 12→11→12；纯手势 32、引擎路由 21、预设 24 与编辑页 27 tests passed，阈值未改。仅普通键注入路径，编辑器撤销分组仍非产品保证。见 [实际软件证据](Testing/evidence/ordinary-backspace-undo-webview-20260921.json)；安装和实体边界另计。
+
+## 三键增强入口显式开关（2026-09-21）
+
+用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。此次未复制外部代码，验收和剩余边界见 TODO 与 WindowsRc003Input。

@@ -41,12 +41,21 @@ describe("RC003 enhancement control", () => {
 
   it("reads status without starting and requires a connected real runtime", async () => {
     const view = await render("rc003", false);
+    const control = view.get('[role="switch"]');
+    expect(control.element.tagName).toBe("BUTTON");
+    expect(control.attributes("type")).toBe("button");
+    expect(control.attributes("aria-label")).toBe("补齐返回、音量＋/－按键");
+    expect(control.attributes("aria-checked")).toBe("false");
+    const description = view.get(`[id="${control.attributes("aria-describedby")}"]`);
+    expect(description.text()).toContain("需要管理员权限");
     expect(startRc003Input).not.toHaveBeenCalled();
     expect(view.get("button").attributes("disabled")).toBeDefined();
     await view.setProps({ connected: true });
     expect(view.get("button").attributes("disabled")).toBeUndefined();
     expect(view.text()).toContain("主程序保持普通权限");
     expect(view.text()).toContain("未配置动作的增强按键只显示高亮");
+    expect(view.text()).toContain("按键动作以当前映射为准");
+    expect(view.text()).not.toContain("原始行为");
   });
 
   it("does not poll or start from browser preview or simulation", async () => {
@@ -63,25 +72,34 @@ describe("RC003 enhancement control", () => {
     let resolve!: (status: Rc003InputStatus) => void;
     vi.mocked(startRc003Input).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
     const view = await render();
+    const label = view.get('[role="switch"]').attributes("aria-label");
     await view.get("button").trigger("click");
     await view.get("button").trigger("click");
     expect(startRc003Input).toHaveBeenCalledTimes(1);
     expect(view.get("button").attributes("disabled")).toBeDefined();
+    expect(view.get('[role="switch"]').attributes("aria-busy")).toBe("true");
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
     resolve({ ...snapshot("waiting", 2), lastError: "awaiting_neutral" });
     await flushPromises();
     expect(view.text()).toContain("请按一下方向键并松开，完成首次初始化");
-    expect(view.get("button").text()).toBe("停止增强");
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("true");
+    expect(view.get('[role="switch"]').attributes("aria-label")).toBe(label);
+    expect(view.get('[role="status"]').text()).toBe("正在准备…");
     vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("ready", 2));
     await vi.advanceTimersByTimeAsync(1000);
     expect(view.get('[role="status"]').text()).toBe("增强已就绪");
     await view.setProps({ connected: false });
     expect(view.get("button").attributes("disabled")).toBeUndefined();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("true");
+    expect(view.get('[role="status"]').text()).toBe("等待连接恢复");
     expect(view.text()).toContain("正在等待遥控器连接恢复");
     expect(view.text()).not.toContain("请先在「连接与语音」中连接");
     await view.get("button").trigger("click");
     await flushPromises();
     expect(stopRc003Input).toHaveBeenCalledTimes(1);
     expect(view.get('[role="status"]').text()).toBe("未启用");
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
+    expect(view.get('[role="switch"]').attributes("aria-label")).toBe(label);
   });
 
   it("ignores a late status read that predates a user command", async () => {
@@ -93,7 +111,7 @@ describe("RC003 enhancement control", () => {
     await flushPromises();
     resolveRead(snapshot("stopped"));
     await flushPromises();
-    expect(view.get("button").text()).toBe("停止增强");
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("true");
   });
 
   it("recovers from read failures without overlapping polls or starting automatically", async () => {
@@ -119,8 +137,50 @@ describe("RC003 enhancement control", () => {
     await flushPromises();
     expect(view.get('[role="alert"]').text()).toContain("未获得 Windows 管理员授权");
     expect(view.get("button").attributes("disabled")).toBeUndefined();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
     await vi.advanceTimersByTimeAsync(2000);
     expect(startRc003Input).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the switch on until normal stop completes and coalesces repeated clicks", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("ready"));
+    let resolveStop!: (status: Rc003InputStatus) => void;
+    vi.mocked(stopRc003Input).mockReturnValueOnce(new Promise(done => { resolveStop = done; }));
+    const view = await render();
+    await view.get('[role="switch"]').trigger("click");
+    await view.get('[role="switch"]').trigger("click");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(stopRc003Input).toHaveBeenCalledTimes(1);
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("true");
+    expect(view.get('[role="switch"]').attributes("disabled")).toBeDefined();
+    expect(view.get('[role="switch"]').text()).toBe("正在关闭…");
+    expect(getRc003InputStatus).toHaveBeenCalledTimes(1);
+    resolveStop(snapshot("stopped", 2));
+    await flushPromises();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
+    expect(view.get('[role="switch"]').attributes("aria-busy")).toBe("false");
+    expect(startRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed phase as off with a retryable error without restarting", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue({ ...snapshot("failed"), lastError: "helper_exited" });
+    const view = await render();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
+    expect(view.get('[role="switch"]').attributes("disabled")).toBeUndefined();
+    expect(view.get('[role="alert"]').text()).toContain("三键增强已退出");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(startRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("allows stopping a starting enhancement without claiming it is ready", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("starting"));
+    const view = await render();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("true");
+    expect(view.get('[role="status"]').text()).toBe("正在启用…");
+    await view.get('[role="switch"]').trigger("click");
+    await flushPromises();
+    expect(stopRc003Input).toHaveBeenCalledTimes(1);
+    expect(startRc003Input).not.toHaveBeenCalled();
   });
 
   it("cleans up polling on navigation without stopping the user's enhancement", async () => {

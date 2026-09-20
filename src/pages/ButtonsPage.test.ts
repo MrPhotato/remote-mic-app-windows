@@ -702,6 +702,28 @@ describe("buttons mapping page", () => {
     wrapper.unmount();
   });
 
+  it("places the single RC003 enhancement switch immediately above the remote diagram", async () => {
+    const wrapper = await mountPage();
+    const controls = wrapper.findAll(".rc003-input-control");
+    expect(controls).toHaveLength(1);
+    expect(wrapper.get(".mapping-canvas").element.previousElementSibling).toBe(controls[0]!.element);
+    expect(controls[0]!.get('[role="switch"]').attributes("aria-label")).toBe("补齐返回、音量＋/－按键");
+    expect(controls[0]!.text()).toContain("需要管理员权限");
+    expect(wrapper.get(".back-hardware-note").text()).toContain("图例上方的开关");
+    expect(wrapper.text()).not.toContain("下方启用三键增强");
+    expect(wrapper.text()).not.toContain("系统音量原始行为");
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it.each(["rc001", "unknown"] as const)("does not offer the enhancement switch for %s", async model => {
+    const wrapper = await mountPage(model);
+    expect(wrapper.find(".rc003-input-control").exists()).toBe(false);
+    expect(wrapper.find('[role="switch"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it("saves Undo on Back double and updates its hint when changed or disabled without sending keys", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "返回", 0);

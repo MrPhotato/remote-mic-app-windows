@@ -991,6 +991,8 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <Rc003InputControl :remote-model="remoteModel" :connected="['ready', 'streaming', 'draining'].includes(connectionInfo?.phase ?? '')" />
+
     <div ref="canvasEl" class="mapping-canvas" :style="{ height: `${CANVAS_HEIGHT}px` }">
       <svg
         class="mapping-connections"
@@ -1119,7 +1121,7 @@ onUnmounted(() => {
       </article>
     </div>
 
-    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">返回和音量键均可配置。RC003 可在下方启用三键增强；收到按键信号后，程序才会执行对应动作。未配置动作时只显示高亮。</p>
+    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">返回和音量键均可配置。RC003 可通过图例上方的开关补齐这三个按键；收到按键信号后，程序才会执行对应动作。未配置动作时只显示高亮。</p>
 
     <article v-if="editingTarget" ref="editorPanel" class="card mapping-editor">
       <div class="card-title-row">
@@ -1370,8 +1372,6 @@ onUnmounted(() => {
         </button>
       </div>
     </footer>
-
-    <Rc003InputControl :remote-model="remoteModel" :connected="['ready', 'streaming', 'draining'].includes(connectionInfo?.phase ?? '')" />
 
     <p v-if="statusMessage" class="operation-message mapping-status">{{ statusMessage }}</p>
     <p v-if="mappingSnapshot?.lastError" class="error-text">{{ mappingSnapshot.lastError }}</p>
