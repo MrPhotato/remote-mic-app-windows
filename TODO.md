@@ -109,7 +109,7 @@
 
 - [x] 独立 Codex Windows 快捷键栏目：73 个动作、搜索分类、上下文提示与官方来源；前端目录/键码契约验证通过。
 - [x] 返回键普通退格配置、跟随系统键盘重复参数、可选双击保留标点删除；手势、迟到事件、取消、迁移与公开 UIA 实现单元测试通过。
-- [ ] RC003 实体返回按下/释放、闲置后首按、长按连删与双击删除真机验收；2026-09-20 关闭映射的独立 Raw Input 实验已有 Up/Ok 正对照，返回与音量±均未交付；可选三键过滤驱动候选见 Testing/WindowsRc003Filter.md，加载后的验收仍 deferred。
+- [ ] RC003 双击按标点删除真机验收：可选三键增强下的普通退格、按住连删及严格闲置首按已 passed（见下方集成证据）；原 WebView 双击试验 8 次 failed，已定位并修复跨进程焦点误判，新包已安装，等待相同输入框的单击/双击实际复验。见 [Bug 记录](Bugs/2026-09-20-punctuation-webview-focus.md)。单击提前删除与双击补偿仍仅为可行性调研。
 - [ ] Codex 输入框公开 UIA 文本范围兼容性及双击删除真机验收。
 
 
@@ -121,8 +121,8 @@
 - [ ] RC003 可选三键 HID lower filter：复用 QL-4 MIT 实现，仅将返回/音量±转为设备归因后的 F15/F13/F14；本地构建、自动验证、测试签名与签名/目录成员验证 passed，安装/加载/回滚、闲置首用和语音回归尚 deferred。默认主程序不依赖驱动、不自动发布，边界见 Testing/WindowsRc003Filter.md。
 - [ ] RC003 返回/音量±免驱输入：2026-09-20 应用目录 GameInput 3.5.274 实验未取得三键事件或原始报告；前后实体上键对照 passed，三键读取 failed，系统 3.3 服务保持不变。不能据此宣称所有纯软件方案不可能，也不接入产品。见 Testing/WindowsRc003GameInput.md；驱动试验暂留在签名准备阶段，Secure Boot 保持开启。
 - [x] RC003 Frida 独立监听实验：2026-09-20 用户明确授权的管理员 helper + 严格设备来源绑定实测，返回/音量±各 3 对 DOWN/UP，上键前后共 4 对；正常解钩、卸载、detach 和宿主存活复核 passed。未写报告、未改驱动或启动安全设置。本次独立实验未接入产品高亮/映射；随后获授权的集成见下一项。长按/冷首用/异常恢复/语音回归须另验。来源、GPLv3 边界与证据见 Testing/WindowsRc003Frida.md。
-- [x] RC003 可选三键增强核心接入（用户明确授权；仅本机 RC003）：已安装完整包的显式管理员 Helper、三键来源及高亮、实际返回退格/按住连续删除、按住停止增强与普通键保留、严格就绪闲置首键、基础语音到虚拟声卡输出均 passed。原普通键和基础语音不依赖增强。实测包 manifest 为 `65de7e42…9678ae2`，后续 `9057f5de…7d8441` 日志改进候选尚未安装自验。见 [集成验收](Testing/WindowsRc003Input.md) 及 [三键](Testing/evidence/rc003-input-keys-20260920.json)、[长按/停止](Testing/evidence/rc003-input-hold-20260920.json)、[严格闲置首键](Testing/evidence/rc003-input-cold-first-20260920.json)、[基础语音](Testing/evidence/rc003-input-voice-20260920.json) 证据；不等同于 RC001 或识别文字端到端通过。
-- [ ] RC003 可选三键增强剩余验收：活动 Helper 随主程序正常退出/升级、睡眠/崩溃恢复、多目标与共享宿主负对照、RC001、新候选包安装自验和第三方识别文字端到端；运行中安装未替换主程序的问题仍未归因，不得以安装器返回 0 代替实际文件核验。范围和边界见 [集成验收](Testing/WindowsRc003Input.md) 与 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。
+- [x] RC003 可选三键增强核心接入（用户明确授权；仅本机 RC003）：已安装完整包的显式管理员 Helper、三键来源及高亮、实际返回退格/按住连续删除、按住停止增强与普通键保留、严格就绪闲置首键、基础语音到虚拟声卡输出均 passed。原普通键和基础语音不依赖增强。实测包 manifest 为 `65de7e42…9678ae2`，后续 `9057f5de…7d8441` 日志改进候选已安装并核对全部文件，实体复验与清理退出状态待验证。见 [集成验收](Testing/WindowsRc003Input.md) 及 [三键](Testing/evidence/rc003-input-keys-20260920.json)、[长按/停止](Testing/evidence/rc003-input-hold-20260920.json)、[严格闲置首键](Testing/evidence/rc003-input-cold-first-20260920.json)、[基础语音](Testing/evidence/rc003-input-voice-20260920.json) 证据；不等同于 RC001 或识别文字端到端通过。
+- [ ] RC003 可选三键增强剩余验收：活动 Helper 随主程序正常退出/升级、睡眠/崩溃恢复、多目标与共享宿主负对照、RC001、新候选包实体复验与清理退出状态和第三方识别文字端到端；运行中安装未替换主程序的问题仍未归因，不得以安装器返回 0 代替实际文件核验。范围和边界见 [集成验收](Testing/WindowsRc003Input.md) 与 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。
 
 ## 本地快捷键编码修复（2026-09-18）
 

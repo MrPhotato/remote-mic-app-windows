@@ -1,0 +1,305 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "app_version": "0.2.6",
+  "remote_model": "rc003",
+  "trial": "punctuation_double_click_webview_focus_failure",
+  "sources": [
+    "target/local-launch/rc003-integration/punctuation-double-observation.json",
+    "target/local-launch/rc003-integration/installed-app-final.log",
+    "target/local-launch/rc003-integration/own-fixture-ancestry.json",
+    "target/local-launch/rc003-integration/install-foreground-fix-result.json",
+    "target/local-launch/rc003-integration/text-edit-foreground-ancestry-tests.log",
+    "target/local-launch/rc003-integration/button-mapping-edit-cancellation-tests.log",
+    "target/local-launch/rc003-integration/cleanup-exit-tests.log",
+    "target/local-launch/rc003-integration/text-edit-native-ancestry-regression.log"
+  ],
+  "scope": {
+    "fixture_prepared_utc": "2026-09-20T13:02:38.277Z",
+    "result_observed_utc": "2026-09-20T13:07:47.291Z",
+    "prior_cumulative_events_excluded": true,
+    "fixture_initial_length": 12,
+    "fixture_expected_length_after_punctuation_action": 6,
+    "fixture_final_length": 2,
+    "expected_result_matched": false,
+    "mapping_single": "normal_backspace",
+    "mapping_double": "delete_to_punctuation"
+  },
+  "counts": {
+    "semantic_edges": 48,
+    "back_semantic_edges": 38,
+    "back_complete_pairs": 19,
+    "left_complete_pairs": 2,
+    "right_complete_pairs": 3,
+    "double_gestures": 8,
+    "double_action_failures": 8,
+    "failure_reasons": {
+      "focus_changed": 1,
+      "foreground_process_mismatch": 7
+    },
+    "single_gestures": 10,
+    "trusted_backspace_pairs": 10,
+    "one_character_input_changes": 10
+  },
+  "double_attempts": [
+    {
+      "gesture_utc": "2026-09-20T13:06:10.290Z",
+      "at_utc": "2026-09-20T13:06:10.353Z",
+      "result": "failed",
+      "reason": "focus_changed",
+      "elapsed_ms": 64,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:06:12.591Z",
+      "at_utc": "2026-09-20T13:06:12.603Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 12,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:06:14.626Z",
+      "at_utc": "2026-09-20T13:06:14.632Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 7,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:06:16.266Z",
+      "at_utc": "2026-09-20T13:06:16.272Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 7,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:07:15.700Z",
+      "at_utc": "2026-09-20T13:07:15.707Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 7,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:07:16.094Z",
+      "at_utc": "2026-09-20T13:07:16.101Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 6,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:07:16.726Z",
+      "at_utc": "2026-09-20T13:07:16.732Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 6,
+      "observed_text_deletion_from_double": false
+    },
+    {
+      "gesture_utc": "2026-09-20T13:07:18.634Z",
+      "at_utc": "2026-09-20T13:07:18.640Z",
+      "result": "failed",
+      "reason": "foreground_process_mismatch",
+      "elapsed_ms": 7,
+      "observed_text_deletion_from_double": false
+    }
+  ],
+  "ordinary_backspace_observations": [
+    {
+      "down_utc": "2026-09-20T13:06:17.853Z",
+      "up_utc": "2026-09-20T13:06:17.854Z",
+      "result_length": 11,
+      "input_utc": "2026-09-20T13:06:17.853Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.565Z",
+      "up_utc": "2026-09-20T13:07:17.567Z",
+      "result_length": 10,
+      "input_utc": "2026-09-20T13:07:17.566Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.571Z",
+      "up_utc": "2026-09-20T13:07:17.577Z",
+      "result_length": 9,
+      "input_utc": "2026-09-20T13:07:17.571Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.607Z",
+      "up_utc": "2026-09-20T13:07:17.608Z",
+      "result_length": 8,
+      "input_utc": "2026-09-20T13:07:17.608Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.655Z",
+      "up_utc": "2026-09-20T13:07:17.657Z",
+      "result_length": 7,
+      "input_utc": "2026-09-20T13:07:17.655Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.702Z",
+      "up_utc": "2026-09-20T13:07:17.708Z",
+      "result_length": 6,
+      "input_utc": "2026-09-20T13:07:17.703Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.746Z",
+      "up_utc": "2026-09-20T13:07:17.747Z",
+      "result_length": 5,
+      "input_utc": "2026-09-20T13:07:17.746Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.794Z",
+      "up_utc": "2026-09-20T13:07:17.796Z",
+      "result_length": 4,
+      "input_utc": "2026-09-20T13:07:17.795Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.841Z",
+      "up_utc": "2026-09-20T13:07:17.842Z",
+      "result_length": 3,
+      "input_utc": "2026-09-20T13:07:17.841Z"
+    },
+    {
+      "down_utc": "2026-09-20T13:07:17.889Z",
+      "up_utc": "2026-09-20T13:07:17.893Z",
+      "result_length": 2,
+      "input_utc": "2026-09-20T13:07:17.890Z"
+    }
+  ],
+  "single_delay_example": {
+    "down_utc": "2026-09-20T13:06:17.404Z",
+    "release_utc": "2026-09-20T13:06:17.532Z",
+    "gesture_utc": "2026-09-20T13:06:17.845Z",
+    "input_utc": "2026-09-20T13:06:17.853Z",
+    "release_to_gesture_ms": 313,
+    "release_to_input_ms": 321,
+    "length_before": 12,
+    "length_after": 11,
+    "configured_double_window_ms": 300,
+    "interpretation": "A release-delayed Single is expected when Double is configured. This observed attempt deleted one character."
+  },
+  "held_second_press": {
+    "first_release_utc": "2026-09-20T13:07:16.992Z",
+    "second_down_utc": "2026-09-20T13:07:17.054Z",
+    "second_release_utc": "2026-09-20T13:07:17.886Z",
+    "held_ms": 832,
+    "first_repeat_gesture_utc": "2026-09-20T13:07:17.558Z",
+    "single_gesture_count": 9,
+    "trusted_backspace_pair_count": 9,
+    "length_before": 11,
+    "length_after": 2,
+    "interpretation": "Held second press became ordinary Backspace actions and repeats; reaching length 6 on the way to 2 was not a successful punctuation action."
+  },
+  "dom_focus_events": [
+    {
+      "at_utc": "2026-09-20T13:06:06.590Z",
+      "focused": true
+    },
+    {
+      "at_utc": "2026-09-20T13:06:19.726Z",
+      "focused": false
+    },
+    {
+      "at_utc": "2026-09-20T13:07:10.083Z",
+      "focused": true
+    },
+    {
+      "at_utc": "2026-09-20T13:07:20.883Z",
+      "focused": false
+    }
+  ],
+  "focus_boundary": "DOM focus was true throughout both physical-key groups. This does not itself prove Win32 foreground/UIA identity or exclude a transient native focus change. No evidence supports blaming the user for not focusing the test field.",
+  "final_helper_status": {
+    "phase": "ready",
+    "last_error": null,
+    "generation": 4,
+    "report_count": 65,
+    "edge_count": 61
+  },
+  "conclusions": {
+    "punctuation_double_action": "failed_before_deletion",
+    "ordinary_backspace_in_this_window": "observed_working_with_double_window_and_held_repeat",
+    "user_reported_single_failure_outside_observed_successes": "unresolved",
+    "uia_process_equality_guard": "confirmed_false_positive_for_own_webview_fixture_ancestry",
+    "fix_validation": "candidate_installed_physical_single_and_double_pending"
+  },
+  "uia_ancestry_probe": {
+    "at_utc": "2026-09-20T13:15:54.6400362Z",
+    "selection_method": "FromHandle(own main window) then FindFirst(own fixture automation ID)",
+    "global_focused_element_was_not_used_as_target": true,
+    "actual_foreground_is_own_app": false,
+    "target_is_own_fixture": true,
+    "leaf": {
+      "depth": 0,
+      "control_type": "ControlType.Edit",
+      "element_pid_matches_main": false,
+      "native_hwnd_nonzero": false
+    },
+    "nearest_native_ancestor": {
+      "depth": 3,
+      "control_type": "ControlType.Pane",
+      "native_hwnd_nonzero": true,
+      "valid_hwnd": true,
+      "native_pid_matches_ancestor_element": true,
+      "root_matches_own_main": true,
+      "ancestor_pid_matches_main": false
+    },
+    "conclusion": "The own WebView fixture belongs to the own main window tree while its UIA process differs from the main process. Strict PID equality rejects this legitimate hosted control.",
+    "boundary": "Own app was not the actual foreground during this read-only ancestry probe. It proves hosted-window ancestry, not successful execution of the fix or the exact native-focus state during the earlier first failure."
+  },
+  "mitigation": {
+    "double_mapping": "disabled",
+    "ui_and_backend_confirmed": true,
+    "scope": "Restored after failed experiment; not a verified punctuation-action fix."
+  },
+  "fix_candidate": {
+    "installed_at_utc": "2026-09-20T13:22:21.1320355Z",
+    "old_main_graceful_exit": true,
+    "new_main_running": true,
+    "installer_exit_code": 0,
+    "installer_sha256": "7d0752c5dd9c5946e0fb2b08a7b7cb35fb210454310dbc6dc51e71e26a38fb9f",
+    "main_matches_build_except_bundle_marker": true,
+    "built_main_sha256": "7666b54fb38fd31a59bbf0b920b3f22c70016b55e914154a4bc4b1b114b35bf8",
+    "installed_main_sha256": "d859fa0d821c095cfa2e7537c3b1e8b6ef90cbc06cee091a91d758dbd4c74b08",
+    "installed_main_bytes": 16107008,
+    "helper_file_count": 96,
+    "helper_integrity_failures": 0,
+    "manifest_matches_build": true,
+    "helper_manifest_sha256": "9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441",
+    "automatic_tests": {
+      "text_edit_passed": 13,
+      "mapping_rc003_cancellation_passed": 16,
+      "supervisor_cleanup_passed": 6
+    },
+    "native_probe": {
+      "command": "text_edit_probe --run --idle",
+      "result": "deferred",
+      "reason": "own_foreground_focus_text_not_verified",
+      "uia_edit_attempted": false,
+      "deletion_attempted": false,
+      "exit_code": 2
+    },
+    "current_test_configuration": {
+      "single": "normal_backspace",
+      "double": "delete_to_punctuation",
+      "enhancement_phase": "waiting",
+      "enhancement_reason": "awaiting_neutral",
+      "new_physical_edges_observed": false
+    },
+    "physical_single_validation": "pending",
+    "physical_punctuation_double_validation": "pending",
+    "boundary": "Installed candidate and automated checks only; no claim of successful deletion in the new version. Earlier failure/success observations above remain evidence for the prior installed version."
+  },
+  "privacy": {
+    "text_content": false,
+    "device_identity": false,
+    "personal_paths": false,
+    "process_ids": false,
+    "raw_hid_reports": false,
+    "audio_content": false,
+    "credentials": false
+  }
+}

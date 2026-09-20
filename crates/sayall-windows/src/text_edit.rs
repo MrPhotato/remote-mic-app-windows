@@ -132,10 +132,13 @@ mod windows_impl {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_BACK, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, GA_ROOT,
+    };
 
     type EditResult<T> = Result<T, &'static str>;
     const OPERATION_BUDGET: Duration = Duration::from_secs(2);
+    const MAX_FOCUS_ANCESTORS: usize = 32;
 
     struct Budget<'a> {
         started: Instant,
@@ -248,13 +251,11 @@ mod windows_impl {
         String::from_utf16(&value).map_err(|_| "invalid_unicode")
     }
 
-    unsafe fn validate_focus(
+    unsafe fn same_focused_element(
         uia: &IUIAutomation,
         element: &IUIAutomationElement,
         foreground: HWND,
-        budget: &Budget<'_>,
     ) -> EditResult<()> {
-        budget.check()?;
         if GetForegroundWindow() != foreground {
             return Err("focus_changed");
         }
@@ -270,6 +271,91 @@ mod windows_impl {
         {
             return Err("focus_changed");
         }
+        Ok(())
+    }
+
+    struct NativeHost {
+        root: HWND,
+        process_matches: bool,
+    }
+
+    // Stop at the nearest HWND-bearing UIA element. An unrelated host must not
+    // become acceptable merely because a later ancestor reports another HWND.
+    fn verify_first_native_host(
+        foreground: HWND,
+        budget: &Budget<'_>,
+        mut next: impl FnMut() -> EditResult<Option<NativeHost>>,
+    ) -> EditResult<usize> {
+        for depth in 0..MAX_FOCUS_ANCESTORS {
+            budget.check()?;
+            let host = next()?;
+            budget.check()?;
+            if let Some(host) = host {
+                if !host.process_matches {
+                    return Err("foreground_host_process_mismatch");
+                }
+                if host.root.0.is_null() {
+                    return Err("foreground_host_unavailable");
+                }
+                if host.root != foreground {
+                    return Err("foreground_ancestry_mismatch");
+                }
+                return Ok(depth);
+            }
+        }
+        Err("foreground_ancestry_limit")
+    }
+
+    unsafe fn validate_foreground_ancestry(
+        uia: &IUIAutomation,
+        element: &IUIAutomationElement,
+        foreground: HWND,
+        budget: &Budget<'_>,
+    ) -> EditResult<usize> {
+        let walker = uia
+            .RawViewWalker()
+            .map_err(|_| "foreground_ancestry_unavailable")?;
+        let mut ancestor = element.clone();
+        let mut first = true;
+        verify_first_native_host(foreground, budget, || {
+            if !first {
+                ancestor = walker
+                    .GetParentElement(&ancestor)
+                    .map_err(|_| "foreground_ancestry_unavailable")?;
+                budget.check()?;
+            }
+            first = false;
+            let window = ancestor
+                .CurrentNativeWindowHandle()
+                .map_err(|_| "foreground_host_unavailable")?;
+            if window.0.is_null() {
+                return Ok(None);
+            }
+            if !IsWindow(Some(window)).as_bool() {
+                return Err("foreground_host_unavailable");
+            }
+            let mut native_pid = 0;
+            GetWindowThreadProcessId(window, Some(&mut native_pid));
+            let provider_pid = ancestor.CurrentProcessId().map_err(|_| "process_unknown")?;
+            Ok(Some(NativeHost {
+                // GA_ROOT deliberately excludes owner relationships: an owned
+                // popup or another top-level window is not the foreground host.
+                root: GetAncestor(window, GA_ROOT),
+                process_matches: native_pid != 0
+                    && provider_pid > 0
+                    && provider_pid as u32 == native_pid,
+            }))
+        })
+    }
+
+    unsafe fn validate_focus(
+        uia: &IUIAutomation,
+        element: &IUIAutomationElement,
+        foreground: HWND,
+        budget: &Budget<'_>,
+    ) -> EditResult<()> {
+        budget.check()?;
+        same_focused_element(uia, element, foreground)?;
         if !element
             .CurrentIsEnabled()
             .map_err(|_| "element_unavailable")?
@@ -286,8 +372,26 @@ mod windows_impl {
         }
         let mut pid = 0;
         GetWindowThreadProcessId(foreground, Some(&mut pid));
-        if pid == 0 || element.CurrentProcessId().map_err(|_| "process_unknown")? as u32 != pid {
-            return Err("foreground_process_mismatch");
+        let element_pid = element.CurrentProcessId().map_err(|_| "process_unknown")?;
+        if pid == 0 || element_pid <= 0 {
+            return Err("process_unknown");
+        }
+        if element_pid as u32 != pid {
+            // Hosted editors (for example WebView2) can expose focused UIA
+            // elements from a different process. Prove their window ancestry
+            // instead of trusting arbitrary providers or process parentage.
+            let depth = validate_foreground_ancestry(uia, element, foreground, budget)?;
+            same_focused_element(uia, element, foreground)?;
+            let mut current_pid = 0;
+            GetWindowThreadProcessId(foreground, Some(&mut current_pid));
+            if current_pid != pid {
+                return Err("focus_changed");
+            }
+            budget.check()?;
+            crate::gatt_note(format!(
+                "text_edit action=delete_to_previous_punctuation phase=focus_binding terminal_result=passed reason=foreground_ancestor_verified ancestor_depth={depth} elapsed_ms={}",
+                budget.started.elapsed().as_millis()
+            ));
         }
         budget.check()
     }
@@ -554,6 +658,124 @@ mod windows_impl {
             .map_err(|_| "input_failed")?;
         rollback.committed = true;
         Ok("backspace_submitted")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::cell::Cell;
+
+        fn window(value: usize) -> HWND {
+            HWND(value as *mut core::ffi::c_void)
+        }
+
+        fn host(root: usize, process_matches: bool) -> Option<NativeHost> {
+            Some(NativeHost {
+                root: window(root),
+                process_matches,
+            })
+        }
+
+        #[test]
+        fn cross_process_focus_requires_a_matching_native_ancestor() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let mut ancestors = [None, None, host(1, true)].into_iter();
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || Ok(ancestors.next().unwrap())),
+                Ok(2)
+            );
+        }
+
+        #[test]
+        fn first_foreign_or_invalid_native_host_cannot_be_bypassed() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            for (root, process_matches, reason) in [
+                (2, true, "foreground_ancestry_mismatch"),
+                (0, true, "foreground_host_unavailable"),
+                (1, false, "foreground_host_process_mismatch"),
+            ] {
+                let mut ancestors = [None, host(root, process_matches), host(1, true)].into_iter();
+                assert_eq!(
+                    verify_first_native_host(window(1), &budget, || Ok(ancestors.next().unwrap())),
+                    Err(reason)
+                );
+                assert_eq!(
+                    ancestors.len(),
+                    1,
+                    "must not search past the nearest native host"
+                );
+            }
+        }
+
+        #[test]
+        fn missing_or_cyclic_native_ancestry_is_bounded() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            let mut visits = 0;
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || {
+                    visits += 1;
+                    Ok(None)
+                }),
+                Err("foreground_ancestry_limit")
+            );
+            assert_eq!(visits, MAX_FOCUS_ANCESTORS);
+        }
+
+        #[test]
+        fn native_ancestry_api_failure_is_not_an_identity_fallback() {
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &|| false,
+            };
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || Err(
+                    "foreground_ancestry_unavailable"
+                )),
+                Err("foreground_ancestry_unavailable")
+            );
+        }
+
+        #[test]
+        fn native_ancestry_cancelled_during_read_cannot_pass() {
+            let cancelled = Cell::new(false);
+            let check = || cancelled.get();
+            let budget = Budget {
+                started: Instant::now(),
+                cancelled: &check,
+            };
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || {
+                    cancelled.set(true);
+                    Ok(host(1, true))
+                }),
+                Err("cancelled")
+            );
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || panic!("already cancelled")),
+                Err("cancelled")
+            );
+        }
+
+        #[test]
+        fn native_ancestry_budget_is_shared_with_the_text_operation() {
+            let budget = Budget {
+                started: Instant::now() - OPERATION_BUDGET - Duration::from_millis(1),
+                cancelled: &|| false,
+            };
+            assert_eq!(
+                verify_first_native_host(window(1), &budget, || panic!("budget already expired")),
+                Err("operation_timeout")
+            );
+        }
     }
 }
 

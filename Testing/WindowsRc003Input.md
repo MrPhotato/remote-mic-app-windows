@@ -19,7 +19,11 @@
 - 已安装并实测的 manifest SHA-256：`65de7e42cb2a2845e14e8a790f2047a1fa37a751581657bba533c809f9678ae2`。
 - 后续仅改进清理日志的候选 Helper：25 项 Python 模拟测试 passed，组件已构建，manifest 为
   `9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441`。
-  该候选完整包仍在构建，尚未安装自验，不能替换下述已实测包的版本证据。
+  该候选完整包已于 `2026-09-20T13:22:21Z` 完成正常退出后的安装及全部 96 项文件校验，
+  主程序与构建产物仅有 NSIS 标记三字节差异。候选同时包含 WebView 焦点修复和来源失效时取消文字编辑；
+  已重新以普通权限启动，增强 Helper 已认证并加载，等待真实中性状态及实体复验。
+  新清理退出状态尚未实测，不能替换下述旧包的按键/语音/停止验证证据。
+  候选安装摘要及删除回归边界见 [WebView 焦点证据](evidence/punctuation-webview-focus-20260920.json)。
 
 完整编译和测试日志保存在 ignored `target/local-launch/rc003-integration/`；
 Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
