@@ -141,3 +141,8 @@
 
 - [x] 补齐 Enter 物理标识：旧包实测 WebView `code` 为空；修复后安装版 Ctrl+Enter 四条可信事件、普通 Enter 两条事件及约 80 秒闲置后的首个软件注入 passed。七步 preflight（前端 163、Rust 288）通过，见 [Bug](Bugs/2026-09-21-enter-shortcut-identity.md)。
 - [ ] 确认键长按 Ctrl+Enter 在目标应用的实体动作和严格硬件冷首用复验；不能以软件注入或 SendInput 提交成功替代。
+
+## 2026-09-21 发布关联字段修复
+
+- [x] Actions run 合并后 PR 关联为空的门禁兼容：生产 YAML 函数 37 项正负回归，以及真实 CI checkout 日志与 Git commit API 树身份重放 passed。仍要求最新精确 head/attempt 成功，证据缺失时拒绝，见 [Bug](Bugs/2026-09-21-release-pr-association.md)。
+- [ ] 下一次 Tag 的完整自动发布流程验收；本次 v0.2.7 使用同一干净 main/Tag 的本地签名发布回退，不改写 Tag。

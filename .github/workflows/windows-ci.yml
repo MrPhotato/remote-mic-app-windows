@@ -62,6 +62,10 @@ jobs:
         shell: pwsh
         run: ./scripts/test-rc003-helper-bundle.ps1
 
+      - name: Test release source verification gates
+        shell: pwsh
+        run: ./scripts/test-release-source-gates.ps1
+
       - name: Build and test RC003 helper
         shell: pwsh
         run: ./scripts/build-rc003-helper.ps1
