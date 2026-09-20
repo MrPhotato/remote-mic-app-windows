@@ -23,6 +23,7 @@
 ## Stable 与 updater 资产
 
 - 当前 fork 的 workflow 只创建 **Preview 草稿**，不自动公开、不声称 Stable。Tag 必须指向当前 `origin/main`，并关联已合入的 PR；该 PR 精确 head 的最新 Windows CI 及最新重试必须完成且成功，旧绿灯不能覆盖后来失败。
+- GitHub 在 PR 合并后可能将 Actions run 的 `pull_requests` 返回为空。此时不得丢弃这些运行或退回旧绿灯：仍选择最新精确 head，并从该次 attempt 的 checkout 日志提取对应 PR 的 merge SHA，再用 Git commit API 核对父提交包含 PR head、文件树等于发布源码；缺失日志、身份不符或重试变化均停止。门禁回归见 `scripts/test-release-source-gates.ps1`。
 - 缺少本仓库 `TAURI_SIGNING_PRIVATE_KEY` 时 fail closed。公开 Preview 包必须通过独立 minisign 验签；当前未启用 Authenticode，因此 Windows 仍将安装器识别为 `NotSigned`，minisign 不等于 Windows 开发者证书。Stable 需要另外启用并验证 Authenticode，不能沿用 Preview 结论。
 - 普通 PR CI 不读取签名私钥，也不生成临时更新密钥；发布构建显式使用 `build-local.ps1 -BuildChannel preview -ReleaseTag <tag> -CreateUpdaterArtifacts`。基础配置仍关闭自动更新，只在发布构建覆盖开启 updater 资产生成。
 - Helper 必须先于 Rust 应用编译构建，随后调用 `verify-rc003-helper-bundle.ps1` 核对完整文件、SHA-256 和主程序内嵌完整清单。仅安装器存在或主程序编译通过不算完整打包。

@@ -40,22 +40,39 @@ jobs:
           function Select-LatestPrCiRun($Response, [string]$Head, [long]$PrNumber) {
             $headRuns = @($Response.workflow_runs | Where-Object { $_.event -eq 'pull_request' -and $_.head_sha -eq $Head })
             if (!$headRuns.Count) { throw 'No Windows CI run for exact PR head' }
-            # An unassociated run might be a newer failed run of this PR.
-            if (@($headRuns | Where-Object { !@($_.pull_requests | Where-Object { [long]$_.number -gt 0 }).Count }).Count) {
-              throw 'Cannot establish PR association for Windows CI runs'
+            if (@($headRuns | Where-Object { @($_.pull_requests | Where-Object { $null -ne $_ -and [long]$_.number -le 0 }).Count }).Count) {
+              throw 'Invalid PR association metadata'
             }
-            $prRuns = @($headRuns | Where-Object { @($_.pull_requests | Where-Object { $_.number -eq $PrNumber }).Count -eq 1 })
+            # GitHub clears pull_requests after merge. Keep such runs in the
+            # latest-run selection; require checkout/tree proof below instead.
+            $prRuns = @($headRuns | Where-Object { !@($_.pull_requests | Where-Object { $null -ne $_ }).Count -or @($_.pull_requests | Where-Object { $_.number -eq $PrNumber }).Count -eq 1 })
             if (!$prRuns.Count) { throw 'No Windows CI run associated with the merged PR' }
             return ($prRuns | Sort-Object -Property @{Expression={[DateTimeOffset]$_.created_at}; Descending=$true}, @{Expression={[long]$_.id}; Descending=$true}, @{Expression={[long]$_.run_attempt}; Descending=$true} | Select-Object -First 1)
           }
           function Assert-LatestPrCiPassed($Run, $ListedRun, [string]$Head, [long]$PrNumber) {
             if ($Run.id -ne $ListedRun.id -or $Run.event -ne 'pull_request' -or $Run.head_sha -ne $Head -or
-                @($Run.pull_requests | Where-Object { $_.number -eq $PrNumber }).Count -ne 1 -or
+                (@($Run.pull_requests | Where-Object { $null -ne $_ }).Count -gt 0 -and @($Run.pull_requests | Where-Object { $_.number -eq $PrNumber }).Count -ne 1) -or
                 [long]$Run.run_attempt -lt 1 -or [long]$Run.run_attempt -lt [long]$ListedRun.run_attempt) {
               throw 'Cannot verify the latest CI run identity and attempt'
             }
             if ($Run.status -ne 'completed' -or $Run.conclusion -ne 'success') {
               throw 'Latest Windows CI run/attempt for the merged PR head must have completed successfully'
+            }
+          }
+          function Get-TestedMergeSha([string]$Log, [long]$PrNumber) {
+            $fetchPattern = '(?m)^.*\tRun actions/checkout@v4\t.*\bfetch\b.*\borigin \+(?<sha>[0-9a-f]{40}):refs/remotes/pull/' + $PrNumber + '/merge\s*$'
+            $checkoutPattern = '(?m)^.*\tRun actions/checkout@v4\t.*\bcheckout --progress --force refs/remotes/pull/' + $PrNumber + '/merge\s*$'
+            $commits = @([regex]::Matches($Log, $fetchPattern) | ForEach-Object { $_.Groups['sha'].Value } | Sort-Object -Unique)
+            if ($commits.Count -ne 1 -or $Log -notmatch $checkoutPattern) {
+              throw 'Cannot prove the selected CI attempt checked out this PR merge'
+            }
+            return $commits[0]
+          }
+          function Assert-TestedMergeTree($Commit, [string]$Sha, [string]$Head, [string]$SourceTree) {
+            if ($Commit.sha -ne $Sha -or @($Commit.parents).Count -ne 2 -or
+                @($Commit.parents | Where-Object { $_.sha -eq $Head }).Count -ne 1 -or
+                $Commit.tree.sha -ne $SourceTree) {
+              throw 'CI checkout commit must contain the exact PR head and release tree'
             }
           }
           $runs = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/windows-ci.yml/runs?event=pull_request&head_sha=$head&per_page=100" | ConvertFrom-Json
@@ -65,6 +82,20 @@ jobs:
           $verified = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$($latest.id)" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Cannot verify latest PR CI attempt' }
           Assert-LatestPrCiPassed $verified $latest $head $prNumber
+          if (!@($latest.pull_requests | Where-Object { $null -ne $_ }).Count -or !@($verified.pull_requests | Where-Object { $null -ne $_ }).Count) {
+            $checkoutLog = (gh run view $verified.id --repo $env:GITHUB_REPOSITORY --attempt $verified.run_attempt --log) -join "`n"
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read CI checkout proof' }
+            $testedSha = Get-TestedMergeSha $checkoutLog $prNumber
+            $testedCommit = gh api "repos/$env:GITHUB_REPOSITORY/git/commits/$testedSha" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot verify tested commit identity' }
+            $sourceTree = (git rev-parse "$source^{tree}").Trim()
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve release tree' }
+            Assert-TestedMergeTree $testedCommit $testedSha $head $sourceTree
+            $confirmed = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$($verified.id)" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $confirmed.run_attempt -ne $verified.run_attempt) { throw 'CI attempt changed during proof verification' }
+            Assert-LatestPrCiPassed $confirmed $latest $head $prNumber
+            Write-Host "Verified merged PR association via checkout log and exact tree: tested=$testedSha tree=$sourceTree"
+          }
           Write-Host "Verified source=$source pr=$prNumber head=$head ci_run=$($verified.id) attempt=$($verified.run_attempt) conclusion=success"
 
       - uses: pnpm/action-setup@v4

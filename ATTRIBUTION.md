@@ -360,3 +360,7 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 ## 确认键 Enter 扫描码兼容（2026-09-21）
 
 沿用本仓库 PageUp/PageDown 扫描码修复模式，并先核对 [Microsoft KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)：KEYEVENTF_SCANCODE 使用 wScan 标识物理键，KEYEVENTF_EXTENDEDKEY 区分扩展键。本机旧包自有 WebView 的原生事件实测显示 Ctrl+Enter 的 Enter `code` 为空；主 Enter 采用 0x1C、非扩展，保持现有成对注入，不调整时序、不复制第三方实现。公开 Chromium 源码页面本轮无法打开，不把未读取源码作为证据。目标应用对快捷键的上下文要求另行验收，见 [Bug 记录](Bugs/2026-09-21-enter-shortcut-identity.md)。
+
+## Actions 发布来源核验补充（2026-09-21）
+
+本次直接核对 GitHub REST `actions/runs/35529960366`、`pulls/1`、`git/commits/8733bbccf93136a287322c91dcf7cd0ed4fdc51d` 及 Actions checkout 日志：PR 合并后 run 的 `pull_requests` 变为空数组，而真实检出提交仍可核验。修复复用 `actions/checkout@v4` 现有日志和 Git 公共对象，不读取第三方私有配置、不复制外部实现，也不推断空关联等于成功。明确要求测试 merge 的父提交包含 PR head，且测试树等于发布树；旧绿灯不能覆盖最新失败。见 [发布关联记录](Bugs/2026-09-21-release-pr-association.md)。
