@@ -303,6 +303,10 @@ impl Rc003InputRuntime {
                     selected.clone(),
                 );
                 if last_selection.as_ref() != Some(&selection) {
+                    gatt_note(format!(
+                        "rc003_input selection phase=changed available={available} connection_generation={connection_generation} input_epoch={input_epoch} selected={}",
+                        selected.is_some()
+                    ));
                     let Some(next_generation) = self.begin_generation(stop) else {
                         return Ok(());
                     };

@@ -35,6 +35,7 @@ fn rust_serialization_matches_the_shared_windows_runtime_contract() {
                 }),
                 voice_state: VoiceSessionState::Idle,
                 decoded_samples: 240,
+                connection_generation: 3,
                 generation: 7,
                 reconnect_attempt: 2,
                 power_notifications_available: true,

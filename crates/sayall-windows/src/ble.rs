@@ -1072,6 +1072,7 @@ fn attempt_connection(
         remote_model: previous
             .as_ref()
             .map_or(RemoteModel::Unknown, |snapshot| snapshot.remote_model),
+        connection_generation: *connection_generation,
         reconnect_attempt,
         ..ConnectionSnapshot::default()
     };
@@ -1104,6 +1105,7 @@ fn attempt_connection(
         phase: ConnectionPhase::AwaitingCapabilities,
         remote_name: Some(connected.name.clone()),
         remote_model: connected.model,
+        connection_generation: *connection_generation,
         reconnect_attempt,
         ..ConnectionSnapshot::default()
     };
@@ -1112,7 +1114,7 @@ fn attempt_connection(
     *session = Some(connected);
     *capabilities_deadline = Some(Instant::now() + CAPABILITIES_TIMEOUT);
     gatt_note(format!(
-        "ble_connect phase=completed terminal_result=passed reconnecting={reconnecting} attempt={reconnect_attempt} next_phase=awaiting_capabilities elapsed_ms={}",
+        "ble_connect phase=completed terminal_result=passed reconnecting={reconnecting} attempt={reconnect_attempt} connection_generation={connection_generation} next_phase=awaiting_capabilities elapsed_ms={}",
         attempt_started.elapsed().as_millis()
     ));
     Ok(snapshot)
