@@ -1,0 +1,185 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "scope": "own_app_webview_fixture_product_function",
+  "execution": "debug_example_calls_product_text_edit_using_public_uia_and_paired_sendinput",
+  "physical_remote_used": false,
+  "installed_app_with_final_fix_verified": false,
+  "source_revision": "working_tree_before_commit",
+  "result": "passed_for_listed_software_cases_only",
+  "evidence_inputs": [
+    "webview-keep-ascii-result.txt",
+    "webview-selection-diagnostic-result.txt",
+    "webview-keep-ascii-fixed-result.txt",
+    "webview-boundary-result.txt",
+    "webview-single-result.txt",
+    "webview-repeat-1-result.txt",
+    "webview-repeat-2-result.txt",
+    "webview-idle-result.txt",
+    "webview-fast-double-result.txt",
+    "webview-product-probe.log",
+    "text-edit-final-round-tests.log"
+  ],
+  "pre_fix_software_failures": [
+    {
+      "case": "keep_ascii",
+      "at": "2026-09-20T13:39:31.711Z",
+      "result": "failed",
+      "api_ok": false,
+      "focus_match": true,
+      "expected_match": false,
+      "before_utf16_units": 12,
+      "after_utf16_units": 12,
+      "action_ms": 135,
+      "reason": "selection_changed",
+      "cleanup": "skipped_cleanup_selection_or_text_changed"
+    },
+    {
+      "case": "keep_ascii_selection_diagnostic",
+      "at": "2026-09-20T13:45:31.723Z",
+      "result": "failed",
+      "api_ok": false,
+      "focus_match": true,
+      "expected_match": false,
+      "before_utf16_units": 12,
+      "after_utf16_units": 12,
+      "action_ms": 110,
+      "reason": "selection_changed",
+      "first_selection_read": {
+        "range_matches": false,
+        "actual_utf16_units": 0,
+        "suffix_matches": false,
+        "prefix_utf16_units": 12,
+        "context_matches": true,
+        "actual_empty": true,
+        "select_call_us": 145,
+        "selection_read_us_from_select_start": 257
+      },
+      "cleanup_after_first_read_ms_approx": 3,
+      "cleanup": "submitted_original_caret_restore_not_observation_confirmed_by_this_log"
+    }
+  ],
+  "post_fix_software_cases": [
+    {
+      "case": "keep_ascii",
+      "completed_at": "2026-09-20T13:51:44.963Z",
+      "result": "passed",
+      "api_ok": true,
+      "focus_match": true,
+      "expected_match": true,
+      "before_utf16_units": 12,
+      "after_utf16_units": 6,
+      "action_ms": 264,
+      "product_completed_ms": 264,
+      "selection_wait_pending_count": 0
+    },
+    {
+      "case": "keep_boundary",
+      "completed_at": "2026-09-20T13:52:24.297Z",
+      "result": "passed",
+      "api_ok": true,
+      "focus_match": true,
+      "expected_match": true,
+      "before_utf16_units": 6,
+      "after_utf16_units": 6,
+      "action_ms": 138,
+      "product_completed_ms": 138,
+      "product_reason": "nothing_to_delete"
+    },
+    {
+      "case": "single_paired_backspace",
+      "result": "passed",
+      "api_ok": true,
+      "focus_match": true,
+      "expected_match": true,
+      "before_utf16_units": 12,
+      "after_utf16_units": 11,
+      "action_ms": 0,
+      "timing_scope": "tap_submission_millisecond_resolution_not_target_delivery_latency"
+    },
+    {
+      "case": "keep_ascii_repeat_1",
+      "completed_at": "2026-09-20T13:52:25.548Z",
+      "result": "passed",
+      "api_ok": true,
+      "focus_match": true,
+      "expected_match": true,
+      "before_utf16_units": 12,
+      "after_utf16_units": 6,
+      "action_ms": 204,
+      "product_completed_ms": 204,
+      "selection_wait_pending_count": 0
+    },
+    {
+      "case": "keep_ascii_repeat_2",
+      "completed_at": "2026-09-20T13:52:26.229Z",
+      "result": "passed",
+      "api_ok": true,
+      "focus_match": true,
+      "expected_match": true,
+      "before_utf16_units": 12,
+      "after_utf16_units": 6,
+      "action_ms": 199,
+      "product_completed_ms": 199,
+      "selection_wait_pending_count": 0
+    },
+    {
+      "case": "keep_ascii_after_fixture_idle",
+      "completed_at": "2026-09-20T13:54:59.580Z",
+      "result": "passed",
+      "api_ok": true,
+      "focus_match": true,
+      "expected_match": true,
+      "before_utf16_units": 12,
+      "after_utf16_units": 6,
+      "idle_seconds": 152.542,
+      "fixture_guard_runs_before_product_call": true,
+      "unwarmed_provider_cold_first_use_proven": false,
+      "action_ms": 245,
+      "product_completed_ms": 244,
+      "selection_wait_pending_count": 0
+    }
+  ],
+  "unit_tests": {
+    "filter": "text_edit",
+    "result": "passed",
+    "passed": 17,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 178,
+    "covers": [
+      "cross_process_native_ancestor_identity_and_rejection",
+      "cancellation_before_any_uia_or_input",
+      "punctuation_and_unicode_boundary_planning",
+      "pending_selection_exact_target_only",
+      "new_selection_focus_or_text_rejection",
+      "cancelled_pending_select_then_confirmed_caret_restore",
+      "finite_operation_and_cleanup_budgets"
+    ]
+  },
+  "not_validated_in_this_record": [
+    "final_fix_installed_app_physical_rc003_double_back",
+    "rc001_physical_acceptance",
+    "physical_cancel_during_pending_select_and_restore",
+    "new_cancel_selection_fixture_case",
+    "new_early_backspace_compensation_cases",
+    "unwarmed_provider_idle_first_use",
+    "other_applications_or_rich_text_format_restoration"
+  ],
+  "deferred_attempt": {
+    "case": "new_early_backspace_double",
+    "result": "deferred",
+    "reason": "own_foreground_unverified",
+    "foreground_accepted": false,
+    "foreground_matched": false,
+    "foreground_wait_ms": 509,
+    "product_edit_executed": false
+  },
+  "interpretation_limits": [
+    "The own-fixture guard checks public UIA immediately before the product call and can warm the provider.",
+    "Successful deletion cases read the exact expected final ValuePattern text; product SendInput submission alone was not the pass criterion.",
+    "All listed successful selection waits observed the target on their first observation; the pending transition is unit-tested and motivated by the earlier real asynchronous failure, not directly exercised by these successful runs.",
+    "action_ms excludes remote transport and gesture timing; product_completed_ms has a different measurement boundary.",
+    "No input text, process identifiers, window handles, personal paths, device identities, audio or credentials are included."
+  ]
+}

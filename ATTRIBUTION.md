@@ -284,3 +284,21 @@
 ## WebView 焦点所属窗口校验（2026-09-20）
 
 本机 RC003 双击已进入文字删除模块，但测试框的 UIA 元素进程与 Tauri 主窗口进程不同，旧版严格 PID 相等检查拒绝执行。依据 Microsoft [RawViewWalker](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-get_rawviewwalker)、[GetParentElement](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtreewalker-getparentelement) 与 [GetAncestor](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getancestor)，跨进程焦点改为证明最近原生宿主 HWND 的实际所属进程与 UIA 宿主进程一致，且其 GA_ROOT 精确等于当前前台窗口；不沿 owner 关系放行，不移除焦点、密码、取消和选区校验。自家测试框的公开 UIA 祖先链已验证符合该条件；实际删除结果单独记录于 [Bug 与验收证据](Bugs/2026-09-20-punctuation-webview-focus.md)。未复制外部代码，未改 300ms 双击窗口。
+
+## WebView 文本范围限定（2026-09-20）
+
+依据 Microsoft [DocumentRange](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextpattern-get_documentrange)、[MoveEndpointByUnit](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-moveendpointbyunit)、[MoveEndpointByRange](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-moveendpointbyrange) 和 [FindText](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-findtext) 的公开范围与端点语义独立实现。另只读参考 [Chromium 官方 TextRange provider](https://raw.githubusercontent.com/chromium/chromium/main/ui/accessibility/platform/ax_platform_node_textrangeprovider_win.cc) 的 `MoveEndpointByUnitHelper` 与 `FindText`：前者沿 AX 文本边界移动，后者把共同祖先中的文本偏移转换为叶节点位置；未复制外部实现，也不把 Chromium 当前主干视为本机 WebView2 的精确版本。
+
+本机自家固定测试框的只读实验发现：其 `DocumentRange` 长度为 12，原先从末尾向前移动 2048 个字符，实际得到长度 829、起点早于该控件文档的范围，随后标点查找与删除范围均为空。仅将起点限制到自身 `DocumentRange.Start` 后，前缀长度 12、标点范围长度 1、待删范围长度 6，全部与固定预期精确一致，文本和选区保持不变。原始失败及对照元数据保留在本地忽略目录 `target/local-launch/rc003-integration/own-boundary-clamped-observation.json`，输出仅布尔与数字。
+
+修复先验证空光标位于当前 TextPattern 自有文档内，再在读取文本之前限制克隆范围起点；重新检查范围两端、顺序及末端仍为原光标，保留精确文本、选区、焦点、取消与密码检查。日志记录是否限制起点、实际移动单位和拒绝原因，不记录文本。上述只读实验单独只证明范围构造修正；后续结合下节选区修复的真实产品函数已实际删除，证据分轮记录。最终安装版实体遥控器及跨应用兼容性仍须分别验收；此修复不改变双击等待策略。
+
+## UIA 选区异步确认与取消清理（2026-09-20）
+
+Microsoft [TextRange.Select](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationtextrange-select) 定义选择范围操作。[Chromium 官方 provider 的 Select 实现](https://raw.githubusercontent.com/chromium/chromium/main/ui/accessibility/platform/ax_platform_node_textrangeprovider_win.cc) 将 `kSetSelection` 交给 delegate 后返回，未在该函数内等待 GetSelection 确认；仅参考行为，未复制实现，也未声称该主干与本机运行时精确一致。
+
+本机产品函数实证：从 Select 调用开始到第一次读取结束约 257 微秒（Select 自身约 145 微秒），仍得到原空光标；上下文保持 12 个 UTF-16 单位不变，约 3 毫秒后目标选区生效。后续只读比较证明目标选区与重建范围的 Compare 和两端 CompareEndpoints 一致，未采用放宽范围比较的替代方案。修复只在原空光标、精确目标选区两态之间有界观察，失焦、文本改变或第三种用户选区立即拒绝；使用既有操作预算、实际 UIA 查询及线程让出，不以固定休眠代替确认。取消清理独立限时，等已提交的选择请求落实后仅恢复自己的光标，并实际观察恢复；超时或 API 失败时向调用者明确报告恢复未确认，不把 S_OK 记为清理通过。
+
+新增等待、拒绝第三态、取消后迟到选择与恢复、预算边界测试；定向 `text_edit` 共 17 项 passed。自家 WebView 产品函数自动验证共 6 项 passed：普通后缀 12→6（264ms），末尾标点 6→6（138ms），普通退格 12→11（0ms，提交耗时），后缀重复 12→6（204ms、199ms），固定框闲置 152.542 秒后 12→6（探针 245ms，产品内部 244ms）。每项除 API 结果外均核对了最终实际文本与固定预期完全相等。探针调用前有自己的 UIA 保护性检查，可能预热 provider；闲置项不等于未经预热的冷态首按验证。成功选择观察均为 `pending_count=0`，不宣称此次成功运行直接覆盖了等待中间态。
+
+这些数值不能当作跨应用保证或遥控器端到端延迟；最终安装版实体 RC003、取消真实窗口、新提前退格/补偿和其他应用覆盖分别待验收。补偿候选只以精确可验证的纯文本为范围，字符恢复不证明富文本格式恢复。版本化布尔、长度及耗时见 [软件 UIA 执行证据](Testing/evidence/punctuation-webview-uia-execution-20260920.json)；完整诊断保留于本地忽略目录 `target/local-launch/rc003-integration`，版本化证据不包含文本、设备身份、进程/窗口标识或个人路径。
