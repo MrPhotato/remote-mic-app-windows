@@ -31,7 +31,7 @@ RC001 未测试，不宣称支持通过；不扩大匹配、不安装到其它�
 - `scripts/inspect-rc003-filter.ps1` 只读输出通用产品 Hardware IDs、匹配数、
   Secure Boot、testsigning/HVCI 可观察状态、两项目驱动服务注册情况；权限不足为 unknown。
   不输出设备实例路径，不打开 HID 输入，不修改安全设置。
-- 本机 Secure Boot 为 enabled。当前未安装该驱动，也没有变更测试签名设置。
+- 初始预检 Secure Boot 为 enabled。驱动未安装，启动测试模式尚未变更；后续本地签名准备见文末记录。
 
 原始临时取证在被 Git 忽略的 `target/local-launch/rc003-input-observer/`；
 结构化结论归档在本文件，原始设备身份和用户输入不提交。
@@ -57,7 +57,7 @@ NuGet x64 工具使用 x64 MSBuild 与 StampInf；不关闭 InfVerif 或静态�
 
 ## 安装前的明确边界与回滚
 
-当前产物为未签名候选，不能在普通 Secure Boot 环境直接加载。
+原始构建产物为未签名候选，不能在普通 Secure Boot 环境直接加载；另行准备的本地测试签名包也不等于微软正式签名。
 本地测试需自建测试签名、明确授权的独立提权操作，并满足微软测试签名政策；
 本机这意味着关闭 Secure Boot、开启 TESTSIGNING 并重启。不要关闭内存完整性来绕行。
 正式 Secure Boot 部署需微软认可的内核签名，本次未申请、不发布。
@@ -83,10 +83,39 @@ NuGet x64 工具使用 x64 MSBuild 与 StampInf；不关闭 InfVerif 或静态�
 - passed：Windows 平台 Rust release 库测试 150 项，0 failed、6 ignored；包括代理键语义、
   实体键盘别名不吞/不武装、重复/迟到释放/重启清理，以及代理音量仍注入而原生音量不重复。
 - passed：PowerShell 5.1 预检及 PowerShell 7 连续调用；唯一精确设备匹配，两个过滤服务均未注册。
-- deferred：驱动签名、安装、实际加载、卸载回滚及 HVCI/Driver Verifier 稳定性。
+- passed：2026-09-20 本地测试签名及公钥信任准备（详见下节）；这不表示驱动能在当前启动安全配置下加载。
+- deferred：驱动安装、实际加载、卸载回滚及 HVCI/Driver Verifier 稳定性。
 - deferred：RC003 三键逐一短按 DOWN/UP 高亮、长按重复、音量同键映射单次注入、
   冷/闲置后首用、断连/睡眠、按住退出/重启、普通键盘 F13–F15 与其它键无回归。
 - deferred：RC003 语音快速按下/释放、连续会话及音频到目标应用端到端回归。
 - deferred：RC001 独立真机验收。
 
 未通过上述真机门禁前保持 TODO 未完成。
+
+## 2026-09-20 用户授权后的本地测试签名准备
+
+用户在了解 Secure Boot、测试签名、重启及正式签名边界后明确同意试验。
+本阶段未修改固件、BCD、HVCI、磁盘加密或安装过滤驱动。
+
+- 提权只读预检：Secure Boot enabled；TESTSIGNING 未显式设置；系统卷全解密、
+  ProtectionStatus=0、加密比例 0%，无需暂停 BitLocker；未读取恢复密码或密钥保护器。
+  Windows Driver Policy 为 audit、非 enforcement。
+- `scripts/prepare-rc003-test-signing.ps1` 实际执行通过：校验原始三文件/来源哈希、
+  已审查提交包含关系、完整 REV00a4 匹配；创建一把 CurrentUser/My 不可导出的
+  RSA 3072/SHA-256 代码签名私钥，只导出公钥证书；SYS 签名后重建 CAT，再签 CAT。
+  脚本仅在目标目录不存在时运行，不覆盖旧包，不隐式导入信任、安装驱动或改启动设置。
+- 独立、显式提权 Helper 已将本次公钥加入 LocalMachine Root/TrustedPublisher；
+  四项 SignTool 检查均 exit=0：SYS 签名、CAT 签名、SYS 目录成员关系、INF 目录成员关系。
+  证书指纹、实际新增存储和签名包哈希保存在忽略目录的回执中，不提交证书或私钥。
+- 应用正常退出并收到 `session_cleanup_acked`，蓝牙收尾 128ms。
+
+本地签名包：`target/sayall-hid-filter/local-test-signed/`。
+准备时的不可变 `signing-manifest.json` 与后续 `test-trust-receipt.json` 分开保存；
+前者的 `trust_imported=false` 描述创建当时的状态，后者记录实际信任与四项验证结果。
+完整预检和回执位于 `target/sayall-hid-filter/`，均未上传或发布。
+
+下一步需要用户在 UEFI 中将 Secure Boot 改为 Disabled 并返回 Windows。
+随后再次检查实际状态，显式启用 TESTSIGNING，重启后以
+`NtQuerySystemInformation(SystemCodeIntegrityInformation)` 的测试签名标志确认运行态，
+再安装唯一目标包。BCD 写入成功只代表下次启动配置，不能直接当作运行态已生效。
+保留原始 TESTSIGNING 缺省状态，以便卸载后精确恢复。
