@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "source_revision": "8384222c5fbd5ca1afd96718433c2563eebd4706",
+  "build_result": "passed",
+  "application_sha256": "93695c075246ad3cd5ae6f888419667f472f503099e0ab2d4ac795628a399f72",
+  "installer_sha256": "1c490244c27a2b2a284833598ac2db61fed4cba8f803bb06f1386df02d945223",
+  "helper_manifest_sha256": "9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441",
+  "debug_verification_example_build": "passed",
+  "unit_tests": {
+    "text_edit": 17,
+    "gesture": 27,
+    "mapping": 20,
+    "transaction": 21,
+    "failed": 0
+  },
+  "installed": false,
+  "new_fast_path_window_verification": "deferred_foreground_unverified",
+  "physical_remote_new_candidate": "deferred",
+  "unprimed_idle_first_use": "deferred",
+  "published": false,
+  "logs": [
+    "eager-backspace-local-build.log",
+    "webview-fast-probe-build.log",
+    "backspace-transaction-tests.log",
+    "eager-button-mapping-tests.log",
+    "text-edit-final-round-tests.log"
+  ]
+}
