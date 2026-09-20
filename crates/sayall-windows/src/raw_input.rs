@@ -41,6 +41,13 @@ pub const ALL_BUTTONS: [RemoteButton; 13] = [
     RemoteButton::VolumeDown,
 ];
 
+/// The supplemental RC003 source can represent only these three buttons.
+pub(crate) const RC003_TAP_BUTTONS: [RemoteButton; 3] = [
+    RemoteButton::Back,
+    RemoteButton::VolumeUp,
+    RemoteButton::VolumeDown,
+];
+
 impl RemoteButton {
     /// 在 [`ALL_BUTTONS`] 中的序号（0..12），用于门控位掩码。
     pub fn ordinal(self) -> usize {
@@ -294,6 +301,7 @@ pub fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<RemoteBut
 pub struct ButtonStateMerger {
     keyboard: BTreeSet<RemoteButton>,
     hid: BTreeSet<RemoteButton>,
+    rc003_tap: BTreeSet<RemoteButton>,
 }
 
 impl ButtonStateMerger {
@@ -326,7 +334,7 @@ impl ButtonStateMerger {
         edges_between(&before, &self.active_buttons())
     }
 
-    /// 当前按下的语义按键集合（两个来源的并集）。
+    /// 当前按下的语义按键集合（各独立来源的并集）。
     pub fn active_button_set(&self) -> BTreeSet<RemoteButton> {
         self.active_buttons()
     }
@@ -346,10 +354,25 @@ impl ButtonStateMerger {
         edges_between(&before, &self.active_buttons())
     }
 
+    /// Independently attributed helper state; invalid masks never change a source.
+    pub(crate) fn update_rc003_tap(&mut self, pressed_mask: u8) -> Vec<ButtonEdge> {
+        if pressed_mask & !0x07 != 0 {
+            return Vec::new();
+        }
+        let before = self.active_buttons();
+        self.rc003_tap = RC003_TAP_BUTTONS
+            .into_iter()
+            .enumerate()
+            .filter_map(|(bit, button)| (pressed_mask & (1 << bit) != 0).then_some(button))
+            .collect();
+        edges_between(&before, &self.active_buttons())
+    }
+
     pub fn release_all(&mut self) -> Vec<ButtonEdge> {
         let active = self.active_buttons();
         self.keyboard.clear();
         self.hid.clear();
+        self.rc003_tap.clear();
         active
             .into_iter()
             .map(|button| ButtonEdge {
@@ -360,7 +383,12 @@ impl ButtonStateMerger {
     }
 
     fn active_buttons(&self) -> BTreeSet<RemoteButton> {
-        self.keyboard.union(&self.hid).copied().collect()
+        self.keyboard
+            .iter()
+            .chain(&self.hid)
+            .chain(&self.rc003_tap)
+            .copied()
+            .collect()
     }
 }
 
@@ -383,6 +411,44 @@ fn edges_between(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rc003_tap_deduplicates_three_sources_and_preserves_other_keys() {
+        let mut merger = ButtonStateMerger::default();
+        merger.apply_keyboard_button_edge(RemoteButton::Up, true);
+        assert_eq!(
+            merger.update_rc003_tap(1),
+            vec![ButtonEdge {
+                button: RemoteButton::Back,
+                is_pressed: true
+            }]
+        );
+        assert!(merger.update_rc003_tap(1).is_empty());
+        assert!(merger
+            .apply_keyboard_button_edge(RemoteButton::Back, true)
+            .is_empty());
+        assert!(merger.update_hid_usages(BTreeSet::from([0xF1])).is_empty());
+        assert!(merger.update_rc003_tap(0).is_empty());
+        assert!(merger
+            .apply_keyboard_button_edge(RemoteButton::Back, false)
+            .is_empty());
+        assert_eq!(
+            merger.update_hid_usages(BTreeSet::new()),
+            vec![ButtonEdge {
+                button: RemoteButton::Back,
+                is_pressed: false
+            }]
+        );
+        assert_eq!(
+            merger.active_button_set(),
+            BTreeSet::from([RemoteButton::Up])
+        );
+        merger.update_rc003_tap(7);
+        assert!(merger.update_rc003_tap(8).is_empty());
+        assert_eq!(merger.active_button_set().len(), 4);
+        assert_eq!(merger.release_all().len(), 4);
+        assert!(merger.release_all().is_empty());
+    }
 
     fn report(usages: &[u16]) -> Vec<u8> {
         let mut bytes = vec![0x01, 0x00, 0x00, 0, 0, 0, 0, 0, 0];

@@ -2,6 +2,16 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## RC003 可选三键增强接入（2026-09-20）
+
+- 在下节独立实验成功后，用户明确要求完善软件，授权可选三键 Helper 集成；以 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md) 为当前范围。主程序普通权限、基础语音不依赖注入，只读取 RC003 返回/音量±。
+- `helpers/rc003-input/guard.py`、`source_binding.js`、`observer.js` 实质改编同一固定上游 `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d` 的宿主定位、来源绑定和报告入口快照。保留 GPLv3 全文于 `helpers/rc003-input/licenses/`，并说明本地三键限制、只观察、不吞写报告、租约、父进程和选择关联等修改；本仓库本身为 GPL-3.0-only。
+- 独立 Helper 固定 Frida 17.18.0，Python binding 的 wxWindows Library Licence 与随包第三方许可保留在 Helper 许可目录。使用 [PyInstaller onedir](https://pyinstaller.org/en/stable/operating-mode.html) 打包固定运行环境；不使用管理员 onefile 临时解包执行。hash 锁定构建依赖与包内完整 manifest；主程序内嵌 manifest 摘要，提权后先复制到管理员控制目录并复核文件，再启动载荷。
+- Windows 主程序以公开 [ShellExecuteExW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecuteexw) 的 runas 启动独立引导进程；Helper 自行核对 loopback 端口所属父 PID、存活句柄以及公开设备 ContainerId 关联。UI 显式启用，不安装服务/驱动或改启动安全设置。
+- 引导路径兼容处理参考 [Tauri 2.11.5 的路径插件](https://github.com/tauri-apps/tauri/blob/7cd71369c00978a3783b6ae3e9972358abbe4ae6/crates/tauri/src/path/plugin.rs)（官方 Cargo 包 VCS 提交已核对，MIT/Apache-2.0），使用相同的 [dunce 1.0.5 `simplified`](https://docs.rs/dunce/1.0.5/dunce/fn.simplified.html) API，在 PowerShell 边界仅安全简化扩展盘符路径，不复制路径解析实现。PowerShell 5.1 的前缀失败已最小复现；不能安全简化的 UNC/长路径仍保留，部署能力未知。新包原始流程待验，证据及来源核对边界见 [缺陷记录](Bugs/2026-09-20-rc003-helper-bootstrap-path.md)。
+- Rust 新增独立三键状态来源、generation/sequence/epoch 失效机制，复用原有映射和高亮；这些主程序机制自行实现，不复制上游吞键或其它应用注入实现。未配置动作只高亮，Helper 中断先取消手势再释放该来源，原语音生命周期和普通键来源保持原有行为。
+- 打包最低系统沿用 Windows 10 1809，仅排除系统 `ucrtbase.dll`，保留 Python、Frida、VCRUNTIME 和 API-set 文件。[微软 UCRT 部署说明](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment?view=msvc-170)明确 Windows 10/11 始终使用系统 UCRT；[PyInstaller 6.19.0 官方依赖选择实现](https://github.com/pyinstaller/pyinstaller/blob/v6.19.0/PyInstaller/depend/dylib.py)也说明仅面向 Windows 10+ 时无需附带这类库。本机初包对此 DLL 的 Rust 复制返回 `os error 5`，安装后完整性检查也发现该副本缺失；只记录观察到的现象，不猜测 Windows 拒绝的具体机制。按系统支持范围移除冗余副本后重新生成清单和完整包验证。
+
 ## RC003 Frida 独立诊断例外（2026-09-20）
 
 - 用户在明确获知管理员权限、向 `WUDFHost.exe` 注入监听代码和非公开输入接口的边界后，授权一次独立实验；不代表授权接入正式产品、修改驱动或启动安全设置。实验方案见 [Testing/WindowsRc003Frida.md](Testing/WindowsRc003Frida.md)。

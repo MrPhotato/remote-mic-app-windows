@@ -37,7 +37,7 @@ use crate::button_gestures::GestureRecognizer;
 use crate::key_gate;
 use crate::raw_input::{
     filter_alias_for_keyboard, ButtonEdge, ButtonStateMerger, RawInputSnapshot, RawKeyboardEvent,
-    RemoteButton,
+    RemoteButton, RC003_TAP_BUTTONS,
 };
 use crate::send_input::{
     native_key, ButtonAction, ButtonMappings, ButtonTrigger, KeyChord, KeyCode, MouseClickKind,
@@ -48,6 +48,20 @@ use crate::UsageCounters;
 /// 引擎消息（监听器/门控/宿主 → 引擎线程）。
 #[derive(Debug)]
 pub enum EngineMessage {
+    /// A new authenticated helper session; generations never repeat in this engine.
+    Rc003TapStart {
+        generation: u64,
+    },
+    /// Absolute three-button state (Back, VolumeUp, VolumeDown), in sequence order.
+    Rc003TapState {
+        generation: u64,
+        sequence: u64,
+        pressed_mask: u8,
+    },
+    /// Source loss cancels gestures rather than completing a physical release.
+    Rc003TapLost {
+        generation: u64,
+    },
     /// 监听器观察到的遥控器键盘事件（未被吞的；被吞的走 [`Self::GateEdge`]）。
     Keyboard(RawKeyboardEvent),
     /// 监听器观察到的一份 HID 报文 usage 集合（绝对状态）。
@@ -61,6 +75,97 @@ pub enum EngineMessage {
     /// 按键映射已更新：重建手势配置。
     MappingsChanged,
     Shutdown,
+}
+
+#[derive(Default)]
+struct Rc003TapSession {
+    epoch: Arc<AtomicU64>,
+    newest_generation: Option<u64>,
+    active_generation: Option<u64>,
+    sequence: Option<u64>,
+    armed: bool,
+    accepted_states: u64,
+    rejected_states: u64,
+    logged_rejections: BTreeSet<&'static str>,
+}
+
+impl Rc003TapSession {
+    fn start(&mut self, generation: u64) -> bool {
+        if self
+            .newest_generation
+            .is_some_and(|previous| generation <= previous)
+        {
+            self.reject(generation, "stale_start");
+            return false;
+        }
+        self.invalidate("replaced");
+        self.newest_generation = Some(generation);
+        self.active_generation = Some(generation);
+        self.sequence = None;
+        self.armed = false;
+        self.accepted_states = 0;
+        self.rejected_states = 0;
+        self.logged_rejections.clear();
+        crate::ble::gatt_note(format!(
+            "rc003_tap action=start phase=accepted generation={generation} awaiting_neutral=true"
+        ));
+        true
+    }
+
+    fn reject(&mut self, generation: u64, reason: &'static str) {
+        self.rejected_states = self.rejected_states.saturating_add(1);
+        if self.logged_rejections.insert(reason) {
+            crate::ble::gatt_note(format!(
+                "rc003_tap action=state phase=rejected generation={generation} reason={reason}"
+            ));
+        }
+    }
+
+    fn accept(&mut self, generation: u64, sequence: u64, pressed_mask: u8) -> bool {
+        let reason = if self.active_generation != Some(generation) {
+            Some("inactive_generation")
+        } else if pressed_mask & !0x07 != 0 {
+            Some("invalid_mask")
+        } else if self.sequence.is_some_and(|previous| sequence <= previous) {
+            Some("stale_sequence")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.reject(generation, reason);
+            return false;
+        }
+        self.sequence = Some(sequence);
+        if !self.armed {
+            if pressed_mask != 0 {
+                self.reject(generation, "awaiting_neutral");
+                return false;
+            }
+            self.armed = true;
+            crate::ble::gatt_note(format!(
+                "rc003_tap action=arm phase=accepted generation={generation} sequence={sequence}"
+            ));
+        }
+        self.accepted_states = self.accepted_states.saturating_add(1);
+        true
+    }
+
+    fn invalidate(&mut self, reason: &'static str) {
+        if matches!(reason, "listener_reset" | "terminal_action") {
+            let epoch = self.epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+            crate::ble::gatt_note(format!(
+                "rc003_tap action=invalidate phase=completed epoch={epoch} reason={reason}"
+            ));
+        }
+        if let Some(generation) = self.active_generation.take() {
+            crate::ble::gatt_note(format!(
+                "rc003_tap action=stop phase=completed generation={generation} reason={reason} accepted_states={} rejected_states={} terminal_result=cancelled",
+                self.accepted_states, self.rejected_states
+            ));
+        }
+        self.armed = false;
+        self.sequence = None;
+    }
 }
 
 /// 动作注入器抽象（生产实现包装 `SendInputRuntime`，测试实现记录调用）。
@@ -258,6 +363,7 @@ pub struct ButtonMappingRuntime {
     edge_callbacks: Arc<RwLock<Vec<ButtonEdgeCallback>>>,
     gesture_callbacks: Arc<RwLock<Vec<ButtonGestureCallback>>>,
     worker: Option<JoinHandle<()>>,
+    rc003_tap_epoch: Arc<AtomicU64>,
 }
 
 impl ButtonMappingRuntime {
@@ -278,6 +384,7 @@ impl ButtonMappingRuntime {
         let state = Arc::new(Mutex::new(EngineState::default()));
         let edge_callbacks = Arc::new(RwLock::new(Vec::new()));
         let gesture_callbacks = Arc::new(RwLock::new(Vec::new()));
+        let rc003_tap_epoch = Arc::new(AtomicU64::new(0));
 
         let runtime = Self {
             mappings: Arc::clone(&mappings),
@@ -287,6 +394,7 @@ impl ButtonMappingRuntime {
             edge_callbacks: Arc::clone(&edge_callbacks),
             gesture_callbacks: Arc::clone(&gesture_callbacks),
             worker: None,
+            rc003_tap_epoch: Arc::clone(&rc003_tap_epoch),
         };
 
         let worker = std::thread::Builder::new()
@@ -313,6 +421,7 @@ impl ButtonMappingRuntime {
                         gesture_callbacks,
                         injector,
                         usage,
+                        rc003_tap_epoch,
                     )
                 }
             })
@@ -325,6 +434,11 @@ impl ButtonMappingRuntime {
     /// 监听器与门控向引擎投递消息的通道端点。
     pub fn sender(&self) -> Sender<EngineMessage> {
         self.sender.clone()
+    }
+
+    /// A lifecycle reset requires the helper supervisor to open a fresh generation.
+    pub fn rc003_tap_epoch(&self) -> u64 {
+        self.rc003_tap_epoch.load(Ordering::Acquire)
     }
 
     /// 更新按键映射：热加载到引擎 + 同步门控吞键配置。
@@ -393,6 +507,7 @@ fn engine_worker(
     gesture_callbacks: Arc<RwLock<Vec<ButtonGestureCallback>>>,
     injector: Arc<dyn MappingInjector>,
     usage: Arc<UsageCounters>,
+    rc003_tap_epoch: Arc<AtomicU64>,
 ) {
     let mut merger = ButtonStateMerger::default();
     let mut recognizer = GestureRecognizer::new();
@@ -403,6 +518,10 @@ fn engine_worker(
     // 映射触发时消费并跳过注入；门控吞下的按压（[`EngineMessage::GateEdge`]）
     // 置位前清除。见模块文档"泄漏对冲"。
     let mut native_pending: BTreeSet<RemoteButton> = BTreeSet::new();
+    let mut rc003_tap = Rc003TapSession {
+        epoch: rc003_tap_epoch,
+        ..Rc003TapSession::default()
+    };
 
     loop {
         let timeout = recognizer
@@ -423,6 +542,7 @@ fn engine_worker(
                             &injector,
                             &mut native_pending,
                         ) {
+                            rc003_tap.invalidate("terminal_action");
                             reset_after_terminal_action(
                                 "lock_workstation",
                                 &mut merger,
@@ -446,6 +566,10 @@ fn engine_worker(
 
         // Later physical input and lifecycle resets invalidate asynchronous bulk edits.
         let cancels_edit = match &message {
+            // Rejected/duplicate helper messages must not cancel another key's work.
+            EngineMessage::Rc003TapStart { .. }
+            | EngineMessage::Rc003TapState { .. }
+            | EngineMessage::Rc003TapLost { .. } => false,
             EngineMessage::GateEdge(edge) => edge.is_pressed,
             EngineMessage::Keyboard(_) | EngineMessage::HidUsages(_) => true,
             _ => true,
@@ -454,6 +578,66 @@ fn engine_worker(
             injector.cancel_text_edit();
         }
         match message {
+            EngineMessage::Rc003TapStart { generation } => {
+                if rc003_tap.start(generation) {
+                    cancel_rc003_tap(
+                        &mut merger,
+                        &mut recognizer,
+                        &snapshot,
+                        &edge_callbacks,
+                        &mut native_pending,
+                    );
+                }
+            }
+            EngineMessage::Rc003TapState {
+                generation,
+                sequence,
+                pressed_mask,
+            } => {
+                if !rc003_tap.accept(generation, sequence, pressed_mask) {
+                    continue;
+                }
+                let edges = merger.update_rc003_tap(pressed_mask);
+                if !edges.is_empty() {
+                    injector.cancel_text_edit();
+                    crate::ble::gatt_note(format!(
+                        "rc003_tap action=route phase=accepted generation={generation} sequence={sequence} semantic_edges={}",
+                        edges.len()
+                    ));
+                }
+                // Passive reports never imply that Windows delivered a native action,
+                // and never arm the device-agnostic low-level keyboard gate.
+                if handle_edges(
+                    edges,
+                    Instant::now(),
+                    &mut merger,
+                    &mut recognizer,
+                    &mappings,
+                    &state,
+                    &snapshot,
+                    &edge_callbacks,
+                    &gesture_callbacks,
+                    &injector,
+                    &usage,
+                    &mut native_pending,
+                ) {
+                    rc003_tap.invalidate("terminal_action");
+                }
+            }
+            EngineMessage::Rc003TapLost { generation } => {
+                if rc003_tap.active_generation == Some(generation) {
+                    rc003_tap.invalidate("source_lost");
+                    cancel_rc003_tap(
+                        &mut merger,
+                        &mut recognizer,
+                        &snapshot,
+                        &edge_callbacks,
+                        &mut native_pending,
+                    );
+                } else {
+                    rc003_tap.reject(generation, "stale_loss");
+                }
+            }
             EngineMessage::Keyboard(event) => {
                 let now = Instant::now();
                 let edges = merger.update_keyboard(event);
@@ -469,7 +653,7 @@ fn engine_worker(
                         }
                     }
                 }
-                handle_edges(
+                if handle_edges(
                     edges,
                     now,
                     &mut merger,
@@ -482,12 +666,14 @@ fn engine_worker(
                     &injector,
                     &usage,
                     &mut native_pending,
-                );
+                ) {
+                    rc003_tap.invalidate("terminal_action");
+                }
             }
             EngineMessage::HidUsages(usages) => {
                 let now = Instant::now();
                 let edges = merger.update_hid_usages(usages);
-                handle_edges(
+                if handle_edges(
                     edges,
                     now,
                     &mut merger,
@@ -500,7 +686,9 @@ fn engine_worker(
                     &injector,
                     &usage,
                     &mut native_pending,
-                );
+                ) {
+                    rc003_tap.invalidate("terminal_action");
+                }
             }
             EngineMessage::GateEdge(edge) => {
                 let now = Instant::now();
@@ -509,7 +697,7 @@ fn engine_worker(
                 if edge.is_pressed {
                     native_pending.remove(&edge.button);
                 }
-                handle_edges(
+                if handle_edges(
                     edges,
                     now,
                     &mut merger,
@@ -522,9 +710,12 @@ fn engine_worker(
                     &injector,
                     &usage,
                     &mut native_pending,
-                );
+                ) {
+                    rc003_tap.invalidate("terminal_action");
+                }
             }
             EngineMessage::ListenerStopped | EngineMessage::DeviceRemoved => {
+                rc003_tap.invalidate("listener_reset");
                 crate::ble::gatt_note(format!(
                     "map_reset source={}",
                     match message {
@@ -537,7 +728,7 @@ fn engine_worker(
                 let edges = merger.release_all();
                 native_pending.clear();
                 let now = Instant::now();
-                handle_edges(
+                if handle_edges(
                     edges,
                     now,
                     &mut merger,
@@ -550,7 +741,9 @@ fn engine_worker(
                     &injector,
                     &usage,
                     &mut native_pending,
-                );
+                ) {
+                    rc003_tap.invalidate("terminal_action");
+                }
             }
             EngineMessage::MappingsChanged => {
                 let mappings = read_lock(&mappings).clone();
@@ -573,7 +766,51 @@ fn engine_worker(
             EngineMessage::Shutdown => break,
         }
     }
+    rc003_tap.invalidate("shutdown");
+    reset_after_terminal_action(
+        "shutdown",
+        &mut merger,
+        &mut recognizer,
+        &snapshot,
+        &edge_callbacks,
+        &mut native_pending,
+    );
     injector.finish_text_edit();
+}
+
+fn cancel_rc003_tap(
+    merger: &mut ButtonStateMerger,
+    recognizer: &mut GestureRecognizer,
+    snapshot: &Arc<Mutex<RawInputSnapshot>>,
+    edge_callbacks: &Arc<RwLock<Vec<ButtonEdgeCallback>>>,
+    native_pending: &mut BTreeSet<RemoteButton>,
+) {
+    for button in RC003_TAP_BUTTONS {
+        recognizer.cancel_button(button);
+        native_pending.remove(&button);
+    }
+    let edges = merger.update_rc003_tap(0);
+    crate::ble::gatt_note(format!(
+        "rc003_tap action=cancel phase=completed synthetic_releases={} other_sources_preserved=true",
+        edges.len()
+    ));
+    // Synthetic release updates presentation only, never completes a click gesture.
+    {
+        let mut snapshot = lock_snapshot(snapshot);
+        snapshot.active_buttons = merger.active_button_set().into_iter().collect();
+        snapshot.semantic_edge_count = snapshot
+            .semantic_edge_count
+            .saturating_add(edges.len() as u64);
+        if let Some(last) = edges.last() {
+            snapshot.last_button = Some(last.button);
+            snapshot.last_is_pressed = Some(false);
+        }
+    }
+    for callback in read_callbacks(edge_callbacks).iter() {
+        for edge in &edges {
+            callback(*edge);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -590,9 +827,9 @@ fn handle_edges(
     injector: &Arc<dyn MappingInjector>,
     usage: &Arc<UsageCounters>,
     native_pending: &mut BTreeSet<RemoteButton>,
-) {
+) -> bool {
     if edges.is_empty() {
-        return;
+        return false;
     }
     crate::ble::gatt_note(format!(
         "map_edges count={} detail={} gate(sw={} lk={})",
@@ -658,10 +895,11 @@ fn handle_edges(
                     edge_callbacks,
                     native_pending,
                 );
-                return;
+                return true;
             }
         }
     }
+    false
 }
 
 /// 会切换 Windows 会话的动作可能让遥控器释放沿延迟到解锁之后。动作已被系统
@@ -1002,6 +1240,146 @@ mod tests {
     const KEYUP: u32 = 0x0101;
 
     #[test]
+    fn rc003_tap_generation_sequence_and_neutral_gate_fail_closed() {
+        let mut session = Rc003TapSession::default();
+        assert!(!session.accept(1, 0, 0));
+        assert!(session.start(1));
+        assert!(!session.accept(1, 1, 1));
+        assert!(!session.accept(1, 2, 8));
+        assert!(session.accept(1, 2, 0));
+        assert!(!session.accept(1, 2, 1));
+        assert!(session.accept(1, 3, 7));
+        assert!(!session.start(1));
+        session.invalidate("test_loss");
+        assert!(!session.accept(1, 4, 0));
+        assert!(!session.start(0));
+        assert!(session.start(2));
+        assert!(!session.accept(1, 5, 0));
+        assert!(!session.accept(2, 1, 1));
+        assert!(session.accept(2, 2, 0));
+        assert!(session.accept(2, 3, 1));
+        session.invalidate("terminal_action");
+        assert_eq!(session.epoch.load(Ordering::Acquire), 1);
+        assert!(!session.accept(2, 4, 0));
+    }
+
+    #[test]
+    fn rc003_tap_loss_restart_and_shutdown_pair_edges_without_touching_up() {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let injector = Arc::new(RecordingInjector::default());
+        let snapshot = Arc::new(StdMutex::new(RawInputSnapshot::default()));
+        let usage = Arc::new(UsageCounters::default());
+        let runtime = ButtonMappingRuntime::new(injector.clone(), usage.clone(), snapshot.clone());
+        // A synthetic UP must not trigger the pending release-time single action.
+        let mut mappings = mappings_with_single(RemoteButton::Back, KeyCode::Backspace);
+        mappings.actions.get_mut(&RemoteButton::Back).unwrap().long = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![KeyCode::Space],
+            },
+        };
+        runtime.set_mappings(mappings);
+        let edges = Arc::new(StdMutex::new(Vec::new()));
+        let edge_sink = edges.clone();
+        runtime.subscribe_button_edges(Arc::new(move |edge| edge_sink.lock().unwrap().push(edge)));
+        let fired = Arc::new(StdMutex::new(Vec::new()));
+        let fire_sink = fired.clone();
+        runtime.subscribe_button_gestures(Arc::new(move |gesture| {
+            fire_sink.lock().unwrap().push(gesture)
+        }));
+        let sender = runtime.sender();
+        let state = |generation, sequence, pressed_mask| EngineMessage::Rc003TapState {
+            generation,
+            sequence,
+            pressed_mask,
+        };
+        for message in [
+            EngineMessage::Keyboard(keyboard_event(0x26, KEYDOWN)),
+            EngineMessage::Rc003TapStart { generation: 1 },
+            state(1, 1, 1), // Starting while held is ignored.
+            state(1, 2, 0),
+            state(1, 3, 1),
+            state(1, 4, 1),
+            EngineMessage::Rc003TapLost { generation: 1 },
+            state(1, 5, 1),
+            state(1, 6, 0), // Late old edges cannot revive the key.
+            EngineMessage::Rc003TapStart { generation: 2 },
+            EngineMessage::Rc003TapLost { generation: 1 }, // Old loss cannot stop new session.
+            state(2, 1, 1),
+            state(2, 2, 0),
+            state(2, 3, 1),
+            state(1, 7, 0), // Old UP cannot release a new generation's hold.
+            EngineMessage::Shutdown,
+        ] {
+            sender.send(message).unwrap();
+        }
+        drop(runtime); // Join drains the exact FIFO up to Shutdown; no polling/sleeps.
+        let edge = |button, is_pressed| ButtonEdge { button, is_pressed };
+        assert_eq!(
+            *edges.lock().unwrap(),
+            vec![
+                edge(RemoteButton::Up, true),
+                edge(RemoteButton::Back, true),
+                edge(RemoteButton::Back, false),
+                edge(RemoteButton::Back, true),
+                edge(RemoteButton::Back, false),
+                edge(RemoteButton::Up, false),
+            ]
+        );
+        assert!(fired.lock().unwrap().is_empty());
+        assert!(injector.taps.lock().unwrap().is_empty());
+        assert!(snapshot.lock().unwrap().active_buttons.is_empty());
+        assert_eq!(usage.snapshot().button_presses, 3);
+    }
+
+    #[test]
+    fn rc003_tap_listener_reset_rejects_late_state_until_new_generation() {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        for reset in [EngineMessage::ListenerStopped, EngineMessage::DeviceRemoved] {
+            let snapshot = Arc::new(StdMutex::new(RawInputSnapshot::default()));
+            let usage = Arc::new(UsageCounters::default());
+            let injector = Arc::new(RecordingInjector::default());
+            let runtime =
+                ButtonMappingRuntime::new(injector.clone(), usage.clone(), snapshot.clone());
+            assert_eq!(runtime.rc003_tap_epoch(), 0);
+            let epoch = Arc::clone(&runtime.rc003_tap_epoch);
+            let sender = runtime.sender();
+            let state = |generation, sequence, pressed_mask| EngineMessage::Rc003TapState {
+                generation,
+                sequence,
+                pressed_mask,
+            };
+            for message in [
+                EngineMessage::Rc003TapStart { generation: 1 },
+                state(1, 1, 0),
+                state(1, 2, 6),
+                reset,
+                state(1, 3, 0),
+                state(1, 4, 6),
+                EngineMessage::Rc003TapStart { generation: 1 },
+                state(1, 5, 0),
+                EngineMessage::Rc003TapStart { generation: 2 },
+                state(2, 1, 0),
+                state(2, 2, 6),
+                state(2, 3, 0),
+            ] {
+                sender.send(message).unwrap();
+            }
+            drop(runtime);
+            assert_eq!(epoch.load(Ordering::Acquire), 1);
+            assert_eq!(usage.snapshot().button_presses, 4);
+            assert_eq!(snapshot.lock().unwrap().semantic_edge_count, 8);
+            assert!(
+                injector.taps.lock().unwrap().is_empty(),
+                "Unconfigured volume buttons must not gain actions"
+            );
+        }
+    }
+
+    #[test]
     fn filter_volume_alias_injects_identity_action_while_native_volume_is_not_doubled() {
         let _isolation = MAPPING_TEST_LOCK
             .lock()
@@ -1048,6 +1426,36 @@ mod tests {
                 assert!(taps.iter().all(|chord| chord.keys == vec![key]));
                 assert!(snapshot.lock().unwrap().active_buttons.is_empty());
             }
+            let pressed_mask = if button == RemoteButton::VolumeUp {
+                2
+            } else {
+                4
+            };
+            for message in [
+                EngineMessage::Rc003TapStart { generation: 1 },
+                EngineMessage::Rc003TapState {
+                    generation: 1,
+                    sequence: 1,
+                    pressed_mask: 0,
+                },
+                EngineMessage::Rc003TapState {
+                    generation: 1,
+                    sequence: 2,
+                    pressed_mask,
+                },
+                EngineMessage::Keyboard(keyboard_event(alias, KEYDOWN)),
+                EngineMessage::Rc003TapState {
+                    generation: 1,
+                    sequence: 3,
+                    pressed_mask: 0,
+                },
+                EngineMessage::Keyboard(keyboard_event(alias, KEYUP)),
+            ] {
+                sender.send(message).unwrap();
+            }
+            drop(runtime);
+            assert_eq!(injector.taps.lock().unwrap().len(), 3, "Passive helper needs exactly one mapped action, including a duplicate filter alias");
+            assert_eq!(snapshot.lock().unwrap().semantic_edge_count, 10);
         }
         drop(gate);
     }
@@ -1238,6 +1646,7 @@ mod tests {
         // 确保门控先成对消费 DOWN/UP；下一次完整按压仍可再次触发。
         ensure_gate(&mut gate);
         let before_lock = taps().len();
+        let epoch_before_lock = runtime.rc003_tap_epoch();
         for _ in 0..2 {
             let before_press = taps().len();
             sender
@@ -1273,6 +1682,7 @@ mod tests {
         );
         assert!(after_lock[before_lock].is_lock_workstation());
         assert!(after_lock[before_lock + 1].is_lock_workstation());
+        assert_eq!(runtime.rc003_tap_epoch(), epoch_before_lock + 2);
 
         drop(runtime);
         drop(gate);

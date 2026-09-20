@@ -3114,10 +3114,13 @@ dependencies = [
 name = "sayall-windows"
 version = "0.2.6"
 dependencies = [
+ "base64 0.22.1",
+ "dunce",
  "futures",
  "sayall-core",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
  "wasapi",
  "windows 0.62.2",

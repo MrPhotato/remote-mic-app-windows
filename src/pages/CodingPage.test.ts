@@ -39,6 +39,8 @@ describe("Coding page", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("小米蓝牙遥控器 2 Pro");
     expect(wrapper.text()).toContain("RC003");
+    expect(wrapper.find(".rc003-input-control").exists()).toBe(true);
+    expect(wrapper.get(".mapping-table").text()).not.toContain("原始行为");
     expect(wrapper.text()).toContain("已连接");
     expect(wrapper.text()).toContain("音频已配置");
     expect(wrapper.text()).toContain("识别文字是否进入 Codex 需要实际试用确认");
@@ -59,7 +61,8 @@ describe("Coding page", () => {
     expect(wrapper.text()).toContain("替换下列 12 个键");
     expect(wrapper.get(".mapping-table").text()).toContain("下一任务/标签页");
     expect(wrapper.get(".mapping-table").text()).toContain("上一任务/标签页");
-    expect(wrapper.get(".mapping-table").text()).toContain("系统音量＋（原始行为）");
+    expect(wrapper.get(".mapping-table").text()).toContain("未配置动作");
+    expect(wrapper.get(".mapping-table").text()).not.toContain("系统音量＋（原始行为）");
     expect(wrapper.text()).toContain("单按需等待约 0.3 秒");
     await wrapper.get('[data-testid="apply-profile"]').trigger("click");
     await flushPromises();

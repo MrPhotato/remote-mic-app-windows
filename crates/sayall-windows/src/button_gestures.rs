@@ -312,6 +312,13 @@ impl GestureRecognizer {
         }
     }
 
+    /// Cancel one source-scoped gesture, including a pending double-click, silently.
+    pub(crate) fn cancel_button(&mut self, button: RemoteButton) {
+        if let Some((_, state)) = self.buttons.get_mut(&button) {
+            *state = ButtonGestureState::default();
+        }
+    }
+
     #[allow(dead_code)]
     pub fn is_pressed(&self, button: RemoteButton) -> bool {
         self.buttons
@@ -354,6 +361,45 @@ pub fn keyboard_repeat_timing() -> (Duration, Duration) {
 mod tests {
     use super::*;
     use crate::send_input::{ButtonAction, ButtonActions, KeyChord, KeyCode};
+
+    #[test]
+    fn rc003_tap_cancel_clears_double_long_and_repeat_without_cancelling_up() {
+        for (double, long, held) in [
+            (Some(KeyCode::Space), None, false),
+            (None, Some(KeyCode::Space), true),
+            (None, None, true),
+        ] {
+            let mut mappings =
+                mappings_with(RemoteButton::Back, Some(KeyCode::Backspace), double, long);
+            mappings.actions.insert(
+                RemoteButton::Up,
+                ButtonActions {
+                    single: ButtonAction::Shortcut {
+                        chord: KeyChord {
+                            keys: vec![KeyCode::Up],
+                        },
+                    },
+                    ..ButtonActions::default()
+                },
+            );
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&mappings);
+            let now = Instant::now();
+            recognizer.press(RemoteButton::Up, now);
+            recognizer.press(RemoteButton::Back, now);
+            if !held {
+                recognizer.release(RemoteButton::Back, now);
+            }
+            recognizer.cancel_button(RemoteButton::Back);
+            assert!(recognizer.release(RemoteButton::Back, now).is_empty());
+            assert_eq!(
+                recognizer.advance(now + Duration::from_secs(1)),
+                vec![(RemoteButton::Up, ButtonTrigger::Single)]
+            );
+            assert!(recognizer.is_pressed(RemoteButton::Up));
+            assert!(!recognizer.is_pressed(RemoteButton::Back));
+        }
+    }
 
     fn mappings_with(
         button: RemoteButton,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import Rc003InputControl from "../components/Rc003InputControl.vue";
 import {
   actionSummary, audioPhaseLabel, buttonLabel, connectionPhaseLabel,
   getButtonMappings, isTauriRuntime, remoteModelLabel, saveButtonMappings,
@@ -42,8 +43,8 @@ const presetLabels: Partial<Record<RemoteButton, Partial<Record<ButtonTrigger, s
   back: { single: "退格 · Backspace", long: "按住连续退格" },
   up: { long: "按住连续向上" }, down: { long: "按住连续向下" },
   left: { long: "按住连续向左" }, right: { long: "按住连续向右" },
-  volume_up: { single: "系统音量＋（原始行为）", double: "保持原样", long: "保持原样" },
-  volume_down: { single: "系统音量−（原始行为）", double: "保持原样", long: "保持原样" },
+  volume_up: { single: "未配置动作", double: "未配置动作", long: "未配置动作" },
+  volume_down: { single: "未配置动作", double: "未配置动作", long: "未配置动作" },
 };
 
 function presetLabel(button: RemoteButton, gesture: ButtonTrigger): string {
@@ -150,6 +151,8 @@ onMounted(load);
       </article>
     </div>
 
+    <Rc003InputControl :remote-model="connection?.remoteModel ?? 'unknown'" :connected="connected" />
+
     <article class="card preset-card">
       <div class="card-title-row">
         <div><h2>日常 Coding 预设</h2><p class="muted">应用后启用映射，并替换下列 12 个键的配置。常用操作单按完成，主页、菜单和 TV 提供双按与长按。</p></div>
@@ -166,7 +169,7 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
-      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。方向键与退格按住连续操作。双击返回按标点删除可在「自定义按键」中另选；RC003 返回与音量仍需实测是否能接收按键。</p>
+      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。方向键与退格按住连续操作。双击返回按标点删除可在「自定义按键」中另选。RC003 可启用三键增强后检查返回与音量键；本预设未配置音量动作，增强音量键只显示高亮，如需调音量请另设音量快捷键。</p>
       <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter：在输入框中可能发送内容，在审批提示中可能批准操作。电源键在本方案中配置为 Esc，用于关闭弹层或取消当前操作。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>

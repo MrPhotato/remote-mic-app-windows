@@ -42,6 +42,7 @@ mod power;
 pub mod raw_input;
 #[cfg(windows)]
 mod raw_input_windows;
+pub mod rc003_input;
 #[cfg(any(windows, test))]
 mod reconnect;
 #[cfg(windows)]
@@ -245,6 +246,8 @@ pub struct WindowsPlatform {
     raw_input: Arc<raw_input_windows::RawInputRuntime>,
     #[cfg(windows)]
     send_input: Arc<send_input_windows::SendInputRuntime>,
+    #[cfg(windows)]
+    rc003_input: Arc<rc003_input::Rc003InputRuntime>,
 }
 
 impl fmt::Debug for WindowsPlatform {
@@ -305,6 +308,26 @@ impl Default for WindowsPlatform {
                 Arc::clone(&raw_input_snapshot),
                 button_mapping.sender(),
             ));
+            let rc003_input = Arc::new(rc003_input::Rc003InputRuntime::new(
+                button_mapping.sender(),
+                Arc::new({
+                    let runtime = Arc::clone(&runtime);
+                    let raw_snapshot = Arc::clone(&raw_input_snapshot);
+                    let mapping = Arc::clone(&button_mapping);
+                    move || {
+                        let connection = runtime.snapshot();
+                        let available = connection.remote_model == RemoteModel::Rc003
+                            && matches!(
+                                connection.phase,
+                                ConnectionPhase::Ready
+                                    | ConnectionPhase::Streaming
+                                    | ConnectionPhase::Draining
+                            )
+                            && lock(&raw_snapshot).phase == RawInputPhase::Ready;
+                        (available, connection.generation, mapping.rc003_tap_epoch())
+                    }
+                }),
+            ));
             // 遥控器 HID 活动通知接线（断连时遥控器醒来按键 → 立即重连）。
             let wake_runtime = Arc::clone(&runtime);
             key_suppressor::set_remote_hid_activity_notify(Box::new(move || {
@@ -321,6 +344,7 @@ impl Default for WindowsPlatform {
                 audio,
                 raw_input,
                 send_input,
+                rc003_input,
             }
         }
 
@@ -349,6 +373,43 @@ impl WindowsPlatform {
         Arc::clone(&self.usage)
     }
 
+    pub fn rc003_input_status(&self) -> rc003_input::Rc003InputStatus {
+        #[cfg(windows)]
+        {
+            self.rc003_input.snapshot()
+        }
+        #[cfg(not(windows))]
+        {
+            rc003_input::Rc003InputStatus::stopped()
+        }
+    }
+
+    pub fn start_rc003_input(
+        &self,
+        payload: std::path::PathBuf,
+    ) -> Result<rc003_input::Rc003InputStatus, String> {
+        #[cfg(windows)]
+        {
+            self.rc003_input.start(payload)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = payload;
+            Err("三键增强仅支持 Windows".into())
+        }
+    }
+
+    pub fn stop_rc003_input(&self) -> rc003_input::Rc003InputStatus {
+        #[cfg(windows)]
+        {
+            self.rc003_input.stop(std::time::Duration::from_secs(5))
+        }
+        #[cfg(not(windows))]
+        {
+            rc003_input::Rc003InputStatus::stopped()
+        }
+    }
+
     /// 退出前的优雅关闭（2026-09-16）：关闭 BLE 会话并**在有界时间内等待其完成**
     /// （`ble_session_cleanup` 落盘）后才返回。
     ///
@@ -357,7 +418,11 @@ impl WindowsPlatform {
     /// （见 `graceful_exit` 模块头部的证据）。
     #[cfg(windows)]
     pub fn shutdown_ble_for_exit(&self, timeout: std::time::Duration) -> Result<(), PlatformError> {
-        self.runtime.shutdown_blocking(timeout)
+        let started = std::time::Instant::now();
+        self.rc003_input
+            .stop(timeout.min(std::time::Duration::from_secs(2)));
+        self.runtime
+            .shutdown_blocking(timeout.saturating_sub(started.elapsed()))
     }
 
     #[cfg(not(windows))]
@@ -529,6 +594,7 @@ impl WindowsPlatform {
     pub fn connect_remote(&self, device_id: String) -> Result<ConnectionSnapshot, PlatformError> {
         #[cfg(windows)]
         {
+            self.rc003_input.select_remote(Some(device_id.clone()));
             self.runtime.connect(device_id)
         }
 
@@ -542,6 +608,7 @@ impl WindowsPlatform {
     pub fn disconnect_remote(&self) -> Result<ConnectionSnapshot, PlatformError> {
         #[cfg(windows)]
         {
+            self.rc003_input.select_remote(None);
             self.runtime.disconnect()
         }
 
@@ -554,6 +621,7 @@ impl WindowsPlatform {
     pub fn restore_remote(&self, device_id: String) -> Result<ConnectionSnapshot, PlatformError> {
         #[cfg(windows)]
         {
+            self.rc003_input.select_remote(Some(device_id.clone()));
             self.runtime.restore(device_id)
         }
 

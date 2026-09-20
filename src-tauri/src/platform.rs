@@ -8,6 +8,18 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 pub trait PlatformRuntime: Debug + Send + Sync {
+    fn rc003_input_status(&self) -> sayall_windows::rc003_input::Rc003InputStatus {
+        sayall_windows::rc003_input::Rc003InputStatus::stopped()
+    }
+    fn start_rc003_input(
+        &self,
+        _payload: std::path::PathBuf,
+    ) -> Result<sayall_windows::rc003_input::Rc003InputStatus, String> {
+        Err("当前运行模式不支持三键增强".into())
+    }
+    fn stop_rc003_input(&self) -> sayall_windows::rc003_input::Rc003InputStatus {
+        self.rc003_input_status()
+    }
     fn usage_counters(&self) -> Arc<UsageCounters>;
     fn snapshot(&self) -> PlatformSnapshot;
     fn scan_paired_remotes(&self) -> Result<Vec<PairedRemote>, PlatformError>;
@@ -68,6 +80,18 @@ pub trait PlatformRuntime: Debug + Send + Sync {
 }
 
 impl PlatformRuntime for WindowsPlatform {
+    fn rc003_input_status(&self) -> sayall_windows::rc003_input::Rc003InputStatus {
+        self.rc003_input_status()
+    }
+    fn start_rc003_input(
+        &self,
+        payload: std::path::PathBuf,
+    ) -> Result<sayall_windows::rc003_input::Rc003InputStatus, String> {
+        self.start_rc003_input(payload)
+    }
+    fn stop_rc003_input(&self) -> sayall_windows::rc003_input::Rc003InputStatus {
+        self.stop_rc003_input()
+    }
     fn usage_counters(&self) -> Arc<UsageCounters> {
         self.usage_counters()
     }

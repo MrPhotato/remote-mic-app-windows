@@ -8,12 +8,16 @@ repository.workspace = true
 [dependencies]
 sayall-core = { path = "../sayall-core" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+base64 = "0.22"
+dunce = "1.0.5"
+sha2 = "0.10"
 futures = "0.3"
 wasapi = "0.24"
 windows-version = "0.1.7"
@@ -42,6 +46,7 @@ windows = { version = "0.62", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_ProcessStatus",
     "Win32_System_Shutdown",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_WinRT",
     "Win32_UI_Accessibility",

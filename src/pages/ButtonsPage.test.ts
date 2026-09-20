@@ -613,6 +613,32 @@ describe("buttons mapping page", () => {
     }
   });
 
+  it.each(["missing", "disabled", "shortcut"] as const)("shows the configured volume summary for %s mappings", async (kind) => {
+    const mappings: ButtonMappings = { enabled: true, actions: {} };
+    for (const button of ["volume_up", "volume_down"] as const) {
+      if (kind !== "missing") {
+        mappings.actions[button] = {
+          single: kind === "shortcut" ? { type: "shortcut", chord: { keys: [button] } } : { type: "disabled" },
+          double: { type: "disabled" },
+          long: { type: "disabled" },
+        };
+      }
+    }
+    vi.mocked(getButtonMappings).mockResolvedValueOnce(mappings);
+    const wrapper = await mountPage();
+    await flushPromises();
+    for (const label of ["音量+", "音量−"]) {
+      const card = wrapper.findAll(".mapping-card").find((item) => item.find(".mapping-card-title strong").text() === label)!;
+      const cells = card.findAll(".mapping-cell");
+      expect(cells[0]!.get("span").text()).toBe(kind === "shortcut" ? label : "未设置");
+      expect(cells[1]!.get("span").text()).toBe("未设置");
+      expect(cells[2]!.get("span").text()).toBe("未设置");
+    }
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it("saves a Codex shortcut from the formerly disabled volume editor without triggering it", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "音量+", 1);
@@ -620,6 +646,24 @@ describe("buttons mapping page", () => {
     await preset.trigger("click");
     await flushPromises();
     expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "page_up"] } });
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("highlights enhanced back and volume edges without adding or executing mappings", async () => {
+    const wrapper = await mountPage();
+    await flushPromises();
+    for (const [button, label] of [["back", "返回"], ["volume_up", "音量+"], ["volume_down", "音量−"]] as const) {
+      const card = wrapper.findAll(".mapping-card").find((item) => item.find(".mapping-card-title strong").text() === label)!;
+      edgeHandler!({ button, isPressed: true });
+      await wrapper.vm.$nextTick();
+      expect(card.classes()).toContain("active");
+      edgeHandler!({ button, isPressed: false });
+      await wrapper.vm.$nextTick();
+      expect(card.classes()).not.toContain("active");
+    }
+    expect(wrapper.find(".rc003-input-control").exists()).toBe(true);
+    expect(saveButtonMappings).not.toHaveBeenCalled();
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });

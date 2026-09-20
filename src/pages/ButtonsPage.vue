@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { openUrl } from "@tauri-apps/plugin-opener";
 import RegisteredAppsDialog from "../components/RegisteredAppsDialog.vue";
 import BatteryIndicator from "../components/BatteryIndicator.vue";
+import Rc003InputControl from "../components/Rc003InputControl.vue";
 import { reportFrontendEvent } from "../lib/frontend-diagnostics";
 import {
   CODEX_SHORTCUT_GROUPS,
@@ -113,7 +114,7 @@ const remoteModel = computed<RemoteModel>(
   () => props.runtime?.platform.connection.remoteModel ?? "unknown",
 );
 
-/** RC003 reports for these keys still require physical-device validation. */
+/** RC003 needs the explicit enhancement source to receive these three keys. */
 function needsHardwareCheck(button: RemoteButton): boolean {
   return remoteModel.value !== "rc001" && ["back", "volume_up", "volume_down"].includes(button);
 }
@@ -286,9 +287,6 @@ function cellDisabled(button: RemoteButton, trigger: ButtonTrigger): boolean {
 }
 
 function cellSummary(button: RemoteButton, trigger: ButtonTrigger): string {
-  if (trigger === "single" && actionOf(button, trigger).type === "disabled" && (button === "volume_up" || button === "volume_down")) {
-    return button === "volume_up" ? "系统音量＋" : "系统音量－";
-  }
   return inheritsBackspaceHold(button, trigger) ? "持续退格" : actionSummary(actionOf(button, trigger));
 }
 
@@ -960,7 +958,7 @@ onUnmounted(() => {
       <div>
         <div class="mapping-title-row">
           <h1>按键映射</h1>
-          <label class="toggle-row" title="开启后，遥控器按键按本页配置执行动作；关闭时，遥控器保持原始按键行为。">
+          <label class="toggle-row" title="开启后，遥控器按键按本页配置执行动作；关闭时不执行自定义动作，增强按键仍可高亮。">
             <span>启用自定义按键功能</span>
             <input v-model="enabled" type="checkbox" class="toggle-input" :disabled="busy" />
           </label>
@@ -1050,7 +1048,7 @@ onUnmounted(() => {
             />
           </svg>
           <strong>{{ buttonLabels[placement.button] }}</strong>
-          <small v-if="needsHardwareCheck(placement.button)" class="back-hardware-badge" title="可以配置；RC003 是否向 Windows 上报此按键，需实测。">RC003 需实测</small>
+          <small v-if="needsHardwareCheck(placement.button)" class="back-hardware-badge" title="RC003 可启用三键增强接收此按键，再检查高亮与动作。">RC003 三键增强</small>
         </div>
         <div class="mapping-cells">
           <button
@@ -1103,7 +1101,7 @@ onUnmounted(() => {
       </article>
     </div>
 
-    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">返回和音量键均可配置。RC003 是否向 Windows 上报这些按键需实测；收到按键信号后，程序才会执行对应动作。</p>
+    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">返回和音量键均可配置。RC003 可在下方启用三键增强；收到按键信号后，程序才会执行对应动作。未配置动作时只显示高亮。</p>
 
     <article v-if="editingTarget" ref="editorPanel" class="card mapping-editor">
       <div class="card-title-row">
@@ -1117,7 +1115,7 @@ onUnmounted(() => {
             :class="{ 'is-active': actionOf(editingTarget.button, editingTarget.trigger).type === 'disabled' }"
             type="button"
             :disabled="busy"
-            title="只禁用当前格子的映射，此按键恢复原始行为"
+            title="不执行当前格子的自定义动作；增强按键仍可高亮"
             @click="applyAction({ type: 'disabled' })"
           >
             禁用按键
@@ -1332,7 +1330,7 @@ onUnmounted(() => {
         >
           {{ rawInput?.phase === "ready" ? "停止监听" : "启动监听" }}
         </button>
-        <small v-if="mappingSnapshot && !mappings.enabled" class="muted"> · 总开关关闭（按键保持原样）</small>
+        <small v-if="mappingSnapshot && !mappings.enabled" class="muted"> · 总开关关闭（不执行自定义动作）</small>
       </div>
       <label class="toggle-row" title="开启后，操作实体遥控器不会切换正在编辑的按键。">
         <span>锁定当前按键</span>
@@ -1354,6 +1352,8 @@ onUnmounted(() => {
         </button>
       </div>
     </footer>
+
+    <Rc003InputControl :remote-model="remoteModel" :connected="['ready', 'streaming', 'draining'].includes(connectionInfo?.phase ?? '')" />
 
     <p v-if="statusMessage" class="operation-message mapping-status">{{ statusMessage }}</p>
     <p v-if="mappingSnapshot?.lastError" class="error-text">{{ mappingSnapshot.lastError }}</p>
