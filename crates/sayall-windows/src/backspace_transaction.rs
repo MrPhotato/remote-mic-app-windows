@@ -18,9 +18,9 @@ use windows::Win32::System::Variant::{VariantClear, VT_BOOL};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
     IUIAutomationTextEditPattern, IUIAutomationTextPattern, IUIAutomationTextRange,
-    SupportedTextSelection_Single, TextPatternRangeEndpoint_End as END,
+    IUIAutomationValuePattern, SupportedTextSelection_Single, TextPatternRangeEndpoint_End as END,
     TextPatternRangeEndpoint_Start as START, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-    UIA_IsReadOnlyAttributeId, UIA_TextEditPatternId, UIA_TextPatternId,
+    UIA_IsReadOnlyAttributeId, UIA_TextEditPatternId, UIA_TextPatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
@@ -445,6 +445,16 @@ impl Snapshot {
     }
 }
 
+fn empty_edit_placeholder(
+    is_edit: bool,
+    writable: bool,
+    value: &[u16],
+    document: &[u16],
+    single_empty_caret_at_start: bool,
+) -> bool {
+    is_edit && writable && value.is_empty() && document == [0xfffc] && single_empty_caret_at_start
+}
+
 fn first_change(before: &Snapshot, after: &Snapshot) -> EditResult<()> {
     if before.suffix != after.suffix
         || before.prefix.len() <= after.prefix.len()
@@ -583,6 +593,15 @@ impl Editor {
     }
 
     unsafe fn snapshot(&self, transaction: &Transaction, started: Instant) -> EditResult<Snapshot> {
+        self.snapshot_for_expected_result(transaction, started, false)
+    }
+
+    unsafe fn snapshot_for_expected_result(
+        &self,
+        transaction: &Transaction,
+        started: Instant,
+        expected_empty: bool,
+    ) -> EditResult<Snapshot> {
         self.focus(transaction, started)?;
         self.no_composition()?;
         let selected = self
@@ -621,6 +640,16 @@ impl Editor {
         {
             return Err("caret_outside_document");
         }
+        // Observed in our own empty WebView <input>: TextPattern exposes one
+        // object-replacement placeholder while writable ValuePattern is empty.
+        // Interpret this only when verifying an explicitly empty result, never
+        // when preparing a transaction or reading a general embedded object.
+        if expected_empty {
+            let candidate = document.GetText(2).map_err(|_| "text_unavailable")?;
+            if &*candidate == [0xfffc] {
+                return self.confirm_empty_placeholder(transaction, started);
+            }
+        }
         let full = read_text(&document)?;
         let prefix = document.Clone().map_err(|_| "range_unknown")?;
         prefix
@@ -654,6 +683,73 @@ impl Editor {
         self.no_composition()?;
         self.focus(transaction, started)?;
         Ok(value)
+    }
+
+    unsafe fn confirm_empty_placeholder(
+        &self,
+        transaction: &Transaction,
+        started: Instant,
+    ) -> EditResult<Snapshot> {
+        for _ in 0..2 {
+            self.focus(transaction, started)?;
+            self.no_composition()?;
+            let is_edit = self
+                .element
+                .CurrentControlType()
+                .map_err(|_| "control_type_unknown")?
+                == UIA_EditControlTypeId;
+            let value: IUIAutomationValuePattern = self
+                .element
+                .GetCurrentPatternAs(UIA_ValuePatternId)
+                .map_err(|_| "empty_value_unconfirmed")?;
+            let writable = !value
+                .CurrentIsReadOnly()
+                .map_err(|_| "writable_unknown")?
+                .as_bool();
+            let value = value
+                .CurrentValue()
+                .map_err(|_| "empty_value_unconfirmed")?;
+            let document = self.pattern.DocumentRange().map_err(|_| "range_unknown")?;
+            let document_text = document.GetText(2).map_err(|_| "text_unavailable")?;
+            let selections = self
+                .pattern
+                .GetSelection()
+                .map_err(|_| "selection_unknown")?;
+            if selections.Length().map_err(|_| "selection_unknown")? != 1 {
+                return Err("selection_not_single");
+            }
+            let caret = selections.GetElement(0).map_err(|_| "selection_unknown")?;
+            let caret_empty_at_start = caret
+                .CompareEndpoints(START, &caret, END)
+                .map_err(|_| "range_unknown")?
+                == 0
+                && caret
+                    .CompareEndpoints(START, &document, START)
+                    .map_err(|_| "range_unknown")?
+                    == 0
+                && caret.GetText(1).map_err(|_| "text_unavailable")?.is_empty();
+            if !empty_edit_placeholder(
+                is_edit,
+                writable,
+                &value,
+                &document_text,
+                caret_empty_at_start,
+            ) {
+                return Err("empty_placeholder_unconfirmed");
+            }
+            self.no_composition()?;
+            self.focus(transaction, started)?;
+        }
+        note(
+            "empty_result_verify",
+            "passed",
+            "writable_empty_value_placeholder_confirmed",
+            started,
+        );
+        Ok(Snapshot {
+            prefix: String::new(),
+            suffix: String::new(),
+        })
     }
 }
 
@@ -799,7 +895,11 @@ unsafe fn finish(
         }
     }
     loop {
-        let observed = editor.snapshot(transaction, started)?;
+        let observed = editor.snapshot_for_expected_result(
+            transaction,
+            started,
+            target.prefix.is_empty() && target.suffix.is_empty(),
+        )?;
         if observed == target {
             return Ok(());
         }
@@ -1346,5 +1446,39 @@ mod tests {
         assert!(warning.contains("当前选区"));
         assert_ne!(warning, message("text_or_caret_changed"));
         assert!(!message("foreground_unavailable").contains("已保留普通退格"));
+    }
+
+    #[test]
+    fn empty_placeholder_requires_positive_empty_edit_evidence() {
+        assert!(empty_edit_placeholder(true, true, &[], &[0xfffc], true));
+        assert!(!empty_edit_placeholder(false, true, &[], &[0xfffc], true));
+        assert!(!empty_edit_placeholder(true, false, &[], &[0xfffc], true));
+        assert!(!empty_edit_placeholder(true, true, &[], &[0xfffc], false));
+        assert!(!empty_edit_placeholder(
+            true,
+            true,
+            &[b'x' as u16],
+            &[0xfffc],
+            true
+        ));
+        assert!(!empty_edit_placeholder(
+            true,
+            true,
+            &[0xfffc],
+            &[0xfffc],
+            true
+        ));
+    }
+
+    #[test]
+    fn general_embedded_objects_or_changed_document_are_not_empty() {
+        for document in [
+            &[][..],
+            &[0xfffc, 0xfffc][..],
+            &[0xfffc, b'x' as u16][..],
+            &[b'x' as u16, 0xfffc][..],
+        ] {
+            assert!(!empty_edit_placeholder(true, true, &[], document, true));
+        }
     }
 }
