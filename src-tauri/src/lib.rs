@@ -301,10 +301,9 @@ async fn save_button_mappings(
     let platform = Arc::clone(&state.platform);
     let result =
         match tauri::async_runtime::spawn_blocking(move || -> Result<ButtonMappings, String> {
-            let saved = settings.save_button_mappings(mappings)?;
-            // 持久化成功后热加载到引擎与门控（保存即生效）。
-            platform.set_button_mappings(saved.clone());
-            Ok(saved)
+            settings.save_button_mappings_and_apply(mappings, |saved| {
+                platform.set_button_mappings(saved.clone());
+            })
         })
         .await
         {
@@ -337,9 +336,9 @@ async fn reset_button_mappings(
     let platform = Arc::clone(&state.platform);
     let result =
         match tauri::async_runtime::spawn_blocking(move || -> Result<ButtonMappings, String> {
-            let saved = settings.save_button_mappings(ButtonMappings::default())?;
-            platform.set_button_mappings(saved.clone());
-            Ok(saved)
+            settings.save_button_mappings_and_apply(ButtonMappings::default(), |saved| {
+                platform.set_button_mappings(saved.clone());
+            })
         })
         .await
         {
@@ -414,9 +413,9 @@ async fn import_button_mapping_configuration(
             let Some(path) = sayall_windows::file_dialog::pick_button_mapping_import_path()? else {
                 return Ok(None);
             };
-            let imported = settings.import_button_mappings(&path)?;
-            // 文件完整校验并持久化成功后才热加载，失败时运行态保持原值。
-            platform.set_button_mappings(imported.clone());
+            let imported = settings.import_button_mappings_and_apply(&path, |saved| {
+                platform.set_button_mappings(saved.clone());
+            })?;
             Ok(Some(imported))
         },
     )

@@ -121,6 +121,18 @@ impl SettingsStore {
     }
 
     pub fn save_button_mappings(&self, mappings: ButtonMappings) -> Result<ButtonMappings, String> {
+        self.save_button_mappings_and_apply(mappings, |_| {})
+    }
+
+    /// Serialize persistence and synchronous runtime replacement as one operation.
+    /// `apply` is infallible and must not re-enter this SettingsStore: the shared
+    /// settings lock remains held until it returns. Validation or I/O failure
+    /// returns before runtime replacement. Reset uses this same method with defaults.
+    pub fn save_button_mappings_and_apply(
+        &self,
+        mappings: ButtonMappings,
+        apply: impl FnOnce(&ButtonMappings),
+    ) -> Result<ButtonMappings, String> {
         let _guard = lock(&self.access);
         let mappings = mappings
             .normalized()
@@ -132,6 +144,7 @@ impl SettingsStore {
         let contents = serde_json::to_vec_pretty(&mappings)
             .map_err(|error| format!("序列化按键映射失败：{error}"))?;
         fs::write(path, contents).map_err(|error| format!("保存按键映射失败：{error}"))?;
+        apply(&mappings);
         Ok(mappings)
     }
 
@@ -156,6 +169,14 @@ impl SettingsStore {
     }
 
     pub fn import_button_mappings(&self, path: &Path) -> Result<ButtonMappings, String> {
+        self.import_button_mappings_and_apply(path, |_| {})
+    }
+
+    pub fn import_button_mappings_and_apply(
+        &self,
+        path: &Path,
+        apply: impl FnOnce(&ButtonMappings),
+    ) -> Result<ButtonMappings, String> {
         let metadata =
             fs::metadata(path).map_err(|error| format!("读取按键映射配置失败：{error}"))?;
         if metadata.len() > MAX_BUTTON_MAPPING_IMPORT_BYTES {
@@ -171,7 +192,7 @@ impl SettingsStore {
             ));
         }
         // 完整解析并规范化通过后才触碰应用配置，实现失败不改变现状。
-        self.save_button_mappings(configuration.button_mappings)
+        self.save_button_mappings_and_apply(configuration.button_mappings, apply)
     }
 
     pub fn load_voice_hold_hotkey(&self) -> Result<Option<KeyChord>, String> {
@@ -263,6 +284,178 @@ fn serialize_settings(settings: &AppSettings) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mapping_transaction_store() -> SettingsStore {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target/local-launch/settings-mapping-tests")
+            .join(format!("{}-{unique}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        SettingsStore::new(directory.join("settings.json"))
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum MappingWrite {
+        Save,
+        Import,
+        Reset,
+    }
+
+    fn transaction_mappings(operation: MappingWrite) -> ButtonMappings {
+        let mut mappings = ButtonMappings::default();
+        match operation {
+            MappingWrite::Save => mappings.enabled = false,
+            MappingWrite::Import => {
+                mappings.actions.insert(
+                    sayall_windows::raw_input::RemoteButton::Back,
+                    sayall_windows::send_input::ButtonActions::default(),
+                );
+            }
+            MappingWrite::Reset => {}
+        }
+        mappings
+    }
+
+    fn mapping_transaction(
+        store: &SettingsStore,
+        operation: MappingWrite,
+        apply: impl FnOnce(&ButtonMappings),
+    ) -> Result<ButtonMappings, String> {
+        match operation {
+            MappingWrite::Import => store
+                .import_button_mappings_and_apply(&store.path.with_file_name("import.json"), apply),
+            MappingWrite::Save | MappingWrite::Reset => {
+                store.save_button_mappings_and_apply(transaction_mappings(operation), apply)
+            }
+        }
+    }
+
+    #[test]
+    fn mapping_transactions_serialize_save_import_and_reset_through_runtime_apply() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        for first in [
+            MappingWrite::Save,
+            MappingWrite::Import,
+            MappingWrite::Reset,
+        ] {
+            for second in [
+                MappingWrite::Save,
+                MappingWrite::Import,
+                MappingWrite::Reset,
+            ] {
+                let store = mapping_transaction_store();
+                store
+                    .export_button_mappings(
+                        &store.path.with_file_name("import.json"),
+                        transaction_mappings(MappingWrite::Import),
+                    )
+                    .unwrap();
+                let applied = Arc::new(Mutex::new(Vec::new()));
+                let (entered_tx, entered_rx) = mpsc::channel();
+                let (release_tx, release_rx) = mpsc::channel();
+                let first_store = store.clone();
+                let first_applied = Arc::clone(&applied);
+                let first_thread = std::thread::spawn(move || {
+                    mapping_transaction(&first_store, first, |saved| {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        lock(&first_applied).push(saved.clone());
+                    })
+                });
+                entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                // Deterministic regression check: the first write is complete,
+                // but its runtime apply has not happened. The lock must span both.
+                let locked_during_apply = store.access.try_lock().is_err();
+                let (attempt_tx, attempt_rx) = mpsc::channel();
+                let (finished_tx, finished_rx) = mpsc::channel();
+                let second_store = store.clone();
+                let second_applied = Arc::clone(&applied);
+                let second_thread = std::thread::spawn(move || {
+                    attempt_tx.send(()).unwrap();
+                    let result = mapping_transaction(&second_store, second, |saved| {
+                        lock(&second_applied).push(saved.clone());
+                    });
+                    finished_tx.send(()).unwrap();
+                    result
+                });
+                attempt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                let second_waited = finished_rx.recv_timeout(Duration::from_millis(30)).is_err();
+                // Read directly: a SettingsStore read intentionally takes the same lock.
+                let disk_while_first_waits: ButtonMappings =
+                    serde_json::from_slice(&fs::read(store.button_mappings_path()).unwrap())
+                        .unwrap();
+                release_tx.send(()).unwrap();
+                let first_result = first_thread.join().unwrap().unwrap();
+                let second_result = second_thread.join().unwrap().unwrap();
+                assert!(
+                    locked_during_apply,
+                    "{first:?} released the transaction early"
+                );
+                assert!(second_waited, "{second:?} overtook {first:?}");
+                assert_eq!(disk_while_first_waits, transaction_mappings(first));
+                assert_eq!(*lock(&applied), vec![first_result, second_result.clone()]);
+                assert_eq!(store.load_button_mappings().unwrap(), second_result);
+            }
+        }
+    }
+
+    #[test]
+    fn mapping_transaction_validation_and_import_failures_do_not_apply_or_change_disk() {
+        use sayall_windows::raw_input::RemoteButton;
+        use sayall_windows::send_input::ButtonAction;
+
+        let store = mapping_transaction_store();
+        let initial = store
+            .save_button_mappings(ButtonMappings::default())
+            .unwrap();
+        let mut invalid = initial.clone();
+        invalid.actions.get_mut(&RemoteButton::Back).unwrap().single = ButtonAction::Shortcut {
+            chord: KeyChord { keys: vec![] },
+        };
+        let error = store
+            .save_button_mappings_and_apply(invalid, |_| panic!("invalid mappings applied"))
+            .unwrap_err();
+        assert!(error.starts_with("按键映射无效："));
+        let import = store.path.with_file_name("invalid-import.json");
+        fs::write(&import, b"not json").unwrap();
+        assert!(store
+            .import_button_mappings_and_apply(&import, |_| panic!("invalid import applied"))
+            .unwrap_err()
+            .starts_with("解析按键映射配置失败："));
+        fs::write(
+            &import,
+            br#"{"formatVersion":99,"buttonMappings":{"enabled":false,"actions":{}}}"#,
+        )
+        .unwrap();
+        assert!(store
+            .import_button_mappings_and_apply(&import, |_| panic!("unknown version applied"))
+            .unwrap_err()
+            .starts_with("不支持的按键映射配置版本："));
+        assert_eq!(store.load_button_mappings().unwrap(), initial);
+        let mut applied = false;
+        store
+            .save_button_mappings_and_apply(initial, |_| applied = true)
+            .unwrap();
+        assert!(applied, "failed transactions must release the lock");
+    }
+
+    #[test]
+    fn mapping_transaction_write_failure_does_not_apply() {
+        let store = mapping_transaction_store();
+        fs::create_dir(store.button_mappings_path()).unwrap();
+        let error = store
+            .save_button_mappings_and_apply(ButtonMappings::default(), |_| {
+                panic!("failed persistence applied")
+            })
+            .unwrap_err();
+        assert!(error.starts_with("保存按键映射失败："));
+        assert!(store.access.try_lock().is_ok());
+    }
 
     #[test]
     fn settings_round_trip_preserves_stable_endpoint_identity() {
