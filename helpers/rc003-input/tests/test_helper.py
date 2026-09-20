@@ -6,12 +6,12 @@ import threading
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from controller import InputState
 from bundle_manifest import without_system_ucrt, validate_runtime_files
-from helper import Runtime, receive, arguments
+from helper import Runtime, receive, arguments, main
 from capture import FridaCapture, CaptureError, FRIDA_VERSION
 import guard
 from protocol import LineDecoder, Lease, Mailbox, ProtocolError, decode_line, encode, token_value
@@ -175,6 +175,46 @@ class RuntimeTests(unittest.TestCase):
             return capture
         self.runtime = Runtime(self.box, self.events.append, factory, lambda: self.now[0])
 
+    def test_final_cleanup_records_each_failure_and_combines_bits(self):
+        cases = [([], 0), (['script_stop_failed'], 1), (['script_unload_failed'], 2),
+                 (['session_detach_failed'], 4), (['target_close_failed'], 8),
+                 (['cleanup_failed'], 16),
+                 (['script_stop_failed', 'script_unload_failed', 'session_detach_failed',
+                   'target_close_failed', 'cleanup_failed'], 31)]
+        for errors, mask in cases:
+            with self.subTest(mask=mask):
+                box = Mailbox()
+                runtime = Runtime(box, lambda event: None)
+                capture = FakeCapture('test')
+                capture.close = Mock(return_value=errors)
+                runtime.capture = capture
+                box.stop('parent_stop')
+                runtime.run()
+                self.assertEqual(runtime.final_cleanup_mask, mask)
+                capture.close.assert_called_once()
+
+    def test_stop_during_step_cleanup_keeps_final_result(self):
+        self.box.update(Lease(1, True, 'test'))
+        self.runtime.step()
+        def close():
+            self.box.stop('parent_stop')
+            return ['script_unload_failed']
+        self.captures[0].close = close
+        self.runtime.cleanup('selection_changed')
+        self.runtime.run()
+        self.assertEqual(self.runtime.final_cleanup_mask, 2)
+
+    def test_earlier_retry_cleanup_error_does_not_pollute_clean_exit(self):
+        self.box.update(Lease(1, True, 'test'))
+        self.runtime.step()
+        self.captures[0].close = Mock(return_value=['session_detach_failed'])
+        self.runtime.cleanup('capture_failed')
+        self.assertEqual(self.events[-1]['code'], 'session_detach_failed')
+        self.runtime.step()
+        self.box.stop('parent_stop')
+        self.runtime.run()
+        self.assertEqual(self.runtime.final_cleanup_mask, 0)
+
     def test_capture_diagnostics_keep_generation_without_arming(self):
         self.box.update(Lease(4, True, 'test'))
         self.runtime.step()
@@ -323,6 +363,22 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.captures[1].starts, 1)
         self.assertEqual(self.captures[1].aborts, 0)
         self.runtime.cleanup('test_done')
+
+
+class MainExitTests(unittest.TestCase):
+    def test_main_reports_cleanup_mask_and_never_success_on_run_exception(self):
+        for mask, failure, expected in ((0, None, 0), (1, None, 65), (31, None, 95),
+                                         (0, RuntimeError('private error'), 1),
+                                         (31, RuntimeError('private error'), 1)):
+            with self.subTest(mask=mask, fatal=failure is not None):
+                runtime = Mock(final_cleanup_mask=mask)
+                runtime.run.side_effect = failure
+                with patch('helper.guard.ParentGuard'), patch('helper.guard.verify_listener'), \
+                     patch('helper.guard.enable_debug_privilege'), \
+                     patch('helper.socket.create_connection'), patch('helper.threading.Thread'), \
+                     patch('helper.Runtime', return_value=runtime):
+                    result = main(['--port', '1234', '--token', 'a'*64, '--parent-pid', '1'])
+                self.assertEqual(result, expected)
 
 
 if __name__ == '__main__':

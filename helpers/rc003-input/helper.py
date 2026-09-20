@@ -15,6 +15,9 @@ from controller import InputState
 import guard
 from protocol import LineDecoder, Mailbox, ProtocolError, encode, token_value
 
+CLEANUP_ERROR_BITS = {"script_stop_failed": 1, "script_unload_failed": 2,
+                      "session_detach_failed": 4, "target_close_failed": 8}
+
 
 def safe_code(error):
     code = getattr(error, "code", None)
@@ -35,6 +38,7 @@ class Runtime:
         self.selection = None
         self.next_attempt = 0.0
         self.next_renew = 0.0
+        self.final_cleanup_mask = 0
 
     def abort(self):
         with self.capture_lock:
@@ -53,12 +57,18 @@ class Runtime:
         if previous_capture is not None:
             previous_capture.abort()
 
-    def cleanup(self, reason):
+    def cleanup(self, reason, final=False):
         self.state.stop(reason)
         with self.capture_lock:
             capture, self.capture = self.capture, None
         if capture is not None:
-            for code in capture.close():
+            errors = capture.close()
+            # A stop may arrive while step() is cleaning up. Keep that final
+            # result when run() subsequently finds no capture left to close.
+            if final or self.mailbox.stopped.is_set():
+                for code in errors:
+                    self.final_cleanup_mask |= CLEANUP_ERROR_BITS.get(code, 16)
+            for code in errors:
                 self.emit({"type": "diagnostic", "generation": self.state.generation or 0, "code": code})
 
     def drain_events(self, allow_input=True):
@@ -130,7 +140,7 @@ class Runtime:
             while not self.mailbox.stopped.wait(0.05):
                 self.step()
         finally:
-            self.cleanup(self.mailbox.reason)
+            self.cleanup(self.mailbox.reason, final=True)
 
 
 def receive(sock, mailbox, emit, parent, runtime):
@@ -204,7 +214,7 @@ def main(argv=None):
         reader = threading.Thread(target=receive, args=(sock, mailbox, emit, parent, runtime), daemon=True)
         reader.start()
         runtime.run()
-        return 0
+        return 64 | runtime.final_cleanup_mask if runtime.final_cleanup_mask else 0
     except (Exception, SystemExit) as error:
         # Deliberately no exception body, device identity, token, or file log.
         if sock is not None and not mailbox.stopped.is_set():

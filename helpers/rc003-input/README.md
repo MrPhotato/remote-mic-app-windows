@@ -69,6 +69,14 @@ The helper never restarts or terminates WUDFHost. Cleanup status precedes state
 release: the parent must cancel pending gestures and clear only this input source
 on waiting/failure/EOF/deadline, even if the helper cannot send a final message.
 
+The parent also records the helper's process exit code after IPC has closed.
+Exit **0** means the final capture cleanup reported no errors; **1** is a fatal
+helper error. Final cleanup failures use **64 OR a bitmask**: 1 = script stop,
+2 = script unload, 4 = session detach, 8 = target handle close, and 16 = other
+cleanup failure. Multiple bits may be set (exit codes 65–95). Earlier retry
+failures remain live diagnostics and do not affect a later clean final shutdown.
+A zero exit code does not by itself prove physical input or product acceptance.
+
 ## Source and license
 
 GPL-3.0-only; substantial source binding and target-association adaptations from

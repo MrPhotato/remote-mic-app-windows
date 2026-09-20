@@ -411,7 +411,40 @@ impl Rc003InputRuntime {
         gatt_note(format!(
             "rc003_input cleanup phase=completed helper_exited={cleanup} generation={generation}"
         ));
+        if cleanup {
+            let exit_code = bootstrap.log_exit("cleanup_exited");
+            let (terminal_result, reason, mask) = cleanup_exit_result(exit_code);
+            gatt_note(format!(
+                "rc003_input cleanup_result phase=completed terminal_result={terminal_result} reason={reason} error_mask={mask} generation={generation}"
+            ));
+            for (bit, reason) in [
+                (1, "script_stop_failed"),
+                (2, "script_unload_failed"),
+                (4, "session_detach_failed"),
+                (8, "target_close_failed"),
+                (16, "cleanup_other_failed"),
+            ] {
+                if mask & bit != 0 {
+                    gatt_note(format!(
+                        "rc003_input cleanup_step phase=completed terminal_result=failed reason={reason} generation={generation}"
+                    ));
+                }
+            }
+        } else {
+            gatt_note(format!(
+                "rc003_input cleanup_result phase=completed terminal_result=unknown reason=helper_exit_timeout error_mask=0 generation={generation}"
+            ));
+        }
         result
+    }
+}
+
+fn cleanup_exit_result(code: Option<u32>) -> (&'static str, &'static str, u32) {
+    match code {
+        Some(0) => ("passed", "helper_cleanup_completed", 0),
+        Some(code @ 65..=95) => ("failed", "helper_cleanup_failed", code & 31),
+        Some(_) => ("failed", "helper_exit_failed", 0),
+        None => ("unknown", "exit_status_unavailable", 0),
     }
 }
 
@@ -474,16 +507,18 @@ impl Bootstrap {
     fn wait(&self, timeout: Duration) -> bool {
         unsafe { WaitForSingleObject(self.0, timeout.as_millis() as u32) == WAIT_OBJECT_0 }
     }
-    fn log_exit(&self, phase: &str) {
+    fn log_exit(&self, phase: &str) -> Option<u32> {
         let mut code = 0_u32;
         if unsafe { GetExitCodeProcess(self.0, &mut code) }.is_ok() {
             gatt_note(format!(
                 "rc003_input helper_process phase={phase} exit_code={code}"
             ));
+            Some(code)
         } else {
             gatt_note(format!(
                 "rc003_input helper_process phase={phase} exit_code=unknown"
             ));
+            None
         }
     }
 }
@@ -569,6 +604,32 @@ fn launch_staged_helper(payload: &Path, port: u16, token: &str) -> Result<Bootst
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_exit_status_does_not_mistake_failure_or_missing_status_for_success() {
+        assert_eq!(
+            cleanup_exit_result(Some(0)),
+            ("passed", "helper_cleanup_completed", 0)
+        );
+        assert_eq!(
+            cleanup_exit_result(Some(66)),
+            ("failed", "helper_cleanup_failed", 2)
+        );
+        assert_eq!(
+            cleanup_exit_result(Some(79)),
+            ("failed", "helper_cleanup_failed", 15)
+        );
+        for code in [1, 21, 64, 96, 259] {
+            assert_eq!(
+                cleanup_exit_result(Some(code)),
+                ("failed", "helper_exit_failed", 0)
+            );
+        }
+        assert_eq!(
+            cleanup_exit_result(None),
+            ("unknown", "exit_status_unavailable", 0)
+        );
+    }
 
     #[test]
     fn powershell_source_uses_compatible_paths_and_quotes_literals() {
