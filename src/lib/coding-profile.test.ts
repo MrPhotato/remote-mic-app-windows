@@ -36,7 +36,7 @@ function port(current = existing()): CodingProfilePort {
 describe("Codex coding profile", () => {
   beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
-  it("keeps primary keys immediate, sends undo on double Back, and uses volume keys for navigation", () => {
+  it("keeps primary keys immediate, leaves rapid Back presses as deletion, and uses volume keys for navigation", () => {
     const current = existing();
     const original = JSON.stringify(current);
     const next = buildCodingProfile(current);
@@ -48,7 +48,7 @@ describe("Codex coding profile", () => {
     expect(next.actions.ok?.single).toEqual({ type: "shortcut", chord: { keys: ["enter"] } });
     expect(next.actions.power?.single).toEqual({ type: "shortcut", chord: { keys: ["escape"] } });
     expect(next.actions.back?.single).toEqual({ type: "normal_backspace" });
-    expect(next.actions.back?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "z"] } });
+    expect(next.actions.back?.double).toEqual({ type: "disabled" });
     expect(next.actions.back?.long).toEqual({ type: "disabled" });
     for (const key of ["up", "down", "left", "right", "ok", "power", "volume_up", "volume_down"] as const) {
       expect(next.actions[key]?.double).toEqual({ type: "disabled" });
@@ -66,9 +66,9 @@ describe("Codex coding profile", () => {
       long: { type: "shortcut", chord: { keys: ["control", "alt", "a"] } },
     });
     expect(next.actions.tv).toEqual({
-      single: { type: "shortcut", chord: { keys: ["control", "b"] } },
-      double: { type: "shortcut", chord: { keys: ["control", "alt", "b"] } },
-      long: { type: "shortcut", chord: { keys: ["control", "backquote"] } },
+      single: { type: "shortcut", chord: { keys: ["control", "alt", "b"] } },
+      double: { type: "shortcut", chord: { keys: ["control", "b"] } },
+      long: { type: "shortcut", chord: { keys: ["control", "z"] } },
     });
     expect(next.applications).toEqual(current.applications);
     expect(JSON.stringify(current)).toBe(original);

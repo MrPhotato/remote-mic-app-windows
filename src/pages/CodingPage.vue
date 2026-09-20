@@ -37,10 +37,10 @@ const canApply = computed(() => nativeRuntime && current.value !== null && !load
 const presetLabels: Partial<Record<RemoteButton, Partial<Record<ButtonTrigger, string>>>> = {
   home: { single: "打开 Codex", double: "新任务 · Ctrl + N", long: "设置 · Ctrl + ," },
   menu: { single: "命令菜单 · Ctrl + Shift + P", double: "选择模型 · Ctrl + Shift + M", long: "待处理项 · Ctrl + Alt + A" },
-  tv: { single: "开关侧边栏 · Ctrl + B", double: "查看改动 · Ctrl + Alt + B", long: "打开/收起终端 · Ctrl + `" },
+  tv: { single: "查看改动 · Ctrl + Alt + B", double: "开关侧边栏 · Ctrl + B", long: "撤销 · Ctrl + Z" },
   power: { single: "取消当前操作 · Esc" },
   ok: { single: "确认/发送 · Enter" },
-  back: { single: "退格 · Backspace", double: "撤销 · Ctrl + Z", long: "按住连续退格" },
+  back: { single: "退格 · Backspace", double: "不额外绑定，连按继续退格", long: "按住连续退格" },
   up: { long: "按住连续向上" }, down: { long: "按住连续向下" },
   left: { long: "按住连续向左" }, right: { long: "按住连续向右" },
   volume_up: { single: "上一任务/标签页 · Ctrl + PageUp", double: "未配置动作", long: "按住连续切换上一项" },
@@ -169,7 +169,7 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
-      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。返回首按立即普通退格，双击时先删后发送 Ctrl + Z 撤销；具体撤销内容由当前编辑器决定。方向键与退格按住连续操作。音量＋/－用于切换上一/下一任务或标签页；RC003 请先启用三键增强。搜索文件可从命令菜单进入。</p>
+      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。返回每次按下立即普通退格，快速连按继续删除，按住连续退格、松开停止。TV 长按撤销（Ctrl + Z）；可在「按键映射」中改到其他可配置的单击、双击或长按，也可禁用。方向键按住连续操作。音量＋/－用于切换上一/下一任务或标签页；RC003 请先启用三键增强。搜索文件可从命令菜单进入。</p>
       <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter：在输入框中可能发送内容，在审批提示中可能批准操作。电源键在本方案中配置为 Esc，用于关闭弹层或取消当前操作。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>

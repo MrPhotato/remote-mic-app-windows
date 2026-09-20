@@ -996,6 +996,62 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_backspace_rapid_presses_never_become_undo_or_delay_the_next_hold() {
+        for replacing_pending_undo in [false, true] {
+            let t = Instant::now();
+            let mut r = GestureRecognizer::new();
+            if replacing_pending_undo {
+                r.configure(&undo_mappings(vec![KeyCode::Control, KeyCode::Z]));
+                assert_eq!(r.press(RemoteButton::Back, t), vec![ButtonTrigger::Single]);
+                assert!(r
+                    .release(RemoteButton::Back, t + Duration::from_millis(10))
+                    .is_empty());
+            }
+            let mappings = deletion_mappings(false);
+            r.configure_with_keyboard_repeat(
+                &mappings,
+                Duration::from_millis(500),
+                Duration::from_millis(40),
+            );
+            r.enable_eager_backspace(&mappings);
+            // Six presses 100ms apart are six immediate deletions, even when
+            // replacing an old Ctrl+Z mapping during its pending double window.
+            for index in 0..6 {
+                let down = t + Duration::from_millis(100 + index * 100);
+                assert_eq!(
+                    r.press(RemoteButton::Back, down),
+                    vec![ButtonTrigger::Single]
+                );
+                assert!(r.advance(down + Duration::from_millis(20)).is_empty());
+                assert!(r
+                    .release(RemoteButton::Back, down + Duration::from_millis(30))
+                    .is_empty());
+                assert!(r.next_deadline().is_none());
+                assert!(r.advance(down + Duration::from_millis(99)).is_empty());
+            }
+            // A hold immediately following the burst retains the ordinary
+            // system repeat schedule; releasing it cancels every later repeat.
+            let held = t + Duration::from_millis(700);
+            assert_eq!(
+                r.press(RemoteButton::Back, held),
+                vec![ButtonTrigger::Single]
+            );
+            assert!(r.advance(held + Duration::from_millis(499)).is_empty());
+            for elapsed in [500, 540] {
+                assert_eq!(
+                    r.advance(held + Duration::from_millis(elapsed)),
+                    vec![(RemoteButton::Back, ButtonTrigger::Single)]
+                );
+            }
+            assert!(r
+                .release(RemoteButton::Back, held + Duration::from_millis(550))
+                .is_empty());
+            assert!(r.next_deadline().is_none());
+            assert!(r.advance(held + Duration::from_secs(2)).is_empty());
+        }
+    }
+
+    #[test]
     fn ordinary_backspace_uses_system_timing_and_stops_on_release_or_reset() {
         let t = Instant::now();
         let mut r = GestureRecognizer::new();

@@ -13,7 +13,7 @@
   停止令牌与换代/转发共用短锁；阻塞读写在锁外。
 - passed：前端全量 17 文件、145 tests；随后连接/监听前置提示定向 7 tests passed；修正未设置音量键的动作摘要后，ButtonsPage 定向 27 tests passed。
 - passed（历史候选，用户已取消且未交付）：当前短句及连续尾符删除的文本编辑定向 19 tests、事务 31 tests；当时的 Coding 预设 24 tests，动作摘要与编辑页 39 tests。日志为 `backspace-text-edit-tests.log`、`backspace-transaction-tests.log`、`coding-preset-final-tests.log`、`clause-label-tests.log`。不能将这些结果作为后来即时退格＋Ctrl+Z 方案的引擎或实体验证。
-- passed（最新预设的前端定向）：返回双击 Ctrl+Z 的 `coding-profile` 与 `CodingPage` 共 24 tests，日志 `coding-preset-undo-tests.log`；不发送真实键，不证明即时退格引擎、撤销分组或实体效果。
+- passed（历史撤销预设的前端定向）：返回双击 Ctrl+Z 的 `coding-profile` 与 `CodingPage` 共 24 tests，日志 `coding-preset-undo-tests.log`；不发送真实键，不证明即时退格引擎、撤销分组或实体效果。用户已取消此默认绑定，最终方案见文末。
 - passed：本轮已实测安装包的 Helper 21 项 Python 测试及 JS observer 测试。包括父进程失联、
   租约超时、旧代/非法帧、初始按住、中性状态、源切换和发布租约/创建 capture 交错。
 - passed：本轮已实测安装包的 Helper 96 个文件的 SHA-256、根 manifest 副本与对应源码一致性；
@@ -54,8 +54,10 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 | 基础普通退格已就绪后闲置首用 | passed（旧动作配置：ready 后 225.659 秒首个实体键为返回，183→182；没有方向键预热）；即时退格＋双击撤销配置另计 |
 | 提前首删与旧规则双击，安装版 `8e7b68a` | 后续 12 首删、7 双击 passed；首个事务 focus_changed 取消；该轮严格闲置首按 deferred |
 | 删除当前短句及连续尾符提案 | 用户已取消，未交付；保留历史测试，不作为待验交付项 |
-| 即时退格＋双击 Ctrl+Z | 用户最新选择；实际输入、构建安装、实体及冷首用 deferred |
-| 新 Coding 预设的实际 Codex 效果 | 自动测试 passed；音量聊天/标签页、TV 侧边栏及其它动作实体效果 deferred |
+| 即时退格＋双击 Ctrl+Z | 历史 `e8718f1` 方案；软件实际输入及安装回读 passed，用户实体试用后因快速删除触发撤销而取消默认绑定，可选能力保留 |
+| 最终普通返回（Double/Long disabled，按住重复） | 当前安装版关闭返回双击后，用户确认快速连按与长按 passed；严格闲置首键、其它应用与 RC001 deferred |
+| 最终 Coding 预设的实际 Codex 效果 | 预设/页面定向 24 tests passed；TV 改动/侧边栏/撤销及完整新配置的安装和实体效果 deferred |
+| 图例上方的增强开关原生启停 | 组件及页面定向 57 tests passed；新入口安装后显式授权、初始化、状态与正常停止释放仍 deferred |
 | Helper 停止时仍按住的键清理，不触发取消后的动作 | passed（合成 UP 1 次，停止后 4 秒无继续删除） |
 | 主程序正常退出与升级 | 正常退出 passed；运行中覆盖首次 failed；活动 Helper 正常退出并确认 exit 0 后安装 `8e7b68a` passed |
 | 活动 Helper 退出与宿主存活 | Helper 退出 passed；此前 13 个宿主 PID 均仍存在，创建时间/句柄身份未核验 |
@@ -185,9 +187,9 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 
 用户曾要求双击删除当前短句及连续尾符；该候选有文本编辑 19 项、事务 31 项测试 passed，但随后被用户取消，未构建安装交付。旧规则的两次尾符补回不属于短句提案通过，也不能转为后来 Ctrl+Z 方案的证据。
 
-最新要求是返回单击立即普通退格、按住重复、双击发送 Ctrl+Z：首击已经删除，第二击触发编辑器撤销；具体撤销范围与分组由当前编辑器决定，不承诺整段撤销或精确恢复某次首删。该方案的实际输入、安装版实体按键和未经预热闲置首用仍 deferred；独立可选按标点删除功能不因此改成 Ctrl+Z。
+当时的后续要求是返回单击立即普通退格、按住重复、双击发送 Ctrl+Z：首击已经删除，第二击触发编辑器撤销；具体撤销范围与分组由当前编辑器决定，不承诺整段撤销或精确恢复某次首删。其软件输入和 `e8718f1` 安装记录见下文，随后用户实体试用取消该默认绑定。独立可选按标点删除功能不因此改成 Ctrl+Z。
 
-新内置预设保留用户确认的音量＋/－ Ctrl+PageUp/PageDown、TV 单击 Ctrl+B；菜单为命令/模型/待处理项，TV 双击/长按为查看改动/终端，返回双击改为 Ctrl+Z。首次及最近备份保留，升级不会自动覆盖当前配置。组合键官方来源和聊天/标签页范围见 [默认方案调研](../docs/investigations/2026-09-20-codex-remote-defaults.md)。新方案尚未构建安装或在 Codex 前台通过实体动作验证，不宣称只切 Agent。
+历史 `e8718f1` 预设保留音量＋/－ Ctrl+PageUp/PageDown，TV 当时为侧边栏/改动/终端，返回双击为 Ctrl+Z。最终 TV 与返回方案见文末；首次及最近备份保留，升级不会自动覆盖当前配置。组合键官方来源和聊天/标签页范围见 [默认方案调研](../docs/investigations/2026-09-20-codex-remote-defaults.md)，不宣称只切 Agent。
 
 
 ## 普通退格与撤销实际软件验证（2026-09-21）
@@ -200,3 +202,11 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 ## 撤销默认方案安装与配置回验（2026-09-21）
 
 来源 e8718f1372cecf6085c1bda8b6b43e5ee39b35b6 的本地 NSIS 构建、正常升级、启动 passed。旧增强 Helper 正常退出 exit 0 / error mask 0；新主程序文件与产物仅 NSIS 三字节标记不同，96 个 Helper 文件全部核验通过。实际应用默认方案后，12 键 36 格逐项回读符合预期，当前配置精确备份；此运行的 WebView 首次备份原先不存在，已按当前配置新建，不声称恢复了不存在的旧备份。应用列表、语音热键与音频端点保持一致。原生返回编辑器实际显示首击立即退格／第二击 Ctrl+Z，旧删除说明和错误等待提示均不存在。证据见 [安装及原生回验](evidence/daily-undo-install-20260921.json)。新包实体键与严格闲置首按另验。
+
+## 最终普通返回与 TV 三动作方案（2026-09-21）
+
+用户在上述安装版的实体试用中发现快速连续退格会触发双击撤销，取消返回双击默认绑定；原结果保留于 [Undo 默认方案实体记录](evidence/daily-undo-physical-20260921.json)。通过可见编辑器只把返回双击改为 disabled，保留普通退格及按住重复，用户随后确认快速连按与长按正常，记 passed，见 [普通返回实体回验](evidence/plain-back-physical-20260921.json)。这属于原安装版上的配置回验，不是最新完整包的安装证明；严格闲置首键、其它应用和 RC001 仍 deferred。
+
+最终用户批准方案已更新到源码：TV 单击 Ctrl+Alt+B 查看改动、双击 Ctrl+B 开关侧边栏、长按 Ctrl+Z 撤销；Back 单击 normal_backspace、Double/Long disabled，按住仍重复。用户不使用终端，Ctrl+Z 仍可配置到任意可编辑格或关闭；Home、Menu、方向、音量、OK、Power 和语音保持原方案。最终预设/页面定向 24 tests passed，普通返回快速重复手势定向 33 tests passed；最新包尚未构建安装，TV 三动作与完整 Codex 效果不可记 passed。
+
+图例上方的显眼增强开关已完成组件 12、ButtonsPage 37、CodingPage 8 项定向测试。日志为 `rc003-enhancement-switch-component-tests.log` 与 `rc003-enhancement-switch-tests.log`；首轮仅新增测试的局部变量作用域错误已修复并单独重跑组件通过。开关原生启停及显式授权、初始化、断连状态和正常停止释放仍待新安装版验收，不能以旧按钮或后端既有证据代替。

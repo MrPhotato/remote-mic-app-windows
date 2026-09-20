@@ -325,12 +325,18 @@ Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差�
 
 ## Codex 日常 12 键预设调整（2026-09-20）
 
-先核对 [默认方案调研](docs/investigations/2026-09-20-codex-remote-defaults.md) 与 [OpenAI 官方 Windows 命令表](https://learn.chatgpt.com/docs/reference/commands)，再更新内置方案：菜单单/双/长为 Ctrl+Shift+P、Ctrl+Shift+M、Ctrl+Alt+A；TV 为 Ctrl+B、Ctrl+Alt+B、Ctrl+反引号；用户确认的音量＋/－为 Ctrl+PageUp/PageDown。Home、方向、Enter、Esc 和语音生命周期保留，返回按最新用户要求采用立即普通退格、按住重复及双击 Ctrl+Z。聊天或标签页是官方切换范围，不宣称只切内部 Agent；用户关闭侧边栏的操作习惯也不是这个限制的官方解法。
+先核对 [默认方案调研](docs/investigations/2026-09-20-codex-remote-defaults.md) 与 [OpenAI 官方 Windows 命令表](https://learn.chatgpt.com/docs/reference/commands)，再更新当时的内置方案：菜单单/双/长为 Ctrl+Shift+P、Ctrl+Shift+M、Ctrl+Alt+A；TV 为 Ctrl+B、Ctrl+Alt+B、Ctrl+反引号；用户确认的音量＋/－为 Ctrl+PageUp/PageDown。Home、方向、Enter、Esc 和语音生命周期保留，当时返回采用立即普通退格、按住重复及双击 Ctrl+Z。此方案后来安装为 `e8718f1`，最终默认调整见下节。聊天或标签页是官方切换范围，不宣称只切内部 Agent；用户关闭侧边栏的操作习惯也不是这个限制的官方解法。
 
 预设复用显式应用与首次/最近备份，不自动覆盖已存配置。Ctrl+Z 使用既有公开快捷键注入，首击普通退格已发生后再撤销，具体撤销分组由当前编辑器决定，不把它描述成通用整段删除或安全精确恢复。先前短句版预设 24 tests、动作摘要/编辑页 39 tests 是历史候选结果；撤销版最新预设/页面定向 24 tests passed，日志为 `coding-preset-undo-tests.log`，实际输入、构建安装、Codex 前台实体动作及冷首用仍 deferred。参考官方命令事实与 [Codex Micro 操作职责](https://learn.chatgpt.com/docs/features/codex-micro)，未复制设备协议、第三方内部实现或新增语音手势；详见调研中的上下文及验收边界。
 
 2026-09-21 后续：普通退格＋Ctrl+Z 已由真实 SendInput 在自家输入框观察到 12→11→12；纯手势 32、引擎路由 21、预设 24 与编辑页 27 tests passed，阈值未改。仅普通键注入路径，编辑器撤销分组仍非产品保证。见 [实际软件证据](Testing/evidence/ordinary-backspace-undo-webview-20260921.json)；安装和实体边界另计。
 
+## 最终日常默认方案：普通返回与 TV 撤销（2026-09-21）
+
+同日默认方案修订：用户实体测试拒绝把 Ctrl+Z 放在返回双击，因为快速连续删除会触发撤销；旧安装版结果保留于 [Undo 实体记录](Testing/evidence/daily-undo-physical-20260921.json)。最终默认 `back.single=normal_backspace`、`back.double=disabled`、`back.long=disabled`，按住仍复用 Windows 重复参数，不改阈值、不删除可选撤销能力。新增 100ms 间隔六次按放及随后长按/释放、切换旧挂起双击状态的回归；手势定向 33 tests passed。当前安装版通过可见编辑界面只改返回双击一格，用户复验“正常了”；证据见 [普通返回实体回验](Testing/evidence/plain-back-physical-20260921.json)。
+
+用户最终批准 TV 单击 `Ctrl+Alt+B` 查看改动、双击 `Ctrl+B` 开关侧边栏、长按 `Ctrl+Z` 撤销，并明确不使用终端。沿用上述官方快捷键事实和已有公开 SendInput，不复制外部实现；Ctrl+Z 可自行移到任意可编辑格或禁用，撤销范围仍由前台应用决定。Home、Menu、方向、音量、OK、Power 和语音不变。最终预设/页面定向 24 tests passed；最新完整配置尚未构建安装，TV 实体三动作、完整 Codex 效果和严格闲置首用仍 deferred，不复用 `e8718f1` 历史安装证明新配置通过。
+
 ## 三键增强入口显式开关（2026-09-21）
 
-用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。此次未复制外部代码，验收和剩余边界见 TODO 与 WindowsRc003Input。
+用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。组件及页面定向共 57 tests passed，安装版原生启停验收仍 deferred。此次未复制外部代码，验收和剩余边界见 TODO 与 WindowsRc003Input。

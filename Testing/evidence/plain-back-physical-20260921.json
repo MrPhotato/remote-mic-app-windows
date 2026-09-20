@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "source_revision": "e8718f1372cecf6085c1bda8b6b43e5ee39b35b6",
+  "recorded_local_date": "2026-09-21",
+  "captured_at_utc": "2026-09-20T16:35:49.495Z",
+  "rc003_only": true,
+  "relevant_log_entries_match_requested_installed_source": true,
+  "user_confirmed_normal_behavior": true,
+  "observed_plain_backspace_behavior_passed": true,
+  "configuration": {
+    "changed_at_utc": "2026-09-20T16:34:53.139Z",
+    "back_double_disabled": true,
+    "only_back_double_changed": true,
+    "other_mappings_unchanged": true
+  },
+  "capture_scope": {
+    "started_at_utc": "2026-09-20T16:34:53.140Z",
+    "supplied_arrays_already_sliced": true,
+    "baseline_indices_applied_again": false,
+    "strict_cold_first_back_tested": false
+  },
+  "rapid_and_held_input": {
+    "physical_semantic_back_down_up_pairs": 17,
+    "short_press_pairs": 16,
+    "long_hold_pairs": 1,
+    "helper_semantic_back_edges": 34,
+    "mapped_normal_backspace_actions": 30,
+    "mapped_double_actions": 0,
+    "trusted_backspace_down_up_pairs": 30,
+    "trusted_keyboard_event_count": 60,
+    "all_key_events_backspace": true,
+    "all_key_events_trusted": true,
+    "all_key_events_without_control_modifier": true,
+    "control_or_z_event_count": 0,
+    "all_semantic_and_keyboard_edges_paired": true,
+    "initial_length": 200,
+    "final_length": 170,
+    "total_deleted_characters": 30,
+    "observed_length_change_count": 30,
+    "every_observed_length_change_is_minus_one": true,
+    "first_ui_semantic_down_to_dom_length_change_ms": 18,
+    "physical_radio_transport_latency_measured": false
+  },
+  "held_repeat": {
+    "ui_semantic_down_at_utc": "2026-09-20T16:35:25.978Z",
+    "ui_semantic_up_at_utc": "2026-09-20T16:35:27.054Z",
+    "ui_semantic_hold_ms": 1076,
+    "backend_helper_hold_ms": 1075,
+    "initial_backspace_actions": 1,
+    "repeat_backspace_actions": 13,
+    "total_backspace_actions_for_hold": 14,
+    "before_length": 193,
+    "after_length": 179,
+    "first_repeat_after_backend_down_ms": 510,
+    "repeat_interval_min_ms": 42,
+    "repeat_interval_median_ms": 47,
+    "repeat_interval_max_ms": 50
+  },
+  "release_stop": {
+    "last_repeat_map_fire_before_backend_release_ms": 2,
+    "new_repeat_actions_after_hold_release_before_next_press": 0,
+    "already_submitted_pair_completed_after_release": true,
+    "pending_dom_length_change_after_backend_hold_release_ms": 14,
+    "pending_dom_keyup_after_backend_hold_release_ms": 24,
+    "additional_map_actions_after_final_backend_release": 0,
+    "observed_quiet_interval_after_final_backend_release_ms": 21006,
+    "observed_quiet_interval_after_last_dom_key_event_ms": 20981,
+    "final_length_stable": true
+  },
+  "privacy": {
+    "text_content_recorded": false,
+    "device_identity_recorded": false,
+    "process_or_window_identifiers_recorded": false
+  }
+}
