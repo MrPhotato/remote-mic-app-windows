@@ -1,11 +1,13 @@
 use crate::button_mapping::EngineMessage;
 use crate::key_gate;
 use crate::raw_input::{
-    button_for_usage, decode_report_usages, normalize_device_path, parse_raw_hid_body,
-    select_single_device_path, DevicePathError, RawInputPhase, RawInputSnapshot, RawKeyboardEvent,
+    button_for_keyboard, button_for_usage, decode_report_usages, filter_alias_for_keyboard,
+    filter_alias_for_usage, normalize_device_path, parse_raw_hid_body, select_single_device_path,
+    DevicePathError, RawInputPhase, RawInputSnapshot, RawKeyboardEvent, RemoteButton,
 };
 use crate::PlatformError;
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
@@ -240,6 +242,8 @@ struct ListenerContext {
     snapshot: Arc<Mutex<RawInputSnapshot>>,
     engine: Sender<EngineMessage>,
     remote_voice_f5_pressed: bool,
+    // Two sources × three aliases × success/failure: at most twelve log entries.
+    filter_alias_logged: BTreeSet<(&'static str, RemoteButton, bool)>,
 }
 
 fn voice_f5_wake_edge(was_pressed: bool, is_pressed: bool) -> bool {
@@ -389,6 +393,7 @@ fn run_listener(
             snapshot: Arc::clone(&snapshot),
             engine,
             remote_voice_f5_pressed: false,
+            filter_alias_logged: BTreeSet::new(),
         });
     });
 
@@ -614,25 +619,65 @@ fn handle_raw_input(handle: HRAWINPUT) -> Result<(), String> {
             }
             // 透传的键盘事件交给引擎合并；同时武装 key_gate
             // （覆盖键盘-only 按键的重复沿与首沿泄漏后的续期）。
-            if let Some(button) = event.button() {
+            // The LL hook has no device identity. Filter F13/F14/F15 aliases are
+            // routed only here, and must not arm any shared semantic button.
+            if let Some(button) = button_for_keyboard(event.virtual_key, event.make_code) {
                 key_gate::arm_button(button, GATE_ARM_GRACE_MS);
             }
-            let _ = context.engine.send(EngineMessage::Keyboard(event));
+            let enqueued = context.engine.send(EngineMessage::Keyboard(event)).is_ok();
+            if let Some(button) = filter_alias_for_keyboard(event.virtual_key) {
+                note_filter_alias_once(context, "keyboard", button, enqueued);
+            }
         } else if header.dwType == RIM_TYPEHID.0 {
             for report in parse_raw_hid_body(body).map_err(|error| error.to_string())? {
                 let usages = decode_report_usages(report).map_err(|error| error.to_string())?;
                 // HID 报文（独立管线，不受键盘 LL 钩子影响）到达即武装
                 // 对应按键：其键盘孪生事件在钩子里据此归因吞键。
                 for usage in &usages {
-                    if let Some(button) = button_for_usage(*usage) {
+                    if let Some(button) = gate_button_for_usage(*usage) {
                         key_gate::arm_button(button, GATE_ARM_GRACE_MS);
                     }
                 }
-                let _ = context.engine.send(EngineMessage::HidUsages(usages));
+                let aliases: Vec<_> = usages
+                    .iter()
+                    .copied()
+                    .filter_map(filter_alias_for_usage)
+                    .collect();
+                let enqueued = context
+                    .engine
+                    .send(EngineMessage::HidUsages(usages))
+                    .is_ok();
+                for button in aliases {
+                    note_filter_alias_once(context, "hid", button, enqueued);
+                }
             }
         }
         Ok(())
     })
+}
+
+fn gate_button_for_usage(usage: u16) -> Option<RemoteButton> {
+    if filter_alias_for_usage(usage).is_some() {
+        None
+    } else {
+        button_for_usage(usage)
+    }
+}
+
+fn note_filter_alias_once(
+    context: &mut ListenerContext,
+    source: &'static str,
+    button: RemoteButton,
+    enqueued: bool,
+) {
+    if context
+        .filter_alias_logged
+        .insert((source, button, enqueued))
+    {
+        crate::ble::gatt_note(format!(
+            "raw_input feature=rc003_filter_alias action=route phase=observed source={source} button={button:?} attribution=selected_device key_gate=passthrough enqueued={enqueued}"
+        ));
+    }
 }
 
 fn enumerate_matching_device_paths() -> Result<Vec<String>, String> {
@@ -700,7 +745,22 @@ fn record_failure(snapshot: &Arc<Mutex<RawInputSnapshot>>, error: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::voice_f5_wake_edge;
+    use super::{gate_button_for_usage, voice_f5_wake_edge};
+    use crate::raw_input::RemoteButton;
+
+    #[test]
+    fn filter_hid_aliases_never_arm_identity_free_keyboard_gate() {
+        for (alias, original, button) in [
+            (0x0068, 0x0080, RemoteButton::VolumeUp),
+            (0x0069, 0x0081, RemoteButton::VolumeDown),
+            (0x006A, 0x00F1, RemoteButton::Back),
+        ] {
+            assert_eq!(gate_button_for_usage(alias), None);
+            assert_eq!(gate_button_for_usage(original), Some(button));
+        }
+        assert_eq!(gate_button_for_usage(0x003E), None);
+        assert_eq!(gate_button_for_usage(0xFFFF), None);
+    }
 
     #[test]
     fn voice_f5_wakes_reconnect_once_per_physical_hold() {

@@ -36,7 +36,8 @@ use serde::Serialize;
 use crate::button_gestures::GestureRecognizer;
 use crate::key_gate;
 use crate::raw_input::{
-    ButtonEdge, ButtonStateMerger, RawInputSnapshot, RawKeyboardEvent, RemoteButton,
+    filter_alias_for_keyboard, ButtonEdge, ButtonStateMerger, RawInputSnapshot, RawKeyboardEvent,
+    RemoteButton,
 };
 use crate::send_input::{
     native_key, ButtonAction, ButtonMappings, ButtonTrigger, KeyChord, KeyCode, MouseClickKind,
@@ -459,7 +460,13 @@ fn engine_worker(
                 // 泄漏路径的按压边沿：原生动作已进 OS，标记待对冲。
                 for edge in &edges {
                     if edge.is_pressed {
-                        native_pending.insert(edge.button);
+                        if filter_alias_for_keyboard(event.virtual_key).is_some() {
+                            // A filter proxy delivered F13/F14/F15, not the original
+                            // volume/back action. An explicit mapping still needs injection.
+                            native_pending.remove(&edge.button);
+                        } else {
+                            native_pending.insert(edge.button);
+                        }
                     }
                 }
                 handle_edges(
@@ -993,6 +1000,57 @@ mod tests {
 
     const KEYDOWN: u32 = 0x0100;
     const KEYUP: u32 = 0x0101;
+
+    #[test]
+    fn filter_volume_alias_injects_identity_action_while_native_volume_is_not_doubled() {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let gate = crate::key_gate::KeyGate::start();
+        for (alias, native, button, key) in [
+            (0x7C, 0xAF, RemoteButton::VolumeUp, KeyCode::VolumeUp),
+            (0x7D, 0xAE, RemoteButton::VolumeDown, KeyCode::VolumeDown),
+        ] {
+            let injector = Arc::new(RecordingInjector::default());
+            let snapshot = Arc::new(StdMutex::new(RawInputSnapshot::default()));
+            let runtime = ButtonMappingRuntime::new(
+                Arc::clone(&injector) as Arc<dyn MappingInjector>,
+                Arc::new(UsageCounters::default()),
+                Arc::clone(&snapshot),
+            );
+            runtime.set_mappings(mappings_with_single(button, key));
+            let sender = runtime.sender();
+            for (index, (vk, expected_taps)) in [(native, 0), (alias, 1), (native, 1), (alias, 2)]
+                .into_iter()
+                .enumerate()
+            {
+                sender
+                    .send(EngineMessage::Keyboard(keyboard_event(vk, KEYDOWN)))
+                    .unwrap();
+                sender
+                    .send(EngineMessage::Keyboard(keyboard_event(vk, KEYUP)))
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(1);
+                // Observing the UP snapshot means the preceding DOWN action completed.
+                while snapshot.lock().unwrap().semantic_edge_count < ((index + 1) * 2) as u64 {
+                    assert!(
+                        Instant::now() < deadline,
+                        "engine did not process the release"
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let taps = injector.taps.lock().unwrap();
+                assert_eq!(
+                    taps.len(),
+                    expected_taps,
+                    "native and proxy volume must differ"
+                );
+                assert!(taps.iter().all(|chord| chord.keys == vec![key]));
+                assert!(snapshot.lock().unwrap().active_buttons.is_empty());
+            }
+        }
+        drop(gate);
+    }
 
     /// 泄漏对冲套件（2026-09-06 调查档案修复记录）：泄漏路径
     /// （[`EngineMessage::Keyboard`]，监听器按设备路径过滤=遥控器专用）的

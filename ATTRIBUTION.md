@@ -2,6 +2,15 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## RC003 三键可选 HID 过滤驱动（2026-09-20）
+
+- 实质改编 [QL-4/RemoteMapper](https://github.com/QL-4/RemoteMapper/tree/be8b57330c26a70d8b8ec9ff1e60c23251a2fc31/driver/MiRemoteHidFilter)，固定提交 `be8b57330c26a70d8b8ec9ff1e60c23251a2fc31` 的 `driver/MiRemoteHidFilter/driver.c`、`driver.h`、`remap.c`、`remap.h`、INF 和 vcxproj；对应本仓库 `drivers/sayall-hid-filter/`。MIT，Copyright (c) 2026 QL-4；完整许可保留在该目录 `LICENSE`，随本地驱动包附带。不复用第三方二进制、证书、私钥或安装/卸载脚本。
+- 沿用 IRP_MJ_READ 转发、下层完成后原地等长改写 Report ID 1 首槽 `report[3]` 的做法。上游八键缩减为三键：usage `80→68`（F13/音量+）、`81→69`（F14/音量-）、`F1→6A`（F15/返回）。F5 语音、其它按键、释放、其它槽和 vendor reports 保持不变。新的服务名/ExtensionId 避免与原项目混用，增加失败路径和匿名 ETW 聚合计数。
+- 上游 [三键修复记录](https://github.com/QL-4/RemoteMapper/blob/cf89615487efcfcf4ff3f78e9bfc3b9bd69597ad/NOTES.md) 是复用依据；上游 Windows 11/HVCI 实测不等于本仓库真机通过。本机关闭映射后的独立 Raw Input 实验有 Up/Ok 正对照，返回/音量±均未收到；SetupDi 读取的 Hardware IDs 包含上游精确 `REV&00a4` 匹配。因此保留该匹配，不扩大到 VID-only 或键盘类过滤器。该产品 ID 不能独立证明 RC001 型号隔离，RC001 仍未验收。
+- 应用端别名仅在已选择的遥控器设备归因后解码；不进入无设备身份的全局钩子解码/武装，避免误吞普通键盘 F13–F15。代理音量不能当作已交付原生音量，仍执行用户配置的动作。未配置动作不新增隐式音量行为。
+- 构建采用微软官方 [WDK NuGet](https://learn.microsoft.com/en-us/windows-hardware/drivers/install-the-wdk-using-nuget) 与 [Windows-driver-samples 的包导入方式](https://github.com/microsoft/Windows-driver-samples/blob/main/Directory.Build.props)（2026-09-20 查阅，仅参考属性导入方式，不复制示例实现）；本地锁定 WDK `10.0.26100.6584`、SDK CPP `10.0.26100.1`、VS 2022。驱动仅为可选增强轨；普通用户主程序、基础语音路径不依赖它。不引入 Frida、虚拟 HID 或私有协议。
+- 验证与签名/安装边界见 [Testing/WindowsRc003Filter.md](Testing/WindowsRc003Filter.md)。当前只生成本地未签名候选，不修改 Secure Boot/BCD，不安装内核驱动，不发布。
+
 ## 鼠标动作扩展
 
 - 鼠标单击/双击参考 AutoHotkey v2 Click 的成对按下/释放行为，不复制其代码或引入依赖；通过 Windows SendInput 单批发送 2/4 个边沿，部分提交时补发释放，不新设双击等待常量。参考： https://www.autohotkey.com/docs/v2/lib/Click.htm 。

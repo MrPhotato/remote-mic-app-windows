@@ -1,0 +1,60 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=Extension
+ClassGuid={e2f84ce7-8efa-411c-aa69-97454ca4cb57}
+Provider=%ProviderName%
+ExtensionId={25b528e7-f8e7-4f92-9d0d-f56458dda41c}
+DriverVer=09/20/2026,0.1.0.0
+CatalogFile=SayAllHidFilter.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskName%,,,""
+
+[SourceDisksFiles]
+SayAllHidFilter.sys=1
+
+[Manufacturer]
+%ProviderName%=Models,NTamd64.10.0...18362
+
+[Models.NTamd64.10.0...18362]
+; Exact public product/revision ID confirmed by the local RC003 SetupDi query.
+; Do not broaden this to the VID/PID-only ID or the keyboard device class.
+%DeviceDesc%=SayAllFilter_Install, HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&012717_PID&32b8_REV&00a4
+
+[SayAllFilter_Install]
+CopyFiles=SayAllFilter_CopyFiles
+
+[SayAllFilter_Install.Filters]
+AddFilter=SayAllHidFilter,,SayAllLowerFilter
+
+[SayAllLowerFilter]
+FilterPosition=Lower
+
+[SayAllFilter_Install.Services]
+AddService=SayAllHidFilter,,SayAllFilter_Service
+
+[SayAllFilter_Service]
+DisplayName=%ServiceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\SayAllHidFilter.sys
+
+[SayAllFilter_Install.Wdf]
+KmdfService=SayAllHidFilter,SayAllFilter_Wdf
+
+[SayAllFilter_Wdf]
+KmdfLibraryVersion=1.15
+
+[SayAllFilter_CopyFiles]
+SayAllHidFilter.sys
+
+[Strings]
+ProviderName="SayAll"
+DeviceDesc="SayAll RC003 Three-Key Compatibility"
+ServiceDesc="SayAll RC003 HID Lower Filter"
+DiskName="SayAll HID Filter Package"
