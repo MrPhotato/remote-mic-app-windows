@@ -340,3 +340,17 @@ Microsoft 明确该 tick 不保证递增，原始输入与桌面线程时序差�
 ## 三键增强入口显式开关（2026-09-21）
 
 用户要求把近乎必用的 RC003 增强放在遥控器图例上方。复核来源矩阵中 RemoteMapper 的普通键配置面板先例，沿用本仓库既有独立 Helper 启停与权限边界；入口使用 [W3C APG Switch Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/switch/) 的二态语义、固定名称、`aria-checked` 以及原生按钮键盘操作。开关打开表示增强已启动或正在准备，就绪与失败由旁边的状态独立显示；不把打开等同于三键已可用。权限说明明确仅 Helper 申请管理员权限，每次启动仍需显式开启，不自动提权、不调整驱动或按键时序。组件及页面定向共 57 tests passed；安装版原生启停、等待初始化及用户方向键后进入 ready 已 passed，停止清理 exit 0 / error mask 0，主程序普通权限。此次未复制外部代码，未测失败/断连等实机边界见 TODO 与 WindowsRc003Input。
+
+## 完整 Helper 打包与独立更新签名校验（2026-09-21）
+
+复核既有 Tauri CLI 构建覆盖配置、`tauri-plugin-updater` 2.11.0 的公开 `verify_signature` 实现和 [GitHub Actions workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs)，修正 fork CI/Release 遗漏 Helper 构建、未显式生成 `.sig` 及旧上游下载地址的问题。PR CI 保留全套测试与安装生命周期，发布门禁改为当前 PR/head 的最新 run/attempt 成功，拒绝缺失关联、旧绿新红等状态。
+
+独立工具 `tools/release-signature-verify` 调用 [jedisct1/rust-minisign-verify](https://github.com/jedisct1/rust-minisign-verify) 的 `PublicKey::decode`、`Signature::decode` 和 `verify(..., true)`；沿用 Tauri 的 base64 包装和 legacy/prehashed 验证方式，不自写密码算法。依赖为 MIT 的 `minisign-verify 0.2.5`，crate 内 `.cargo_vcs_info.json` 指向提交 `3a91d03f86a8462a1af953c2854687d3f953d541`，该发布源标记 `dirty: true`，因此准确复现以锁文件中的 crate 校验值为准。该 crate `src/lib.rs` 的公开测试向量实质复制到本工具测试，保留 Frank Denis 来源说明。8 项正反测试及真实本地安装包验签 passed，不等于已经公开发布。
+
+Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 initialized-data 段中的完整清单字节；16 项合成正反例以及现有 96 文件本地实包检查 passed。新工作流尚未在 GitHub 运行，当前 Authenticode 未启用、自动更新仍关闭，后续远端完整流水线与公开发布独立记录。
+
+## 推送前生命周期复查（2026-09-21）
+
+沿用本仓库已验证的 BLE 连接代次与 Helper 中性状态守卫，复核旧日志发现语音流编号被误作连接编号；12 次不必要重绑的 ground truth 归档于 [Bug 记录](Bugs/2026-09-21-rc003-voice-helper-generation.md)。修复仅把同锁发布的真实连接编号接到 Helper，不调整时序常量、不复制外部实现。18 项 RC003 定向及 1 项 IPC 契约测试 passed，新包硬件验证 deferred。
+
+按键设置继续复用已有 SettingsStore 的 Rust `Mutex` 串行策略，将锁覆盖到平台同步热加载，避免保存／导入／重置交错。11 项设置测试 passed，包含全部 9 种两操作组合及失败分支。没有新增第三方 API 或实现依赖；真实 IPC 和实体输入边界见 [并发事务 Bug](Bugs/2026-09-21-button-mapping-transaction.md)。

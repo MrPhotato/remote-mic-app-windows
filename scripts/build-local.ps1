@@ -2,7 +2,11 @@ param(
     [string]$ToolchainScript,
     [switch]$SkipTests,
     [switch]$Installer,
-    [switch]$SkipHelperBuild
+    [switch]$SkipHelperBuild,
+    [ValidateNotNullOrEmpty()]
+    [string]$BuildChannel = 'local',
+    [string]$ReleaseTag,
+    [switch]$CreateUpdaterArtifacts
 )
 $ErrorActionPreference = 'Stop'
 $taskRepo = Split-Path -Parent $PSScriptRoot
@@ -13,7 +17,9 @@ if ($ToolchainScript) {
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw '需要 Rust MSVC 工具链；请先加载工具链环境。' }
 # Bound concurrent compilations/tests on ordinary 16 GB Windows machines.
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '2' }
-$env:SAYALL_BUILD_CHANNEL = 'local'
+$env:SAYALL_BUILD_CHANNEL = $BuildChannel
+# Do not let a previous release build's tag leak into an ordinary local build.
+$env:SAYALL_RELEASE_TAG = if ([string]::IsNullOrWhiteSpace($ReleaseTag)) { $null } else { $ReleaseTag }
 Push-Location $taskRepo
 try {
     if (-not $SkipHelperBuild) {
@@ -53,7 +59,9 @@ try {
     # Tauri resolves paths from src-tauri. The payload is already verified in its
     # final resource directory, so its build step need not copy each DLL again.
     $resourceMap['../target/release/rc003-helper/'] = 'rc003-helper/'
-    @{ bundle = @{ resources = $resourceMap } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $bundleConfig -Encoding utf8
+    $bundleOverride = @{ resources = $resourceMap }
+    if ($CreateUpdaterArtifacts) { $bundleOverride.createUpdaterArtifacts = $true }
+    @{ bundle = $bundleOverride } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $bundleConfig -Encoding utf8
     if (-not (Test-Path -LiteralPath 'node_modules/.bin/vite.cmd')) {
         & npm.cmd exec --yes --package=pnpm@10.15.0 -- pnpm install --frozen-lockfile
         if ($LASTEXITCODE -ne 0) { throw '前端依赖准备失败。' }

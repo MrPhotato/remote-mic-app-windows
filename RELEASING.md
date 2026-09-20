@@ -22,8 +22,13 @@
 
 ## Stable 与 updater 资产
 
-- 正式 Release workflow 必须从精确 Tag/Commit 构建，缺少 `TAURI_SIGNING_PRIVATE_KEY` 或 Authenticode 发布凭据时 fail closed；CI 临时 updater key 只允许测试构建。
-- `scripts/generate-updater-manifest.ps1` 生成 `latest.json`、ASCII 安装器名、`.sig` 和 `SHA256SUMS.txt`。清单中的签名是 `.sig` 内容，不是路径；下载地址必须为 HTTPS。
+- 当前 fork 的 workflow 只创建 **Preview 草稿**，不自动公开、不声称 Stable。Tag 必须指向当前 `origin/main`，并关联已合入的 PR；该 PR 精确 head 的最新 Windows CI 及最新重试必须完成且成功，旧绿灯不能覆盖后来失败。
+- 缺少本仓库 `TAURI_SIGNING_PRIVATE_KEY` 时 fail closed。公开 Preview 包必须通过独立 minisign 验签；当前未启用 Authenticode，因此 Windows 仍将安装器识别为 `NotSigned`，minisign 不等于 Windows 开发者证书。Stable 需要另外启用并验证 Authenticode，不能沿用 Preview 结论。
+- 普通 PR CI 不读取签名私钥，也不生成临时更新密钥；发布构建显式使用 `build-local.ps1 -BuildChannel preview -ReleaseTag <tag> -CreateUpdaterArtifacts`。基础配置仍关闭自动更新，只在发布构建覆盖开启 updater 资产生成。
+- Helper 必须先于 Rust 应用编译构建，随后调用 `verify-rc003-helper-bundle.ps1` 核对完整文件、SHA-256 和主程序内嵌完整清单。仅安装器存在或主程序编译通过不算完整打包。
+- `scripts/generate-updater-manifest.ps1` 生成 `latest.json`、ASCII 安装器名、`.sig`、`release-signing.pub`、`release-metadata.json` 和 `SHA256SUMS.txt`。清单中的签名是 `.sig` 内容，不是路径；下载地址必须指向本 fork 的 HTTPS Release。元数据记录源码 SHA、版本、通道、Helper 清单摘要和 Authenticode 状态；不包含私钥或个人路径。
+- 上传前使用 `tools/release-signature-verify` 验证安装器完整字节。暂存目录非空时拒绝重跑，保留现场供核查；不会覆盖或删除远端资产。
+- `releases/<tag>.md` 必须在版本 PR 中准备并合入，草稿创建后核对全部下载字节、签名和源码身份，再按用户本次明确授权决定是否公开。
 - 发布前打印并核对待上传资产清单、大小和 SHA-256；删除或覆盖远端资产不属于正常重试流程。
 - 应用内更新退出前必须显式断开 BLE、释放键态和停止音频；不能依赖 `Drop`，也不能强杀正在连接的旧进程。
 

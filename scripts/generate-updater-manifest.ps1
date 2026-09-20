@@ -9,7 +9,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Tag,
-    [string]$Repository = "GetSayAll/remote-mic-app-windows",
+    [string]$Repository = "MrPhotato/remote-mic-app-windows",
     # 测试/本地运行可显式指定仓库根；CI 默认取脚本所在目录的父目录。
     [string]$RepositoryRoot = ""
 )
@@ -23,6 +23,12 @@ if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
 $configPath = Join-Path $RepositoryRoot "src-tauri/tauri.conf.json"
 $bundleDirectory = Join-Path $RepositoryRoot "target/release/bundle/nsis"
 $stagingDirectory = Join-Path $RepositoryRoot "artifacts/windows-release"
+if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+    throw 'Repository must be an owner/repository pair'
+}
+if ($Tag -notmatch '^v\d+\.\d+\.\d+$') {
+    throw 'Expected a version tag such as v0.2.7'
+}
 
 $config = Get-Content -Raw -Encoding UTF8 $configPath | ConvertFrom-Json
 $version = [string]$config.version
@@ -53,6 +59,19 @@ $signature = (Get-Content -Raw -Encoding UTF8 -LiteralPath $signaturePath).Trim(
 if ([string]::IsNullOrWhiteSpace($signature)) {
     throw "Updater signature file is empty: $signaturePath"
 }
+$publicKey = [string]$config.plugins.updater.pubkey
+if ([string]::IsNullOrWhiteSpace($publicKey)) { throw 'Release public key is missing' }
+# Tauri stores the minisign public key as base64-wrapped text, not a raw key.
+$keyText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($publicKey))
+if ($keyText -notmatch 'minisign public key' -or $keyText -notmatch '(?m)^RW[A-Za-z0-9+/=]+') {
+    throw 'Release public key is not a Tauri minisign envelope'
+}
+$sourceRevision = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[a-f0-9]{40}$') { throw 'Source revision unavailable' }
+$helperManifest = Join-Path $RepositoryRoot 'target/rc003-helper/manifest.json'
+if (!(Test-Path -LiteralPath $helperManifest -PathType Leaf)) { throw 'Helper manifest unavailable' }
+$helperFiles = @((Get-Content -LiteralPath $helperManifest -Raw | ConvertFrom-Json).files)
+if (!$helperFiles.Count) { throw 'Helper manifest is empty' }
 
 $assetName = "SayAll-Windows-$version-x64-setup.exe"
 $signatureAssetName = "$assetName.sig"
@@ -72,6 +91,10 @@ $manifest = [ordered]@{
 }
 
 New-Item -ItemType Directory -Force -Path $stagingDirectory | Out-Null
+# Re-running against an existing staging folder could upload stale assets.
+if (@(Get-ChildItem -LiteralPath $stagingDirectory -Force).Count) {
+    throw 'Release staging directory must be empty; preserve and inspect previous assets before retrying'
+}
 $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
 $manifestPath = Join-Path $stagingDirectory "latest.json"
 [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 6), $utf8WithoutBom)
@@ -81,10 +104,29 @@ $stagedSignature = Join-Path $stagingDirectory $signatureAssetName
 Copy-Item -LiteralPath $installer.FullName -Destination $stagedInstaller -Force
 Copy-Item -LiteralPath $signaturePath -Destination $stagedSignature -Force
 
-$checksumLines = @(
-    "$((Get-FileHash -Algorithm SHA256 -LiteralPath $stagedInstaller).Hash.ToLowerInvariant())  $assetName",
-    "$((Get-FileHash -Algorithm SHA256 -LiteralPath $stagedSignature).Hash.ToLowerInvariant())  $signatureAssetName"
-)
+[IO.File]::WriteAllText((Join-Path $stagingDirectory 'release-signing.pub'), $publicKey.Trim() + "`n", $utf8WithoutBom)
+$metadata = [ordered]@{
+    schema_version = 1
+    repository = $Repository
+    source_revision = $sourceRevision
+    version = $version
+    release_tag = $Tag
+    build_channel = 'preview'
+    architecture = 'x64'
+    installer = $assetName
+    installer_sha256 = (Get-FileHash -LiteralPath $stagedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+    authenticode_status = [string](Get-AuthenticodeSignature -LiteralPath $stagedInstaller).Status
+    updater_signature = $signatureAssetName
+    signature_verification = 'required_by_release_workflow_before_upload'
+    automatic_updates_enabled = @($config.plugins.updater.endpoints).Count -gt 0
+    helper_file_count = $helperFiles.Count
+    helper_manifest_sha256 = (Get-FileHash -LiteralPath $helperManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+[IO.File]::WriteAllText((Join-Path $stagingDirectory 'release-metadata.json'), ($metadata | ConvertTo-Json -Depth 5) + "`n", $utf8WithoutBom)
+
+$checksumLines = @(Get-ChildItem -LiteralPath $stagingDirectory -File | Sort-Object Name | ForEach-Object {
+    "$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())  $($_.Name)"
+})
 [System.IO.File]::WriteAllText((Join-Path $stagingDirectory "SHA256SUMS.txt"), ($checksumLines -join "`n") + "`n", $utf8WithoutBom)
 
 # 自检：清单内容必须能被 updater 按静态 JSON 契约解析回来（version/url/signature）。
@@ -98,6 +140,6 @@ Write-Host "Version: $version (tag $Tag)"
 Write-Host "Download URL: $downloadUrl"
 Write-Host "Signature length: $($signature.Length) chars"
 Write-Host "Staged release assets:"
-foreach ($name in @("latest.json", $assetName, $signatureAssetName, "SHA256SUMS.txt")) {
-    Write-Host "- $name"
+foreach ($file in (Get-ChildItem -LiteralPath $stagingDirectory -File | Sort-Object Name)) {
+    Write-Host "- $($file.Name)"
 }

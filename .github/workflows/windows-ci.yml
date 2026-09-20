@@ -1,16 +1,6 @@
 name: Windows CI
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'Testing/**'
-      - 'artifacts/**'
-      - 'Screenshots/**'
-      - '.gitignore'
-      - 'LICENSE'
   pull_request:
     paths-ignore:
       - '**.md'
@@ -20,14 +10,14 @@ on:
       - 'Screenshots/**'
       - '.gitignore'
       - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
-
-# tauri.conf.json 配置 updater pubkey 后，bundle 构建需要 TAURI_SIGNING_PRIVATE_KEY；
-# Secret 未配置（PR/fork）时由 ensure-updater-signing-key.ps1 生成一次性临时密钥兜底。
-env:
-  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
 jobs:
   verify:
@@ -44,16 +34,17 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+          architecture: x64
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Ensure updater signing key (CI fallback for missing secret)
-        shell: pwsh
-        run: ./scripts/ensure-updater-signing-key.ps1
 
       - name: Test frontend
         run: pnpm test
@@ -63,6 +54,10 @@ jobs:
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
+
+      - name: Build and test RC003 helper
+        shell: pwsh
+        run: ./scripts/build-rc003-helper.ps1
 
       - name: Test Rust workspace
         run: cargo test --workspace
@@ -86,7 +81,12 @@ jobs:
         run: ./scripts/build-windows-upgrade-fixture.ps1
 
       - name: Build unsigned NSIS preview installer
-        run: pnpm tauri build --bundles nsis
+        shell: pwsh
+        run: ./scripts/build-local.ps1 -SkipTests -SkipHelperBuild -Installer -BuildChannel ci-preview
+
+      - name: Verify complete RC003 helper bundle
+        shell: pwsh
+        run: ./scripts/verify-rc003-helper-bundle.ps1
 
       - name: Verify runtime simulation is absent from production build
         shell: pwsh
