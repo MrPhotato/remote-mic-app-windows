@@ -114,8 +114,10 @@ NuGet x64 工具使用 x64 MSBuild 与 StampInf；不关闭 InfVerif 或静态�
 前者的 `trust_imported=false` 描述创建当时的状态，后者记录实际信任与四项验证结果。
 完整预检和回执位于 `target/sayall-hid-filter/`，均未上传或发布。
 
-下一步需要用户在 UEFI 中将 Secure Boot 改为 Disabled 并返回 Windows。
-随后再次检查实际状态，显式启用 TESTSIGNING，重启后以
+后续用户要求优先验证不改驱动、不增加配件的路径，当前暂停在签名准备阶段，
+不继续要求关闭 Secure Boot。独立 GameInput 实验见 [WindowsRc003GameInput.md](WindowsRc003GameInput.md)。
+
+若以后明确恢复驱动试验，需要先再次核对用户选择及实际启动状态，启用 TESTSIGNING 后，以
 `NtQuerySystemInformation(SystemCodeIntegrityInformation)` 的测试签名标志确认运行态，
 再安装唯一目标包。BCD 写入成功只代表下次启动配置，不能直接当作运行态已生效。
 保留原始 TESTSIGNING 缺省状态，以便卸载后精确恢复。

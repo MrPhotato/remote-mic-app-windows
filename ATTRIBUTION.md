@@ -2,6 +2,13 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## RC003 GameInput 免驱接口实验（2026-09-20）
+
+- 依据微软 [GameInput 3.4 公告](https://developer.microsoft.com/en-us/games/articles/2026/05/gameinput-update-now-available/) 的 raw HID 新能力，使用官方 [Microsoft.GameInput 3.5.274](https://www.nuget.org/packages/Microsoft.GameInput/3.5.274) 固定包进行独立诊断。该包 README 声明 3.5 支持应用目录并排部署；包内 `native/src/GameInput.cpp` 实际包含应用目录加载分支，不能用落后的 GitHub main loader 推断不支持。
+- 本地只读查询 MSI 数据库、读取内嵌 CAB 并解包；未执行 MSI 安装或行政安装序列。只将微软签名的 x64 `GameInputRedist.dll` 放在探针目录，由同包 `GameInput.lib` 加载；未升级系统已安装的 3.3.221.0 运行库/服务，未安装输入驱动或改变启动设置。不在仓库提交第三方二进制。
+- 探针自行编写，仅参考公开 [设备回调](https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/interfaces/igameinput/methods/igameinput_registerdevicecallback)、[设备信息](https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/structs/gameinputdeviceinfo)、[原始报告读取](https://learn.microsoft.com/en-us/gaming/gdk/docs/reference/input/gameinput/interfaces/igameinputrawdevicereport/methods/igameinputrawdevicereport_getrawdata)；没有复制竞品输入实现。包内官方头文件/静态库按其 MIT 许可仅用于本地构建。
+- 仅对唯一匹配的遥控器读取白名单按键状态，拒绝聚合设备和多匹配；不记录设备身份、其它键盘输入、语音数据，不注入或吞键。实际结论及边界见 [Testing/WindowsRc003GameInput.md](Testing/WindowsRc003GameInput.md)。
+
 ## RC003 三键可选 HID 过滤驱动（2026-09-20）
 
 - 实质改编 [QL-4/RemoteMapper](https://github.com/QL-4/RemoteMapper/tree/be8b57330c26a70d8b8ec9ff1e60c23251a2fc31/driver/MiRemoteHidFilter)，固定提交 `be8b57330c26a70d8b8ec9ff1e60c23251a2fc31` 的 `driver/MiRemoteHidFilter/driver.c`、`driver.h`、`remap.c`、`remap.h`、INF 和 vcxproj；对应本仓库 `drivers/sayall-hid-filter/`。MIT，Copyright (c) 2026 QL-4；完整许可保留在该目录 `LICENSE`，随本地驱动包附带。不复用第三方二进制、证书、私钥或安装/卸载脚本。
