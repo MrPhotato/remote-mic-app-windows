@@ -6,16 +6,16 @@
 
 - 64 位 Windows 10 1809（内部版本 17763）或更高版本；
 - 可用的蓝牙适配器，并已在 Windows 中打开蓝牙；
-- 可用的网络连接：安装器会在系统缺少 WebView2 Runtime 时在线下载安装，应用更新和微信输入法语音识别也需要联网；
+- 可用的网络连接：安装器会在系统缺少 WebView2 Runtime 时在线下载安装，目标语音识别工具也可能需要联网；本 fork 当前关闭应用内自动更新；
 - 小米蓝牙遥控器 2（RC001）或小米蓝牙遥控器 2 Pro（RC003），以及电量充足的电池；
 - 如需把遥控器语音交给输入法或会议软件：安装 VB-CABLE 需要管理员权限，并需要重启一次 Windows；
 - SayAll 主程序本身按“当前用户”安装和运行，不需要、也不应以管理员身份日常运行。
 
-> SayAll 只支持 RC001 和 RC003。外观相近不代表协议兼容，请以应用连接后显示的型号为准。
+> 当前支持目标为 RC001 和 RC003，尚未完成两种型号的全部 Windows 真机验收。外观相近不代表协议兼容，请以应用连接后显示的型号及 Release 验证范围为准。
 
 ## 2. 下载并安装 SayAll
 
-1. 打开仓库的 [GitHub Releases](https://github.com/GetSayAll/remote-mic-app-windows/releases)，选择标记为“Pre-release”的目标预览版；稳定版上线后，也可选择标记为“Latest”的版本。
+1. 打开本项目的 [GitHub Releases](https://github.com/MrPhotato/remote-mic-app-windows/releases)，选择标记为“Pre-release”的目标预览版。本项目是独立派生版本，与上游使用不同的配置和更新身份。
 2. 下载 `SayAll-Windows-<版本号>-x64-setup.exe`。不要下载 `latest.json` 或 `.sig` 文件来手动安装。
 3. 建议同时下载 `SHA256SUMS.txt`，在安装包所在目录打开 PowerShell，执行：
 
@@ -26,11 +26,11 @@
 
    两处安装包哈希值应完全相同。若不同，删除安装包并停止安装。
 4. 双击安装包，选择语言并按提示完成安装。安装位置由安装器管理，不需要手动选择。
-5. 从开始菜单的“无线麦 SayAll”文件夹启动“无线麦 SayAll”。
+5. 从开始菜单启动“Remote Coding”（本派生版沿用的安装名称），或运行安装目录中的 `remote-coding.exe`。产品名称为“无线麦 SayAll Windows 版”。
 
 ### Windows 安全提示
 
-首版安装包可能还没有 Authenticode 代码签名，因此 Windows SmartScreen 可能显示“Windows 已保护你的电脑”。只有在安装包来自上述官方 Release、文件名正确且 SHA-256 校验一致时，才可选择“更多信息”并继续运行；来源或校验不明时不要绕过提示。
+本 Preview 尚无 Authenticode 代码签名，因此 Windows SmartScreen 可能显示“Windows 已保护你的电脑”。仅使用上述本项目 Release，并核对文件名与 SHA-256；另提供 minisign 签名与公钥供验证安装包字节，minisign 不等于 Windows 开发者证书。
 
 ## 3. 在 Windows 中配对遥控器
 

@@ -19,6 +19,8 @@
 
 ## 使用前准备
 
+安装器下载：[本项目 GitHub Releases](https://github.com/MrPhotato/remote-mic-app-windows/releases)。选择 `SayAll-Windows-<版本号>-x64-setup.exe`，具体验证范围与已知限制以该 Preview 的说明为准。
+
 - Windows x64、WebView2，以及已在 Windows 中配对的小米蓝牙遥控器。
 - 支持目标为小米蓝牙遥控器 2 / RC001 和 2 Pro / RC003，实际兼容性与固件、系统输入上报有关。
 - 使用遥控器麦克风需要另行安装 [VB-CABLE](https://vb-audio.com/Cable/)；只用普通按键不需要它。
