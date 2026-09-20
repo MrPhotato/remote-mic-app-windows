@@ -96,6 +96,32 @@
 
 这些耗时不含实体遥控器与手势判定。探针在产品调用前会读取自己的 UIA fixture 做保护性确认，也可能预热 provider；因此闲置一项仅证明该受控流程闲置后通过，不证明未经 UIA 预热的冷态首按。成功删除的 `selection_wait` 均为 `pending_count=0`，本轮没有直接复现成功路径中先见空光标、再见目标的轮询分支；该分支由旧真实失败及定向单元测试支撑。
 
-最新 `text_edit` 定向单元测试 17 passed、0 failed，覆盖焦点归属、待生效选择、第三种选区拒绝、取消后的迟到选择和恢复确认、预算边界。新增 `cancel_selection` 与首击提前退格/双击补偿真实窗口用例尚待执行；已有快速双击探针因未确认自身前台而 deferred，未发送产品编辑操作。补偿候选仅考虑精确可验证的纯文本，不能从文本一致推导富文本格式已恢复。
+本轮 `text_edit` 定向单元测试 17 passed、0 failed，覆盖焦点归属、待生效选择、第三种选区拒绝、取消后的迟到选择和恢复确认、预算边界。此时新增 `cancel_selection` 与首击提前退格/双击补偿真实窗口用例尚待执行；早期快速双击探针因未确认自身前台而 deferred，未发送产品编辑操作。用户随后聚焦后的实际结果见下一节，原证据保留当时状态。补偿候选仅考虑精确可验证的纯文本，不能从文本一致推导富文本格式已恢复。
 
 脱敏版本化记录见 [软件 UIA 执行证据](../Testing/evidence/punctuation-webview-uia-execution-20260920.json)。此前两轮实体失败证据保持原样；本轮尚未证明最终修复安装版的 RC003 实体双击通过。
+
+## 第四轮软件真 UIA：提前退格、补偿与取消
+
+用户聚焦自家固定测试框后，`15:10:14Z–15:12:39Z` 直接调用产品 Runtime/文本编辑函数。共 9 项 passed、1 项 failed；逐项数值见 [提前退格执行证据](../Testing/evidence/optimistic-backspace-webview-20260920.json)。
+
+| 情形 | 实际长度过程（UTF-16 单位） | 首次提交 / 动作结束 |
+| --- | --- | --- |
+| 普通后缀双击补偿 | 12→11→6 | 45ms / 545ms |
+| 单次首删 | 12→11 | 28ms / 28ms |
+| 英文标点恢复 | 6→5→6 | 46ms / 138ms |
+| 中文标点恢复 | 3→2→3 | 35ms / 130ms |
+| 单个 emoji 删除，边界已到达 | 8→6 | 38ms / 98ms |
+| 无标点删空 | 5→4→0，但 API 拒绝 | 39ms / 531ms，failed |
+| 首删后取消事务 | 12→11，后续 complete 被拒绝 | 48ms / 48ms |
+| 选择生效时取消并恢复光标 | 12→12 | 187ms |
+| 普通后缀连续复验两次 | 每次 12→11→6 | 均 30ms / 504ms、520ms |
+
+首删计时结束于成对输入已提交回调，不是 DOM 首次变化或画面响应时刻。探针在首删提交后直接调用 Runtime.complete，不包含实体双击判定时间；第一轮重复的 stdout 被第二轮覆盖，504ms 来自同轮产品日志从 begin 到 shutdown，不能与其它 action_ms 当作完全相同计时边界。最终 ValuePattern 精确预期与产品 `exact_result_verified` 一起作为成功依据；不只检查 SendInput 返回。
+
+`cancel_selection` 在实际非空选区出现时触发取消。日志先记录删除操作 cancelled，再记录 `cleanup_wait_caret pending_count=1 observed_ms=16` 和 `selection_cleanup ... passed original_caret_restored`；探针确认原文 12 单位不变、末尾空光标恢复，执行方同时观察到没有 input 事件。该项实际覆盖恢复选择异步生效的等待，不等于在任意第三方应用、失焦或超时时均已验收。
+
+无标点一项虽然实际删到 0，产品最终验证以 `unsupported_text_content` 拒绝，仍记 failed。只读公开 UIA 对照确认固定空 `<input>` 的 ValuePattern 为空，但 DocumentRange.GetText 返回一个 U+FFFC，选区为空且位于文档起点。修复候选必须用独立的空 ValuePattern、可编辑属性和精确光标等条件确认空字段，不能普遍忽略嵌入对象字符。本轮仅记录实证与修复方向，修复后的通过结果另行补充。
+
+`15:16:02Z` 的独立修复复验 passed：首击提交 39ms、总动作 559ms，实际 5→4→0，API、焦点与精确预期均通过；产品记录 `empty_result_verify ... writable_empty_value_placeholder_confirmed` 后 `exact_result_verified`。新分支只接受可写 Edit 的空 ValuePattern、单个 U+FFFC 文档和起点空光标，并重复两次组合态、焦点及空字段检查；没有放宽普通嵌入对象检查。执行方另确认最终 DOM 光标为 0/0。最新事务定向测试 23 passed、0 failed。原失败与修复复验分别保留，累计为 10 项软件执行 passed、1 项历史 failed。
+
+本轮没有实体遥控器、手势分类或新安装验证，fixture 预检可能预热 UIA provider，也没有真实闲置首用。单次首删用例随后关闭 Runtime，不能据此宣称手势窗口到期不会重删。复杂字素、活动 IME、已有选区、其它应用及富文本格式仍未通过本轮证明。
