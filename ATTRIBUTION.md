@@ -356,3 +356,7 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 后续交叉复查补上清理之前的统一失效发布：共享快照与输入门控先变为不可用，再进入可能阻塞的 Windows 清理。19 项 RC003 定向测试 passed，包含清理被同步屏障阻塞时的真实线程观察测试；这证明代码发布顺序，不是实体断连或 Windows 清理成功的证据。
 
 按键设置继续复用已有 SettingsStore 的 Rust `Mutex` 串行策略，将锁覆盖到平台同步热加载，避免保存／导入／重置交错。11 项设置测试 passed，包含全部 9 种两操作组合及失败分支。没有新增第三方 API 或实现依赖；真实 IPC 和实体输入边界见 [并发事务 Bug](Bugs/2026-09-21-button-mapping-transaction.md)。
+
+## 确认键 Enter 扫描码兼容（2026-09-21）
+
+沿用本仓库 PageUp/PageDown 扫描码修复模式，并先核对 [Microsoft KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)：KEYEVENTF_SCANCODE 使用 wScan 标识物理键，KEYEVENTF_EXTENDEDKEY 区分扩展键。本机旧包自有 WebView 的原生事件实测显示 Ctrl+Enter 的 Enter `code` 为空；主 Enter 采用 0x1C、非扩展，保持现有成对注入，不调整时序、不复制第三方实现。公开 Chromium 源码页面本轮无法打开，不把未读取源码作为证据。目标应用对快捷键的上下文要求另行验收，见 [Bug 记录](Bugs/2026-09-21-enter-shortcut-identity.md)。

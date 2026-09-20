@@ -136,3 +136,8 @@
 
 - [x] 修复 PageUp/Down 注入缺失扫描码；原生消息对照证明修复前 scan=00、修复后49/51且Ctrl及释放边沿正确。Windows平台库145项通过。
 - [ ] Codex前台遥控切换任务与闲置首用复测；返回/音量上报独立排查，保留用户自定义配置。
+
+## 2026-09-21 确认键长按反馈
+
+- [x] 补齐 Enter 物理标识：旧包实测 WebView `code` 为空；修复后安装版 Ctrl+Enter 四条可信事件、普通 Enter 两条事件及约 80 秒闲置后的首个软件注入 passed。七步 preflight（前端 163、Rust 288）通过，见 [Bug](Bugs/2026-09-21-enter-shortcut-identity.md)。
+- [ ] 确认键长按 Ctrl+Enter 在目标应用的实体动作和严格硬件冷首用复验；不能以软件注入或 SendInput 提交成功替代。

@@ -1,0 +1,137 @@
+{
+  "schema": 1,
+  "date": "2026-09-21",
+  "source_base": "b9c3f7d5b15832d217734bee9cee45e33024ebdf",
+  "source_state": "working_tree_with_enter_scan_fix",
+  "before": {
+    "paired_edges": 4,
+    "native_trusted": true,
+    "ctrl_code": "ControlLeft",
+    "ctrl_at_enter": true,
+    "enter_code": ""
+  },
+  "after": {
+    "focused": true,
+    "events": [
+      {
+        "type": "keydown",
+        "key": "Control",
+        "code": "ControlLeft",
+        "ctrl": true,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keydown",
+        "key": "Enter",
+        "code": "Enter",
+        "ctrl": true,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Enter",
+        "code": "Enter",
+        "ctrl": true,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Control",
+        "code": "ControlLeft",
+        "ctrl": false,
+        "repeat": false,
+        "trusted": true
+      }
+    ]
+  },
+  "idle": {
+    "at": "2026-09-20T18:37:04.149Z",
+    "result": "passed",
+    "long": [
+      {
+        "type": "keydown",
+        "key": "Control",
+        "code": "ControlLeft",
+        "ctrl": true,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keydown",
+        "key": "Enter",
+        "code": "Enter",
+        "ctrl": true,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Enter",
+        "code": "Enter",
+        "ctrl": true,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Control",
+        "code": "ControlLeft",
+        "ctrl": false,
+        "repeat": false,
+        "trusted": true
+      }
+    ],
+    "single": [
+      {
+        "type": "keydown",
+        "key": "Enter",
+        "code": "Enter",
+        "ctrl": false,
+        "repeat": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Enter",
+        "code": "Enter",
+        "ctrl": false,
+        "repeat": false,
+        "trusted": true
+      }
+    ]
+  },
+  "idle_gap_seconds_approximately": 80,
+  "installer": {
+    "at": "2026-09-21T02:35:25.5469923+08:00",
+    "installerExitCode": 0,
+    "installerSha256": "6901f7fc2cc5c6033536efc6105ec507e6c7112f05e301b0c0051befa4af3e46",
+    "main": {
+      "mainMatchesBuild": true,
+      "bundleMarkerOnly": true,
+      "builtSha256": "71c3597f372f525468ccc7c2e9d1672d173397e955bd5ac19638d358ffeacc61",
+      "installedSha256": "83313b6036442a19c365c4c8e91c16d6cb0a543803aeefbe01d22ca484eca91c",
+      "installedBytes": 16117248
+    },
+    "helperManifestSha256": "9057f5de09a13799452ccc8a1da59c0067d82b4f4e9eec059338fa35747d8441",
+    "helperFilesChecked": 96,
+    "helperFailures": 0,
+    "helperTotalFiles": 97
+  },
+  "tests": {
+    "rust_passed": 288,
+    "preflight_steps_passed": 7,
+    "send_input_targeted_passed": 29,
+    "frontend_passed": 163,
+    "rust_ignored": 7
+  },
+  "installed_settings_file_unchanged": true,
+  "configured_ok_long_preserved": true,
+  "helper_files_verified": 96,
+  "production_simulation_absent": true,
+  "target_application_physical_action": "deferred",
+  "hardware_cold_first": "deferred",
+  "privacy": "fixed_key_names_booleans_hashes_and_timings_only"
+}
