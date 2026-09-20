@@ -353,4 +353,6 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 
 沿用本仓库已验证的 BLE 连接代次与 Helper 中性状态守卫，复核旧日志发现语音流编号被误作连接编号；12 次不必要重绑的 ground truth 归档于 [Bug 记录](Bugs/2026-09-21-rc003-voice-helper-generation.md)。修复仅把同锁发布的真实连接编号接到 Helper，不调整时序常量、不复制外部实现。18 项 RC003 定向及 1 项 IPC 契约测试 passed，新包硬件验证 deferred。
 
+后续交叉复查补上清理之前的统一失效发布：共享快照与输入门控先变为不可用，再进入可能阻塞的 Windows 清理。19 项 RC003 定向测试 passed，包含清理被同步屏障阻塞时的真实线程观察测试；这证明代码发布顺序，不是实体断连或 Windows 清理成功的证据。
+
 按键设置继续复用已有 SettingsStore 的 Rust `Mutex` 串行策略，将锁覆盖到平台同步热加载，避免保存／导入／重置交错。11 项设置测试 passed，包含全部 9 种两操作组合及失败分支。没有新增第三方 API 或实现依赖；真实 IPC 和实体输入边界见 [并发事务 Bug](Bugs/2026-09-21-button-mapping-transaction.md)。

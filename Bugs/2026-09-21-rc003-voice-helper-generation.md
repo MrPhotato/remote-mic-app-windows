@@ -21,9 +21,18 @@
 - Helper availability 改读此连接字段；语音开始/结束不改它。原有语音代次、重连策略、时间常量、Helper 清理、监听 epoch 和真实 neutral 要求不变。
 - 成功连接与 Helper 选择变化日志增加匿名连接代次、可用性和监听 epoch，用于区分真正换连接与语音会话变化，不记录目标 ID。
 
+## 补修：清理阻塞前发布失效
+
+交叉代码审查另发现既有窗口：`invalidate_connection` 原先先增加 worker 局部代次，再执行快捷键释放、音频与 BLE 清理，最后由调用者发布断连/重连状态。如果 Windows 清理阻塞，共享快照仍可能是旧 Ready。此项是代码审查发现，**不是新增真机失败记录**。
+
+所有调用 `invalidate_connection` 的路径现在先在同一 state 短锁内发布新连接代次；原本仍在线或重连的 phase 暂置为 Disconnected，既有 Failed 等非活动状态与错误信息保留。随后同步既有普通键门控/F5 状态并记录 `ble_connection_invalidation phase=published`，再调用原清理逻辑。状态锁不跨清理调用；调用者原有最终重连、睡眠、失败策略不变，不调整按键边沿或时间常量。
+
+回归通过生产代码使用的同一个清理闭包边界阻塞模拟清理，观察者在阻塞期间使用 `try_lock` 验证锁已释放、新代次已可见、Helper 与普通门控不可用；覆盖 Ready、Streaming、Draining、AwaitingCapabilities、Reconnecting、Failed，且模拟清理失败不会重新开放旧状态。该测试只证明发布顺序和状态守卫，不证明 Windows 清理本身或新包硬件恢复。
+
 ## 验证与边界
 
 - `cargo test -p sayall-windows rc003_ --lib --locked`：18 passed，0 failed。新增回放覆盖 12 次语音会话及各阶段不改变选择；两次轮询之间完成真正重连，即使语音代次相同也改变选择；监听 epoch、监听停止、连接阶段和 RC001 排除继续生效。
 - `cargo test -p sayall-windows --test ipc_contract --locked`：1 passed，0 failed，原 JSON 契约保持不变。
+- 上述清理窗口补修后的 `rc003_ --lib` 定向复验：19 passed，0 failed，其中包含受阻清理的新回归。
 - 新包 RC003 实体语音/三键、真实断连与睡眠恢复：**deferred**。本次未构建安装包、未启动或退出应用、未操作遥控器。
 - 隐私检查：归档只含 UTC 时间、公开提交、匿名计数和代次；不含个人路径、设备身份、语音、输入内容或凭据。ignored 原始日志不提交。

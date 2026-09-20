@@ -129,7 +129,7 @@
 - [ ] RC003 可选三键增强剩余验收：睡眠/崩溃恢复、多目标与共享宿主负对照、RC001、最终普通返回的严格闲置首用、新 TV/完整 Codex 预设和第三方识别文字端到端；旧规则已有本机实体首删/双击结果，关闭返回双击后快速连按已由用户确认，正常退出、清理退出状态与本轮升级/启动已 passed，不代表崩溃清理通过；运行中安装未替换主程序的问题仍未归因，不得以安装器返回 0 代替实际文件核验。范围和边界见 [集成验收](Testing/WindowsRc003Input.md) 与 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。
 - [ ] 本 fork 首个完整签名 Preview：Helper 构建与完整性门禁、独立 minisign 验证、own-repo 元数据和最新 PR CI 门禁已实现并完成本地对应检查；远端全流程、版本化 Notes、Tag 与公开资产尚未执行，不把本地签名测试记为发布通过。自动更新保持关闭，Authenticode 仍未启用。
 - [ ] 并发映射变更一致性：保存、重置、导入已统一写盘与热加载事务，11 项设置测试 passed（含三类操作全部 9 种交错和失败不热加载），新安装版 IPC 与实体按键回归 deferred。见 [Bug 记录](Bugs/2026-09-21-button-mapping-transaction.md)。
-- [ ] 语音触发三键增强重复重绑：已用日志确认旧版 12 次语音均误重绑，Helper 已改读同锁发布的真实连接代次，18 项 RC003 定向及 1 项 IPC 契约测试 passed；新版实体语音／三键、断连及睡眠复验 deferred。见 [Bug 与证据](Bugs/2026-09-21-rc003-voice-helper-generation.md)。
+- [ ] 语音触发三键增强重复重绑：已用日志确认旧版 12 次语音均误重绑，Helper 已改读同锁发布的真实连接代次；清理前先发布失效，避免慢清理期间仍保留旧可用状态。补修后 19 项 RC003 定向及此前 1 项 IPC 契约测试 passed；新版实体语音／三键、断连及睡眠复验 deferred。见 [Bug 与证据](Bugs/2026-09-21-rc003-voice-helper-generation.md)。
 - [x] Windows 宣传片本地初稿：64 秒 1080p 中文动效与原创配乐，包含默认键位、自定义、实验性增强权限、GPL、本项目／Mac 原版／Windows 上游链接及用户指定协作署名；全片明确交互动效示意。渲染与全帧解码 passed，源脚本和发布文案见 [marketing/promo](marketing/promo/README.md)。仅本地交付，未上传视频平台。
 
 ## 本地快捷键编码修复（2026-09-18）

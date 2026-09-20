@@ -332,6 +332,7 @@ fn worker_loop(
                         if capabilities_deadline.is_some_and(|deadline| deadline <= now) {
                             capabilities_deadline = None;
                             if let Err(error) = invalidate_connection(
+                                &state,
                                 &mut session,
                                 &mut pipeline,
                                 &audio,
@@ -598,6 +599,7 @@ fn worker_loop(
                 backoff.reset();
                 radio_recovery.reset();
                 let result = invalidate_connection(
+                    &state,
                     &mut session,
                     &mut pipeline,
                     &audio,
@@ -774,6 +776,7 @@ fn worker_loop(
                             .clone()
                             .unwrap_or_else(|| "ATVV 能力确认失败".to_owned());
                         if let Err(cleanup_error) = invalidate_connection(
+                            &state,
                             &mut session,
                             &mut pipeline,
                             &audio,
@@ -827,6 +830,7 @@ fn worker_loop(
                 {
                     capabilities_deadline = None;
                     if let Err(error) = invalidate_connection(
+                        &state,
                         &mut session,
                         &mut pipeline,
                         &audio,
@@ -866,6 +870,7 @@ fn worker_loop(
                 if message_generation == connection_generation {
                     capabilities_deadline = None;
                     if let Err(cleanup_error) = invalidate_connection(
+                        &state,
                         &mut session,
                         &mut pipeline,
                         &audio,
@@ -919,6 +924,7 @@ fn worker_loop(
                 capabilities_deadline = None;
                 reconnect_deadline = None;
                 if let Err(error) = invalidate_connection(
+                    &state,
                     &mut session,
                     &mut pipeline,
                     &audio,
@@ -1052,6 +1058,7 @@ fn attempt_connection(
         "ble_connect phase=requested reconnecting={reconnecting} attempt={reconnect_attempt}"
     ));
     invalidate_connection(
+        state,
         session,
         pipeline,
         audio,
@@ -1191,7 +1198,34 @@ fn raw_error_text(error: &PlatformError) -> String {
     }
 }
 
+/// Publish loss before cleanup can block in SendInput, audio or Windows COM.
+/// The closure boundary keeps the state lock out of every external cleanup call.
+fn with_invalidated_connection<T>(
+    state: &Arc<Mutex<ConnectionSnapshot>>,
+    connection_generation: &mut u64,
+    cleanup: impl FnOnce() -> T,
+) -> T {
+    *connection_generation = connection_generation.wrapping_add(1);
+    let phase = {
+        let mut snapshot = lock(state);
+        snapshot.connection_generation = *connection_generation;
+        // Preserve existing terminal states/errors. Active or reconnecting states
+        // need a temporary unavailable phase until the caller chooses its final
+        // reconnect, suspended, disconnected or failed state.
+        if gate_remote_connected(snapshot.phase) {
+            snapshot.phase = ConnectionPhase::Disconnected;
+        }
+        snapshot.phase
+    };
+    apply_input_connection_phase(phase);
+    gatt_note(format!(
+        "ble_connection_invalidation phase=published connection_generation={connection_generation} helper_available=false gate_remote_connected=false cleanup_started=false"
+    ));
+    cleanup()
+}
+
 fn invalidate_connection(
+    state: &Arc<Mutex<ConnectionSnapshot>>,
     session: &mut Option<BleSession>,
     pipeline: &mut AtvvVoicePipeline,
     audio: &AudioRuntime,
@@ -1199,22 +1233,23 @@ fn invalidate_connection(
     held_hotkey: &mut Option<KeyChord>,
     connection_generation: &mut u64,
 ) -> Result<(), PlatformError> {
-    *connection_generation = connection_generation.wrapping_add(1);
-    release_voice_hold_hotkey(send_input, held_hotkey);
-    let mut cleanup_errors = Vec::new();
-    if let Err(error) = audio.interrupt_session() {
-        cleanup_errors.push(format!("音频中断：{error}"));
-    }
-    if let Err(error) = close_session(session) {
-        cleanup_errors.push(error.to_string());
-    }
-    pipeline.interrupt();
-    *pipeline = AtvvVoicePipeline::default();
-    if cleanup_errors.is_empty() {
-        Ok(())
-    } else {
-        Err(PlatformError::BleCleanup(cleanup_errors.join("；")))
-    }
+    with_invalidated_connection(state, connection_generation, || {
+        release_voice_hold_hotkey(send_input, held_hotkey);
+        let mut cleanup_errors = Vec::new();
+        if let Err(error) = audio.interrupt_session() {
+            cleanup_errors.push(format!("音频中断：{error}"));
+        }
+        if let Err(error) = close_session(session) {
+            cleanup_errors.push(error.to_string());
+        }
+        pipeline.interrupt();
+        *pipeline = AtvvVoicePipeline::default();
+        if cleanup_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(PlatformError::BleCleanup(cleanup_errors.join("；")))
+        }
+    })
 }
 
 /// 清理旧会话失败时的处理（2026-09-05 修正：旧实现直接清空首选设备并
@@ -2761,6 +2796,57 @@ impl Drop for WinRtApartment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rc003_connection_loss_is_visible_while_cleanup_is_blocked() {
+        for phase in [
+            ConnectionPhase::Ready,
+            ConnectionPhase::Streaming,
+            ConnectionPhase::Draining,
+            ConnectionPhase::AwaitingCapabilities,
+            ConnectionPhase::Reconnecting,
+            ConnectionPhase::Failed,
+        ] {
+            let state = Arc::new(Mutex::new(ConnectionSnapshot {
+                phase,
+                remote_model: RemoteModel::Rc003,
+                connection_generation: 41,
+                generation: 12,
+                last_error: Some("prior_status".into()),
+                ..ConnectionSnapshot::default()
+            }));
+            let worker_state = Arc::clone(&state);
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                let mut generation = 41;
+                let result = with_invalidated_connection(&worker_state, &mut generation, || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                    Err::<(), _>("synthetic_cleanup_failure")
+                });
+                (generation, result)
+            });
+            started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            // Cleanup is deliberately held here. Observers must acquire the same
+            // lock immediately and already see loss, before cleanup can finish.
+            let during_cleanup = state.try_lock().ok().map(|snapshot| snapshot.clone());
+            release_tx.send(()).unwrap();
+            let (generation, result) = worker.join().unwrap();
+            let during_cleanup = during_cleanup.expect("state lock held across cleanup");
+            assert_eq!(generation, 42);
+            assert_eq!(during_cleanup.connection_generation, generation);
+            assert_eq!(during_cleanup.generation, 12);
+            assert!(!during_cleanup.rc003_input_availability(true, 0).0);
+            assert!(!gate_remote_connected(during_cleanup.phase));
+            assert_eq!(during_cleanup.last_error.as_deref(), Some("prior_status"));
+            if phase == ConnectionPhase::Failed {
+                assert_eq!(during_cleanup.phase, ConnectionPhase::Failed);
+            }
+            assert_eq!(result, Err("synthetic_cleanup_failure"));
+            assert!(!lock(&state).rc003_input_availability(true, 0).0);
+        }
+    }
 
     #[test]
     fn wetype_retry_requires_the_unchanged_held_wetype_chord() {

@@ -101,6 +101,17 @@
     "rc003_filtered_lib_tests": 18,
     "result": "passed"
   },
+  "cleanup_publication_followup": {
+    "discovery": "code_review_only_not_new_hardware_failure",
+    "boundary": "publish_unavailable_phase_and_new_link_generation_before_potentially_blocking_cleanup",
+    "regression": "rc003_connection_loss_is_visible_while_cleanup_is_blocked",
+    "initial_phases": ["Ready", "Streaming", "Draining", "AwaitingCapabilities", "Reconnecting", "Failed"],
+    "checks": ["state_lock_released_during_blocked_cleanup", "new_connection_generation_visible", "helper_unavailable", "ordinary_gate_disconnected", "voice_generation_unchanged", "cleanup_failure_does_not_reopen_old_state"],
+    "rc003_filtered_lib_tests": 19,
+    "failed": 0,
+    "result": "passed",
+    "hardware_validation": "deferred"
+  },
   "corrected_hardware_validation": "deferred",
   "privacy": "Only UTC times, public source revision, anonymous generations and counts retained; no device identity, input or audio content."
 }
