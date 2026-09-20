@@ -194,3 +194,5 @@ Helper 构建日志位于 ignored `target/rc003-helper/logs/`。
 
 [实际执行证据](evidence/ordinary-backspace-undo-webview-20260921.json)：自家固定 WebView 输入框由真实 SendInput 普通 Backspace 删除一次（12→11），随后 Ctrl+Z 恢复原值（11→12），最终焦点及光标 12/12 正确。探针只读 UIA 核验，不进入 backspace_transaction 或选择删除；首删观察 30ms、总输入动作 54ms，不能当作遥控端到端或冷首按延迟。手势 32 tests、引擎路由 21 tests passed，覆盖无 UIA 能力也直接首删/一次撤销、普通重复及原标点路径保留；预设页面 24、按键编辑页 27 tests passed。实体 RC003、新安装及 Codex 实际动作仍待验。
 
+
+2026-09-21 配置提示修正：ButtonsPage 定向 34 tests passed，覆盖返回 disabled/Ctrl+Z/标点/其它双击的准确时序说明，以及电源单/双/长任意格配置和关闭 Ctrl+Z；测试不注入按键。新版原生页面回验另计。

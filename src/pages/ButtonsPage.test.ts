@@ -684,6 +684,8 @@ describe("buttons mapping page", () => {
     expect((hold.element as HTMLButtonElement).disabled).toBe(true);
     expect(hold.text()).toContain("持续退格");
     expect(wrapper.text()).toContain("当前单按立即退格");
+    expect(wrapper.find(".punctuation-note").exists()).toBe(false);
+    expect(wrapper.get(".gesture-timing-note").text()).not.toContain("撤销");
 
     await backCard.findAll(".mapping-cell")[1]!.trigger("click");
     expect(wrapper.get(".backspace-actions").text()).toContain("保留标点");
@@ -692,7 +694,87 @@ describe("buttons mapping page", () => {
     saved = vi.mocked(saveButtonMappings).mock.lastCall![0];
     expect(saved.actions.back?.double).toEqual({ type: "delete_to_punctuation" });
     expect(saved.actions.back?.single).toEqual({ type: "normal_backspace" });
-    expect(wrapper.text()).toContain("当前开启双击：单击等待约 0.3 秒");
+    expect(wrapper.get(".punctuation-note").text()).toContain("保留标点");
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("第一击先普通退格，不等待双击判定窗口");
+    expect(wrapper.get(".mapping-editor").text()).not.toContain("等待约 0.3 秒");
+    expect(wrapper.get(".gesture-timing-note").text()).not.toContain("撤销");
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("saves Undo on Back double and updates its hint when changed or disabled without sending keys", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "返回", 0);
+    await wrapper.get(".backspace-actions .chip").trigger("click");
+    await flushPromises();
+    await openCell(wrapper, "返回", 1);
+    await wrapper.findAll(".mapping-editor .chip").find(button => button.text() === "撤销")!.trigger("click");
+    await flushPromises();
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.back).toEqual({
+      single: { type: "normal_backspace" },
+      double: { type: "shortcut", chord: { keys: ["control", "z"] } },
+      long: { type: "disabled" },
+    });
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("第一击立即退格，双击时第二击发送一次 Ctrl + Z 撤销");
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("具体撤销内容由当前应用决定");
+    expect(wrapper.get(".mapping-editor").text()).not.toContain("等待约 0.3 秒");
+    expect(wrapper.find(".punctuation-note").exists()).toBe(false);
+    await openCell(wrapper, "返回", 0);
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("第一击立即退格");
+
+    await openCell(wrapper, "返回", 1);
+    await wrapper.findAll(".mapping-editor .chip").find(button => button.text() === "粘贴")!.trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("单击等待约 0.3 秒");
+    expect(wrapper.get(".gesture-timing-note").text()).not.toContain("撤销");
+    expect(wrapper.find(".punctuation-note").exists()).toBe(false);
+    await wrapper.get(".editor-disable-btn").trigger("click");
+    await flushPromises();
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.back?.double).toEqual({ type: "disabled" });
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("当前单按立即退格");
+    expect(wrapper.get(".gesture-timing-note").text()).not.toContain("撤销");
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it.each([0, 1, 2])("freely assigns and disables Undo on another button's trigger %i", async triggerIndex => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", triggerIndex);
+    await wrapper.findAll(".mapping-editor .chip").find(button => button.text() === "撤销")!.trigger("click");
+    await flushPromises();
+    const trigger = (["single", "double", "long"] as const)[triggerIndex]!;
+    const saved = vi.mocked(saveButtonMappings).mock.lastCall![0];
+    expect(saved.actions.power?.[trigger]).toEqual({ type: "shortcut", chord: { keys: ["control", "z"] } });
+    expect(saved.actions.back).toBeUndefined();
+    expect(wrapper.get(".gesture-timing-note").text()).not.toContain("第一击立即退格");
+    if (trigger === "double") expect(wrapper.get(".gesture-timing-note").text()).toContain("双击判定窗口约 0.3 秒");
+    await wrapper.get(".editor-disable-btn").trigger("click");
+    await flushPromises();
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.power?.[trigger]).toEqual({ type: "disabled" });
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it.each([
+    { keys: ["z", "left_control"], eager: true },
+    { keys: ["right_control", "z"], eager: true },
+    { keys: ["control", "shift", "z"], eager: false },
+  ])("matches the current imported Back chord timing for $keys", async ({ keys, eager }) => {
+    vi.mocked(getButtonMappings).mockResolvedValueOnce({
+      enabled: true,
+      actions: { back: {
+        single: { type: "normal_backspace" },
+        double: { type: "shortcut", chord: { keys } },
+        long: { type: "disabled" },
+      } },
+    } satisfies ButtonMappings);
+    const wrapper = await mountPage();
+    await openCell(wrapper, "返回", 1);
+    const hint = wrapper.get(".gesture-timing-note").text();
+    expect(hint.includes("第一击立即退格")).toBe(eager);
+    expect(hint.includes("等待约 0.3 秒")).toBe(!eager);
+    expect(wrapper.find(".punctuation-note").exists()).toBe(false);
+    expect(saveButtonMappings).not.toHaveBeenCalled();
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });

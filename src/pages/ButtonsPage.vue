@@ -468,6 +468,24 @@ async function openCodexReference(): Promise<void> {
 }
 
 const selectedAction = computed(() => editingTarget.value ? actionOf(editingTarget.value.button, editingTarget.value.trigger) : null);
+const normalBackspaceNote = computed<string | null>(() => {
+  const target = editingTarget.value;
+  if (!target) return null;
+  const actions = actionsOf(target.button);
+  if (actions.single.type !== "normal_backspace") return null;
+  const double = actions.double;
+  if (double.type === "disabled") return "当前单按立即退格，按住持续删除，松开停止。";
+  // Keep the eager pair identical to button_gestures::is_plain_undo.
+  if (target.button === "back" && double.type === "shortcut"
+    && double.chord.keys.length === 2 && double.chord.keys.includes("z")
+    && double.chord.keys.some(key => ["control", "left_control", "right_control"].includes(key))) {
+    return "当前返回第一击立即退格，双击时第二击发送一次 Ctrl + Z 撤销；具体撤销内容由当前应用决定。按住持续删除，松开停止。";
+  }
+  if (target.button === "back" && double.type === "delete_to_punctuation") {
+    return "当前返回第一击先普通退格，不等待双击判定窗口；双击执行所选标点删除，按住持续删除，松开停止。";
+  }
+  return "当前开启双击：单击等待约 0.3 秒区分双击，按住仍持续删除，松开停止。";
+});
 const scrollSteps = computed(() => selectedAction.value?.type === "scroll" ? selectedAction.value.steps ?? 1 : 1);
 const moveDistance = computed(() => selectedAction.value?.type === "mouse_move" ? selectedAction.value.distance : 30);
 const moveSymbols: Record<MoveDirection, string> = { up: "↑", down: "↓", left: "←", right: "→" };
@@ -1126,14 +1144,13 @@ onUnmounted(() => {
       <div class="action-sections">
         <p v-if="capabilityNote" class="muted editor-note capability-note">{{ capabilityNote }}</p>
         <section v-if="editingTarget.button === 'back'" class="action-section backspace-actions">
-          <h4 class="action-section-title">返回键删除</h4>
+          <h4 class="action-section-title">返回键动作</h4>
           <div class="preset-grid">
             <button v-if="editingTarget.trigger === 'single'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'normal_backspace' }" :disabled="busy" @click="applyAction({ type: 'normal_backspace' })">普通退格（含按住连删）</button>
             <button v-if="editingTarget.trigger === 'double'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'delete_to_punctuation' }" :disabled="busy" @click="applyAction({ type: 'delete_to_punctuation' })">删到上一个标点（保留标点）</button>
           </div>
-          <p class="muted editor-note">普通退格：单按 Backspace，按住按 Windows 键盘重复速度连续删除；长按随单击生效，无需另配。</p>
-          <p class="muted editor-note">默认方案将返回双击设为 Ctrl + Z：第一击立即退格，第二击发送一次撤销。撤销范围由当前应用决定。</p>
-          <p v-if="editingTarget.trigger === 'double' || actionsOf('back').double.type === 'delete_to_punctuation'" class="muted editor-note">双击删除从光标向左删到上一处标点，并保留标点。仅支持可读取文本的编辑区，不支持时不删除。开启双击后，单击会等待约 0.3 秒；按住仍可连续删除。</p>
+          <p v-if="actionsOf('back').single.type === 'normal_backspace'" class="muted editor-note">普通退格：按住按 Windows 键盘重复速度连续删除；长按随单击生效，无需另配。</p>
+          <p v-if="actionsOf('back').double.type === 'delete_to_punctuation'" class="muted editor-note punctuation-note">当前双击从光标向左删到上一处标点，并保留标点。仅支持可读取文本的编辑区；无法安全读取时不执行双击批量删除。</p>
         </section>
         <section class="action-section codex-shortcuts" aria-labelledby="codex-shortcuts-title">
           <div class="codex-shortcuts-heading">
@@ -1307,13 +1324,13 @@ onUnmounted(() => {
           </template>
         </section>
       </div>
-      <p v-if="actionOf(editingTarget.button, 'single').type === 'normal_backspace'" class="muted editor-note">
-        {{ actionsOf(editingTarget.button).double.type === 'disabled' ? "当前单按立即退格，按住持续删除，松开停止。" : "当前开启双击：单击等待约 0.3 秒区分双击，按住仍持续删除，松开停止。" }}
+      <p v-if="normalBackspaceNote" class="muted editor-note gesture-timing-note">
+        {{ normalBackspaceNote }}
       </p>
-      <p v-else-if="editingTarget.trigger === 'single'" class="muted editor-note">
+      <p v-else-if="editingTarget.trigger === 'single'" class="muted editor-note gesture-timing-note">
         未配置双击与长按时，单击在按下瞬间触发（零延迟）；返回/方向/音量键按住会连续触发。
       </p>
-      <p v-else class="muted editor-note">
+      <p v-else class="muted editor-note gesture-timing-note">
         {{ editingTarget.trigger === "double" ? "双击判定窗口约 0.3 秒：配置后单击会稍等片刻以区分双击。" : "长按约 0.55 秒触发；配置后按住连发停用。" }}
       </p>
     </article>
