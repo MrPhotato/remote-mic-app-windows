@@ -1,0 +1,451 @@
+{
+  "schema": 1,
+  "date": "2026-09-20",
+  "model": "rc003",
+  "source_revision": "8e7b68acf1af3ab0ce09b21615416af268684c2b",
+  "scope": "installed_app_physical_remote_own_webview_fixture",
+  "semantic_rule": "old_keep_nearest_punctuation_including_restore_of_deleted_trailing_boundary",
+  "result": "mixed_first_focus_cancelled_then_old_semantics_passed",
+  "observation_started": "2026-09-20T15:31:38.786Z",
+  "product_window_start": "2026-09-20T15:35:45.697Z",
+  "product_window_end": "2026-09-20T15:36:12.082Z",
+  "new_current_clause_with_trailing_punctuation_semantics": "not_tested",
+  "sources": [
+    "eager-physical-round1.json",
+    "installed-app-eager-final.log"
+  ],
+  "counts": {
+    "all_semantic_edges": 48,
+    "back_down": 20,
+    "back_up": 20,
+    "up_pairs": 2,
+    "left_pairs": 1,
+    "right_pairs": 1,
+    "back_single_gestures": 13,
+    "back_double_gestures": 7,
+    "transaction_begins": 13,
+    "first_cancelled_focus_changed": 1,
+    "first_prepared_submitted": 12,
+    "first_prepared_min_ms": 36.0,
+    "first_prepared_max_ms": 55.0,
+    "double_completed_passed": 7,
+    "double_suffix_deletion": 5,
+    "double_trailing_boundary_restore": 2,
+    "trusted_backspace_keydown": 17,
+    "trusted_backspace_keyup": 17
+  },
+  "transactions": [
+    {
+      "sequence": 1,
+      "begin_at": "2026-09-20T15:35:45.697Z",
+      "prepare_cancelled_at": "2026-09-20T15:35:45.750Z",
+      "cancel_reason": "focus_changed",
+      "cancel_elapsed_ms": 52,
+      "first_input_submitted": false
+    },
+    {
+      "sequence": 2,
+      "begin_at": "2026-09-20T15:35:47.096Z",
+      "first_submit_at": "2026-09-20T15:35:47.149Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 52,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:35:47.306Z",
+      "double_plan": "boundary_retained_delete_suffix",
+      "double_completed_at": "2026-09-20T15:35:47.887Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 602
+    },
+    {
+      "sequence": 3,
+      "begin_at": "2026-09-20T15:35:49.195Z",
+      "first_submit_at": "2026-09-20T15:35:49.238Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 42,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true
+    },
+    {
+      "sequence": 4,
+      "begin_at": "2026-09-20T15:35:50.208Z",
+      "first_submit_at": "2026-09-20T15:35:50.257Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 48,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:35:50.480Z",
+      "double_plan": "boundary_retained_delete_suffix",
+      "double_completed_at": "2026-09-20T15:35:51.142Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 685
+    },
+    {
+      "sequence": 5,
+      "begin_at": "2026-09-20T15:35:55.564Z",
+      "first_submit_at": "2026-09-20T15:35:55.601Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 36,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true
+    },
+    {
+      "sequence": 6,
+      "begin_at": "2026-09-20T15:35:57.220Z",
+      "first_submit_at": "2026-09-20T15:35:57.266Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 45,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true
+    },
+    {
+      "sequence": 7,
+      "begin_at": "2026-09-20T15:35:58.513Z",
+      "first_submit_at": "2026-09-20T15:35:58.560Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 46,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true
+    },
+    {
+      "sequence": 8,
+      "begin_at": "2026-09-20T15:35:59.531Z",
+      "first_submit_at": "2026-09-20T15:35:59.581Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 50,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:35:59.745Z",
+      "double_plan": "boundary_retained_delete_suffix",
+      "double_completed_at": "2026-09-20T15:36:00.371Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 652
+    },
+    {
+      "sequence": 9,
+      "begin_at": "2026-09-20T15:36:03.326Z",
+      "first_submit_at": "2026-09-20T15:36:03.381Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 55,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:36:03.483Z",
+      "double_plan": "boundary_retained_delete_suffix",
+      "double_completed_at": "2026-09-20T15:36:04.040Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 584
+    },
+    {
+      "sequence": 10,
+      "begin_at": "2026-09-20T15:36:07.355Z",
+      "first_submit_at": "2026-09-20T15:36:07.407Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 51,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:36:07.564Z",
+      "double_plan": "restore_deleted_boundary",
+      "unicode_inputs_requested": 2,
+      "unicode_inputs_submitted": 2,
+      "double_completed_at": "2026-09-20T15:36:07.611Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 70
+    },
+    {
+      "sequence": 11,
+      "begin_at": "2026-09-20T15:36:09.832Z",
+      "first_submit_at": "2026-09-20T15:36:09.877Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 45,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:36:10.055Z",
+      "double_plan": "restore_deleted_boundary",
+      "unicode_inputs_requested": 2,
+      "unicode_inputs_submitted": 2,
+      "double_completed_at": "2026-09-20T15:36:10.095Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 61
+    },
+    {
+      "sequence": 12,
+      "begin_at": "2026-09-20T15:36:10.724Z",
+      "first_submit_at": "2026-09-20T15:36:10.766Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 42,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true
+    },
+    {
+      "sequence": 13,
+      "begin_at": "2026-09-20T15:36:11.238Z",
+      "first_submit_at": "2026-09-20T15:36:11.276Z",
+      "first_input_submitted": true,
+      "first_submit_reason": "prepared",
+      "first_submit_ms": 38,
+      "first_change_verified": true,
+      "first_deleted_utf16_units": 1,
+      "right_context_unchanged": true,
+      "double_plan_at": "2026-09-20T15:36:11.513Z",
+      "double_plan": "boundary_retained_delete_suffix",
+      "double_completed_at": "2026-09-20T15:36:12.082Z",
+      "double_result": "passed",
+      "double_reason": "exact_result_verified",
+      "double_elapsed_since_request_ms": 593
+    }
+  ],
+  "physical_back_pairs": [
+    {
+      "down_at": "2026-09-20T15:35:45.697Z",
+      "up_at": "2026-09-20T15:35:45.815Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:47.096Z",
+      "up_at": "2026-09-20T15:35:47.161Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:47.223Z",
+      "up_at": "2026-09-20T15:35:47.284Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:49.195Z",
+      "up_at": "2026-09-20T15:35:49.320Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:50.208Z",
+      "up_at": "2026-09-20T15:35:50.271Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:50.332Z",
+      "up_at": "2026-09-20T15:35:50.456Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:55.563Z",
+      "up_at": "2026-09-20T15:35:55.624Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:57.219Z",
+      "up_at": "2026-09-20T15:35:57.345Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:58.512Z",
+      "up_at": "2026-09-20T15:35:58.574Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:59.530Z",
+      "up_at": "2026-09-20T15:35:59.594Z"
+    },
+    {
+      "down_at": "2026-09-20T15:35:59.654Z",
+      "up_at": "2026-09-20T15:35:59.717Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:03.325Z",
+      "up_at": "2026-09-20T15:36:03.327Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:03.389Z",
+      "up_at": "2026-09-20T15:36:03.454Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:07.354Z",
+      "up_at": "2026-09-20T15:36:07.418Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:07.478Z",
+      "up_at": "2026-09-20T15:36:07.539Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:09.831Z",
+      "up_at": "2026-09-20T15:36:09.907Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:09.908Z",
+      "up_at": "2026-09-20T15:36:10.033Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:10.723Z",
+      "up_at": "2026-09-20T15:36:10.846Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:11.236Z",
+      "up_at": "2026-09-20T15:36:11.363Z"
+    },
+    {
+      "down_at": "2026-09-20T15:36:11.364Z",
+      "up_at": "2026-09-20T15:36:11.488Z"
+    }
+  ],
+  "observed_fixture_lengths": [
+    {
+      "at": "2026-09-20T15:31:39.304Z",
+      "utf16_units": 12
+    },
+    {
+      "at": "2026-09-20T15:35:47.157Z",
+      "utf16_units": 11
+    },
+    {
+      "at": "2026-09-20T15:35:47.866Z",
+      "utf16_units": 6
+    },
+    {
+      "at": "2026-09-20T15:35:49.242Z",
+      "utf16_units": 5
+    },
+    {
+      "at": "2026-09-20T15:35:50.259Z",
+      "utf16_units": 4
+    },
+    {
+      "at": "2026-09-20T15:35:51.087Z",
+      "utf16_units": 0
+    },
+    {
+      "at": "2026-09-20T15:35:53.679Z",
+      "utf16_units": 4
+    },
+    {
+      "at": "2026-09-20T15:35:53.844Z",
+      "utf16_units": 11
+    },
+    {
+      "at": "2026-09-20T15:35:54.043Z",
+      "utf16_units": 12
+    },
+    {
+      "at": "2026-09-20T15:35:55.603Z",
+      "utf16_units": 11
+    },
+    {
+      "at": "2026-09-20T15:35:57.269Z",
+      "utf16_units": 10
+    },
+    {
+      "at": "2026-09-20T15:35:58.567Z",
+      "utf16_units": 9
+    },
+    {
+      "at": "2026-09-20T15:35:59.582Z",
+      "utf16_units": 8
+    },
+    {
+      "at": "2026-09-20T15:36:00.338Z",
+      "utf16_units": 6
+    },
+    {
+      "at": "2026-09-20T15:36:01.430Z",
+      "utf16_units": 8
+    },
+    {
+      "at": "2026-09-20T15:36:01.713Z",
+      "utf16_units": 12
+    },
+    {
+      "at": "2026-09-20T15:36:03.383Z",
+      "utf16_units": 11
+    },
+    {
+      "at": "2026-09-20T15:36:04.016Z",
+      "utf16_units": 6
+    },
+    {
+      "at": "2026-09-20T15:36:07.413Z",
+      "utf16_units": 5
+    },
+    {
+      "at": "2026-09-20T15:36:07.585Z",
+      "utf16_units": 6
+    },
+    {
+      "at": "2026-09-20T15:36:09.879Z",
+      "utf16_units": 5
+    },
+    {
+      "at": "2026-09-20T15:36:10.076Z",
+      "utf16_units": 6
+    },
+    {
+      "at": "2026-09-20T15:36:10.768Z",
+      "utf16_units": 5
+    },
+    {
+      "at": "2026-09-20T15:36:11.278Z",
+      "utf16_units": 4
+    },
+    {
+      "at": "2026-09-20T15:36:12.037Z",
+      "utf16_units": 0
+    }
+  ],
+  "fixture_lengths_include_manual_replenishment": true,
+  "cold_first_use": {
+    "result": "deferred",
+    "reason": "up_left_right_before_first_back",
+    "preceding_buttons": [
+      {
+        "at": "2026-09-20T15:32:23.153Z",
+        "button": "up"
+      },
+      {
+        "at": "2026-09-20T15:35:39.385Z",
+        "button": "up"
+      },
+      {
+        "at": "2026-09-20T15:35:43.300Z",
+        "button": "left"
+      },
+      {
+        "at": "2026-09-20T15:35:44.919Z",
+        "button": "right"
+      }
+    ],
+    "first_back_at": "2026-09-20T15:35:45.697Z",
+    "no_directional_warmup_condition_met": false
+  },
+  "final_helper_status": {
+    "phase": "ready",
+    "last_error": null,
+    "generation": 1,
+    "report_count": 41,
+    "edge_count": 40
+  },
+  "interpretation_limits": [
+    "This record validates only the installed old punctuation rule; deleting the current clause including consecutive trailing punctuation was not tested.",
+    "The first transaction was cancelled for focus_changed at 52ms without first input submission; this does not identify the cause of the focus change.",
+    "Prepared submission timings are not DOM delivery or physical-button-to-display latency.",
+    "DOM keyboard counts contain twelve ordinary first deletes and five suffix deletions; Unicode restoration is supported separately by product input submission and exact-result checks.",
+    "Fixture length increases include manual text replenishment and are not attributed to remote actions except the separately verified boundary restores.",
+    "Back was preceded by directional buttons, so strict cold/idle first Back remains deferred.",
+    "Later log entries after the bounded trial are excluded.",
+    "No actual text, paths, process or window identifiers, device identities or credentials are included."
+  ]
+}
