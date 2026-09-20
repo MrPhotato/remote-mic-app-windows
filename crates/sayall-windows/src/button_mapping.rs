@@ -580,6 +580,7 @@ fn engine_worker(
         match message {
             EngineMessage::Rc003TapStart { generation } => {
                 if rc003_tap.start(generation) {
+                    injector.cancel_text_edit();
                     cancel_rc003_tap(
                         &mut merger,
                         &mut recognizer,
@@ -626,6 +627,7 @@ fn engine_worker(
             }
             EngineMessage::Rc003TapLost { generation } => {
                 if rc003_tap.active_generation == Some(generation) {
+                    injector.cancel_text_edit();
                     rc003_tap.invalidate("source_lost");
                     cancel_rc003_tap(
                         &mut merger,
@@ -1149,6 +1151,25 @@ mod tests {
     // Production key-gate state is process-global; tests must not run competing gates.
     static MAPPING_TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
+    /// A fake asynchronous worker paused immediately before its cancellation check.
+    struct DeferredTextEdit {
+        generation: Arc<AtomicU64>,
+        expected_generation: u64,
+        report: Box<dyn FnOnce(Result<(), String>) + Send>,
+    }
+
+    impl DeferredTextEdit {
+        fn complete(self) -> bool {
+            let committed = self.generation.load(Ordering::SeqCst) == self.expected_generation;
+            (self.report)(if committed {
+                Ok(())
+            } else {
+                Err("text edit cancelled (test)".into())
+            });
+            committed
+        }
+    }
+
     /// 测试注入器：记录 tap 的和弦与打开应用的目标。
     #[derive(Debug, Default)]
     struct RecordingInjector {
@@ -1157,10 +1178,33 @@ mod tests {
         scrolls: StdMutex<Vec<(ScrollDirection, u16)>>,
         clicks: StdMutex<Vec<MouseClickKind>>,
         moves: StdMutex<Vec<(MoveDirection, u16)>>,
+        edit_generation: Arc<AtomicU64>,
+        text_edit_started: StdMutex<Option<Sender<DeferredTextEdit>>>,
         fail: bool,
     }
 
     impl MappingInjector for RecordingInjector {
+        fn cancel_text_edit(&self) {
+            self.edit_generation.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn delete_to_punctuation(
+            &self,
+            report: Box<dyn FnOnce(Result<(), String>) + Send>,
+        ) -> Result<(), String> {
+            let started = self.text_edit_started.lock().unwrap();
+            let Some(started) = started.as_ref() else {
+                return Err("No deferred text edit configured (test)".into());
+            };
+            started
+                .send(DeferredTextEdit {
+                    generation: Arc::clone(&self.edit_generation),
+                    expected_generation: self.edit_generation.load(Ordering::SeqCst),
+                    report,
+                })
+                .map_err(|_| "Text edit test receiver closed".into())
+        }
+
         fn scroll(&self, direction: ScrollDirection, steps: u16) -> Result<(), String> {
             if self.fail {
                 return Err("wheel injection failed (test)".to_owned());
@@ -1238,6 +1282,144 @@ mod tests {
 
     const KEYDOWN: u32 = 0x0100;
     const KEYUP: u32 = 0x0101;
+
+    fn assert_rc003_tap_pending_edit(
+        button: RemoteButton,
+        messages: Vec<EngineMessage>,
+        should_commit: bool,
+    ) {
+        let _isolation = MAPPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let gate = crate::key_gate::KeyGate::start();
+        let (edit_started_tx, edit_started_rx) = mpsc::channel();
+        let injector = Arc::new(RecordingInjector {
+            text_edit_started: StdMutex::new(Some(edit_started_tx)),
+            ..RecordingInjector::default()
+        });
+        let runtime = ButtonMappingRuntime::new(
+            injector.clone(),
+            Arc::new(UsageCounters::default()),
+            Arc::new(StdMutex::new(RawInputSnapshot::default())),
+        );
+        let mut mappings = ButtonMappings::default();
+        mappings.actions.clear();
+        mappings.actions.insert(
+            button,
+            ButtonActions {
+                single: if button == RemoteButton::Back {
+                    ButtonAction::NormalBackspace
+                } else {
+                    ButtonAction::Disabled
+                },
+                double: ButtonAction::DeleteToPunctuation,
+                ..ButtonActions::default()
+            },
+        );
+        runtime.set_mappings(mappings);
+
+        // Hold an unconfigured key before the edit starts. Its later gate UP neither
+        // cancels edits nor fires gestures, and acknowledges all earlier FIFO messages.
+        let (processed_tx, processed_rx) = mpsc::channel();
+        runtime.subscribe_button_edges(Arc::new(move |edge| {
+            if edge.button == RemoteButton::Up && !edge.is_pressed {
+                let _ = processed_tx.send(());
+            }
+        }));
+        let sender = runtime.sender();
+        let state = |sequence, pressed_mask| EngineMessage::Rc003TapState {
+            generation: 2,
+            sequence,
+            pressed_mask,
+        };
+        for message in [
+            EngineMessage::Rc003TapStart { generation: 2 },
+            state(1, 0),
+            EngineMessage::GateEdge(ButtonEdge {
+                button: RemoteButton::Up,
+                is_pressed: true,
+            }),
+        ] {
+            sender.send(message).unwrap();
+        }
+        for (index, is_pressed) in [true, false, true, false].into_iter().enumerate() {
+            sender
+                .send(if button == RemoteButton::Back {
+                    state(index as u64 + 2, u8::from(is_pressed))
+                } else {
+                    EngineMessage::GateEdge(ButtonEdge { button, is_pressed })
+                })
+                .unwrap();
+        }
+        let pending = edit_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("Double must start the deferred worker");
+        assert_eq!(runtime.snapshot().fired_gestures, 1);
+        assert!(injector.taps.lock().unwrap().is_empty());
+
+        for message in messages {
+            sender.send(message).unwrap();
+        }
+        sender
+            .send(EngineMessage::GateEdge(ButtonEdge {
+                button: RemoteButton::Up,
+                is_pressed: false,
+            }))
+            .unwrap();
+        processed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("engine must process the lifecycle messages before the worker resumes");
+        assert_eq!(pending.complete(), should_commit);
+        assert_eq!(runtime.snapshot().last_error.is_none(), should_commit);
+        assert_eq!(runtime.snapshot().fired_gestures, 1);
+        drop(runtime);
+        drop(gate);
+    }
+
+    #[test]
+    fn rc003_tap_loss_cancels_already_started_double_edit() {
+        assert_rc003_tap_pending_edit(
+            RemoteButton::Back,
+            vec![EngineMessage::Rc003TapLost { generation: 2 }],
+            false,
+        );
+    }
+
+    #[test]
+    fn rc003_tap_new_generation_cancels_already_started_double_edit() {
+        assert_rc003_tap_pending_edit(
+            RemoteButton::Back,
+            vec![EngineMessage::Rc003TapStart { generation: 3 }],
+            false,
+        );
+    }
+
+    #[test]
+    fn rc003_tap_rejected_and_unchanged_messages_preserve_pending_edits() {
+        // The helper's own pending Double and another key's async edit both survive.
+        for button in [RemoteButton::Back, RemoteButton::Ok] {
+            let state = |generation, sequence, pressed_mask| EngineMessage::Rc003TapState {
+                generation,
+                sequence,
+                pressed_mask,
+            };
+            assert_rc003_tap_pending_edit(
+                button,
+                vec![
+                    EngineMessage::Rc003TapLost { generation: 1 },
+                    EngineMessage::Rc003TapLost { generation: 3 },
+                    EngineMessage::Rc003TapStart { generation: 1 },
+                    EngineMessage::Rc003TapStart { generation: 2 },
+                    state(1, 6, 1), // Old generation.
+                    state(2, 1, 1), // Duplicate sequence.
+                    state(2, 6, 8), // Invalid mask.
+                    state(2, 6, 0), // Accepted, but no semantic edge.
+                    state(2, 6, 0), // Duplicate report.
+                ],
+                true,
+            );
+        }
+    }
 
     #[test]
     fn rc003_tap_generation_sequence_and_neutral_gate_fail_closed() {
