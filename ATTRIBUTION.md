@@ -357,6 +357,14 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 
 按键设置继续复用已有 SettingsStore 的 Rust `Mutex` 串行策略，将锁覆盖到平台同步热加载，避免保存／导入／重置交错。11 项设置测试 passed，包含全部 9 种两操作组合及失败分支。没有新增第三方 API 或实现依赖；真实 IPC 和实体输入边界见 [并发事务 Bug](Bugs/2026-09-21-button-mapping-transaction.md)。
 
+## 遥控器麦克风的界面语义（2026-09-28）
+
+先审查本仓库 Windows 音频实现 `audio.rs` 的 `Direction::Render`、已保存端点的恢复及单一虚拟声卡自动选择，再核对 [VB-Audio 官方说明](https://vb-audio.com/Cable/)：CABLE Input 是播放端，CABLE Output 是录音端。主界面因此呈现“遥控器麦克风”和目标应用应选的 CABLE Output，将现有内部播放端选择折叠进高级设置。沿用既有设备枚举和 WASAPI 流，不新增电脑麦克风采集，不设置系统默认扬声器或目标应用麦克风。未复制外部实现。保存选择、自动选择及错误呈现的验证见 [本次记录](Testing/WindowsAudioAndKeyboardIsolation.md)。
+
+## Home/TV 与普通键盘隔离（2026-09-28）
+
+复核旧版全局常驻抑制和 4 秒武装逻辑，并参考仓库内现有 F13/F14/F15 别名的“设备确认后识别、全局钩子不识别”分层。核对 [Microsoft KBDLLHOOKSTRUCT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct) 公共字段，低级键盘事件没有来源设备标识；不能因遥控器在线或近期按键就把普通键盘 OEM_3/Home 归为遥控器。最小修复复用既有 Raw Input 设备路径过滤及合并器，不复制外部算法、不改变时序、不新增驱动或注入。代价是遥控器自身 Home/反引号原生动作及长按重复可能旁路进入前台；实际遥控器复验独立标记，详见 [Bug](Bugs/2026-09-28-physical-backquote-captured.md) 和 [验证](Testing/WindowsAudioAndKeyboardIsolation.md)。
+
 ## 确认键 Enter 扫描码兼容（2026-09-21）
 
 沿用本仓库 PageUp/PageDown 扫描码修复模式，并先核对 [Microsoft KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)：KEYEVENTF_SCANCODE 使用 wScan 标识物理键，KEYEVENTF_EXTENDEDKEY 区分扩展键。本机旧包自有 WebView 的原生事件实测显示 Ctrl+Enter 的 Enter `code` 为空；主 Enter 采用 0x1C、非扩展，保持现有成对注入，不调整时序、不复制第三方实现。公开 Chromium 源码页面本轮无法打开，不把未读取源码作为证据。目标应用对快捷键的上下文要求另行验收，见 [Bug 记录](Bugs/2026-09-21-enter-shortcut-identity.md)。

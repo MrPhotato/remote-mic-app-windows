@@ -551,7 +551,7 @@ describe("buttons mapping page", () => {
     expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
     // 武装族按键显示冷首按原生副作用提示（信息性，不门控）。
-    expect(wrapper.find(".mapping-editor").text()).toContain("原生按键动作");
+    expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
   });
 
   it("全开放：确定·双击与 TV 所有操作可配 + 各自的单响应提示", async () => {
@@ -560,23 +560,24 @@ describe("buttons mapping page", () => {
     expect(chipState(wrapper, "Enter")).toBe(false);
     expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).toContain("原生按键动作");
+    expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
 
     await openCell(wrapper, "TV", 0);
     expect(chipState(wrapper, "Enter")).toBe(false);
     expect(chipState(wrapper, "静音")).toBe(false);
     expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).toContain("遥控器优先");
+    expect(wrapper.find(".mapping-editor").text()).toContain("普通键盘不受此映射影响");
+    expect(wrapper.find(".mapping-editor").text()).toContain("可能同时触发 Home 或输入反引号");
   });
 
-  it("左键与其余方向键同样开放自定义并显示结构性泄漏提示", async () => {
+  it("左键与其余方向键同样开放自定义并显示首次按键提示", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "左", 0);
     expect(chipState(wrapper, "←")).toBe(false);
     expect(chipState(wrapper, "退格")).toBe(false);
     expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).toContain("原生按键动作");
+    expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
 
     // 与型号无关：RC001 上左键同样开放。
     const rc001 = await mountPage("rc001");
@@ -594,7 +595,7 @@ describe("buttons mapping page", () => {
     expect(chipState(wrapper, "截图")).toBe(false);
     expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).not.toContain("原生按键动作");
+    expect(wrapper.find(".mapping-editor").text()).not.toContain("首次按下可能额外触发");
   });
 
   it("opens every volume gesture on every model without claiming hardware support", async () => {
@@ -709,7 +710,7 @@ describe("buttons mapping page", () => {
     expect(wrapper.get(".mapping-canvas").element.previousElementSibling).toBe(controls[0]!.element);
     expect(controls[0]!.get('[role="switch"]').attributes("aria-label")).toBe("补齐返回、音量＋/－按键");
     expect(controls[0]!.text()).toContain("需要管理员权限");
-    expect(wrapper.get(".back-hardware-note").text()).toContain("图例上方的开关");
+    expect(wrapper.get(".back-hardware-note").text()).toContain("上方的三键增强");
     expect(wrapper.text()).not.toContain("下方启用三键增强");
     expect(wrapper.text()).not.toContain("系统音量原始行为");
     expect(saveButtonMappings).not.toHaveBeenCalled();

@@ -307,7 +307,7 @@ pub async fn check_app_update(
 ) -> Result<AppUpdateInfo, String> {
     if app.config().identifier == "local.remote-coding.windows" {
         note("check.disabled reason=local_fork terminal_result=not_available".to_owned());
-        return Err("本地定制版不使用上游更新；请从本地仓库重新构建。".to_owned());
+        return Err("暂不支持自动更新，请从 GitHub 下载并安装新版本。".to_owned());
     }
     let started = Instant::now();
     let include_prereleases = state
@@ -458,7 +458,7 @@ pub async fn set_app_update_preferences(
 pub async fn install_app_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if app.config().identifier == "local.remote-coding.windows" {
         note("install.disabled reason=local_fork terminal_result=not_available".to_owned());
-        return Err("本地定制版不安装上游更新。".to_owned());
+        return Err("暂不支持自动更新，请从 GitHub 下载并安装新版本。".to_owned());
     }
     let started = Instant::now();
     let mut update = state

@@ -538,9 +538,7 @@ impl WindowsPlatform {
                 ),
                 raw_input_ready: raw_input.phase == RawInputPhase::Ready,
                 send_input_ready,
-                verification_status:
-                    "BLE/ATVV/WASAPI/Raw Input、退避重连与睡眠恢复代码已实现，等待 Windows 主机与 RC001/RC003 真机验证"
-                        .to_owned(),
+                verification_status: "Windows 桌面应用".to_owned(),
                 connection,
                 audio,
                 raw_input,
@@ -558,7 +556,7 @@ impl WindowsPlatform {
                 wasapi_ready: false,
                 raw_input_ready: false,
                 send_input_ready: false,
-                verification_status: "当前主机不是 Windows，仅可验证界面与纯 Rust 核心".to_owned(),
+                verification_status: "当前系统不支持遥控器连接。".to_owned(),
                 connection: ConnectionSnapshot::default(),
                 audio: AudioSnapshot {
                     phase: AudioPhase::Unsupported,

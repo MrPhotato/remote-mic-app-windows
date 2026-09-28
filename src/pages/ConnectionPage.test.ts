@@ -67,6 +67,11 @@ const cableEndpoint: AudioEndpoint = {
   name: "CABLE Input (VB-Audio Virtual Cable)",
   isVirtualCableCandidate: true,
 };
+const speakerEndpoint: AudioEndpoint = {
+  id: "saved-speaker",
+  name: "已保存的扬声器",
+  isVirtualCableCandidate: false,
+};
 
 const mocks = vi.hoisted(() => ({
   endpoints: [] as AudioEndpoint[],
@@ -109,7 +114,7 @@ describe("Connection and voice settings", () => {
       ...emptyAudio,
       phase: "ready",
       selectedEndpointId: endpointId,
-      selectedEndpointName: cableEndpoint.name,
+      selectedEndpointName: mocks.endpoints.find((endpoint) => endpoint.id === endpointId)?.name ?? cableEndpoint.name,
     }));
     mocks.openVbCableDownloadPage.mockResolvedValue(undefined);
     mocks.getVoiceHoldHotkey.mockResolvedValue(wetypeChord);
@@ -140,9 +145,94 @@ describe("Connection and voice settings", () => {
 
     expect(mocks.selectAudioEndpoint).toHaveBeenCalledOnce();
     expect(mocks.selectAudioEndpoint).toHaveBeenCalledWith(cableEndpoint.id);
-    expect(wrapper.text()).toContain("已自动选择 CABLE Input");
+    expect(wrapper.get(".audio-settings-card").text()).toContain("声音传送已就绪");
+    expect(wrapper.text()).not.toContain("CABLE Input");
     expect(wrapper.text()).not.toContain("需要安装 VB-CABLE");
     expect(wrapper.text()).not.toContain("系统语音输入");
+    wrapper.unmount();
+  });
+
+  it("shows the remote microphone and target microphone with internal routing collapsed by default", async () => {
+    mocks.endpoints = [cableEndpoint, speakerEndpoint];
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+
+    const audioCard = wrapper.get(".audio-settings-card");
+    expect(audioCard.get(".status-heading strong").text()).toBe("遥控器麦克风");
+    expect(audioCard.text()).toContain("语音来源");
+    expect(audioCard.get(".setting-row").text()).toContain("目标应用使用的麦克风");
+    expect(audioCard.get(".setting-row span").text()).toBe("CABLE Output");
+    expect(audioCard.text()).toContain("请在 Codex 或语音输入法中将麦克风设为 CABLE Output");
+    expect(audioCard.text()).toContain("电脑扬声器保持原有设置");
+    expect(audioCard.text()).not.toContain("CABLE Input");
+    expect(audioCard.text()).not.toContain(speakerEndpoint.name);
+    expect(audioCard.find("#advanced-audio-settings").exists()).toBe(false);
+    const advanced = audioCard.get('[aria-controls="advanced-audio-settings"]');
+    expect(advanced.attributes("aria-expanded")).toBe("false");
+
+    await advanced.trigger("click");
+    expect(advanced.attributes("aria-expanded")).toBe("true");
+    expect(audioCard.get("#advanced-audio-settings").text()).toContain("已自动选择 CABLE Input");
+    expect(audioCard.get("#advanced-audio-settings").text()).toContain("声音传送设备");
+    expect(audioCard.get("#advanced-audio-settings").text()).toContain("不会修改 Windows 默认扬声器或麦克风");
+
+    await advanced.trigger("click");
+    expect(audioCard.find("#advanced-audio-settings").exists()).toBe(false);
+    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(cableEndpoint.id);
+    expect(mocks.reportFrontendEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "audio_advanced_settings", reason: "collapsed" }));
+    wrapper.unmount();
+  });
+
+  it("never selects a generic speaker automatically but preserves explicit advanced routing", async () => {
+    mocks.endpoints = [speakerEndpoint];
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain(speakerEndpoint.name);
+
+    await wrapper.get('[aria-controls="advanced-audio-settings"]').trigger("click");
+    await wrapper.get('[aria-controls="audio-endpoint-list"]').trigger("click");
+    const speakerRow = wrapper.get(".endpoint-list li");
+    expect(speakerRow.text()).toContain(speakerEndpoint.name);
+    expect(speakerRow.text()).toContain("仅用于试听或自定义传送");
+    await speakerRow.get("button").trigger("click");
+    await flushPromises();
+
+    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(speakerEndpoint.id);
+    expect(wrapper.get("#advanced-audio-settings").text()).toContain(speakerEndpoint.name);
+    expect(wrapper.get(".audio-settings-card .status-heading strong").text()).toBe("遥控器麦克风");
+    expect(wrapper.get(".audio-settings-card .status-panel").text()).toContain("已保留原有声音传送设置");
+    expect(wrapper.get(".audio-settings-card").text()).not.toContain("声音传送已就绪");
+    wrapper.unmount();
+  });
+
+  it("keeps multiple virtual routes unselected until the user chooses one in advanced settings", async () => {
+    const secondCable = { ...cableEndpoint, id: "second-cable-input", name: "CABLE Input (第二个虚拟声卡)" };
+    mocks.endpoints = [cableEndpoint, secondCable];
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get(".audio-settings-card").text()).toContain("请在高级设置中确认声音传送设备");
+
+    await wrapper.get('[aria-controls="advanced-audio-settings"]').trigger("click");
+    await wrapper.get('[aria-controls="audio-endpoint-list"]').trigger("click");
+    await wrapper.findAll(".endpoint-list li")[1].get("button").trigger("click");
+    await flushPromises();
+
+    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(secondCable.id);
+    expect(wrapper.get("#advanced-audio-settings").text()).toContain(secondCable.name);
+    expect(wrapper.find(".endpoint-list").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("does not overwrite saved settings when their initial read fails", async () => {
+    mocks.endpoints = [cableEndpoint];
+    mocks.getAudioSnapshot.mockRejectedValueOnce(new Error("设置暂时无法读取"));
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+
+    expect(mocks.listAudioEndpoints).toHaveBeenCalledOnce();
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
@@ -171,6 +261,74 @@ describe("Connection and voice settings", () => {
 
     expect(mocks.listAudioEndpoints).toHaveBeenCalledOnce();
     expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get(".audio-settings-card .status-panel").text()).toContain("已保留原有声音传送设置");
+    expect(wrapper.get(".audio-settings-card").text()).not.toContain("声音传送已就绪");
+    await wrapper.get('[aria-controls="advanced-audio-settings"]').trigger("click");
+    expect(wrapper.get("#advanced-audio-settings").text()).toContain(savedAudio.selectedEndpointName);
+    await wrapper.findAll("button").find((button) => button.text() === "刷新设备列表")!.trigger("click");
+    await flushPromises();
+    expect(mocks.listAudioEndpoints).toHaveBeenCalledTimes(2);
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get("#advanced-audio-settings").text()).toContain(savedAudio.selectedEndpointName);
+    wrapper.unmount();
+  });
+
+  it("shows enumeration failure in the main view instead of driver installation advice and can refresh", async () => {
+    mocks.endpoints = [cableEndpoint];
+    mocks.getAudioSnapshot.mockResolvedValue({
+      ...emptyAudio,
+      phase: "ready",
+      selectedEndpointId: cableEndpoint.id,
+      selectedEndpointName: cableEndpoint.name,
+    });
+    mocks.listAudioEndpoints.mockRejectedValueOnce(new Error("音频服务暂时不可用"));
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+
+    const audioCard = wrapper.get(".audio-settings-card");
+    expect(audioCard.get('[role="alert"]').text()).toContain("声音传送设备读取失败：音频服务暂时不可用");
+    expect(audioCard.find("#advanced-audio-settings").exists()).toBe(false);
+    expect(audioCard.find(".vb-cable-callout").exists()).toBe(false);
+    expect(audioCard.text()).not.toContain("需要安装 VB-CABLE");
+    expect(audioCard.text()).not.toContain("正在准备声音传送");
+    expect(audioCard.text()).not.toContain("声音传送已就绪");
+    expect(audioCard.get(".status-dot").classes()).toContain("error");
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+
+    await audioCard.get('[aria-controls="advanced-audio-settings"]').trigger("click");
+    await audioCard.findAll("button").find((button) => button.text() === "刷新设备列表")!.trigger("click");
+    await flushPromises();
+
+    expect(audioCard.find('[role="alert"]').exists()).toBe(false);
+    expect(audioCard.text()).toContain("声音传送已就绪");
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(mocks.reportFrontendEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "audio_route_detection", result: "failed", reason: "endpoint_enumeration_failed" }));
+    wrapper.unmount();
+  });
+
+  it("shows automatic route selection failure outside advanced settings and allows a manual retry", async () => {
+    mocks.endpoints = [cableEndpoint];
+    mocks.selectAudioEndpoint.mockRejectedValueOnce(new Error("设备正忙"));
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+
+    const audioCard = wrapper.get(".audio-settings-card");
+    expect(audioCard.get('[role="alert"]').text()).toContain("声音传送设备启用失败：设备正忙");
+    expect(audioCard.find("#advanced-audio-settings").exists()).toBe(false);
+    expect(audioCard.text()).not.toContain("正在准备声音传送");
+    expect(audioCard.text()).not.toContain("需要安装 VB-CABLE");
+    expect(audioCard.get(".status-dot").classes()).toContain("error");
+    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(cableEndpoint.id);
+
+    await audioCard.get('[aria-controls="advanced-audio-settings"]').trigger("click");
+    await audioCard.get('[aria-controls="audio-endpoint-list"]').trigger("click");
+    await audioCard.get(".endpoint-list li button").trigger("click");
+    await flushPromises();
+
+    expect(audioCard.find('[role="alert"]').exists()).toBe(false);
+    expect(audioCard.text()).toContain("声音传送已就绪");
+    expect(mocks.selectAudioEndpoint).toHaveBeenCalledTimes(2);
+    expect(mocks.selectAudioEndpoint).toHaveBeenLastCalledWith(cableEndpoint.id);
     wrapper.unmount();
   });
 
@@ -240,7 +398,8 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get('.scan-summary[role="status"]').text()).toContain("按住说话快捷键已设为");
     const guide = wrapper.get(".usage-hint-details");
     expect(guide.text()).toContain("将 Codex 切到前台，点击输入框");
-    expect(guide.text()).toContain("CABLE Input");
+    expect(guide.text()).toContain("遥控器麦克风");
+    expect(guide.text()).not.toContain("CABLE Input");
     expect(guide.text()).toContain("CABLE Output");
     expect(guide.text()).toContain("不需要微信输入法");
     expect(guide.text()).toContain("仍需要 VB-CABLE");

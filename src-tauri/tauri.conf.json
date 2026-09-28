@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Remote Coding",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "identifier": "local.remote-coding.windows",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "遥控 Coding · 本地版",
+        "title": "无线麦 SayAll Windows 版",
         "width": 1029,
         "height": 732,
         "minWidth": 1029,
@@ -32,10 +32,10 @@
       "nsis"
     ],
     "createUpdaterArtifacts": false,
-    "publisher": "Local build",
+    "publisher": "MrPhotato",
     "category": "Productivity",
     "shortDescription": "小米蓝牙遥控器的 Windows 语音与 Codex 控制器",
-    "longDescription": "基于 SayAll Windows 开源代码的本地定制版，增加 Codex 按键方案。",
+    "longDescription": "使用小米蓝牙遥控器进行语音输入、编辑文本和控制 Codex。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

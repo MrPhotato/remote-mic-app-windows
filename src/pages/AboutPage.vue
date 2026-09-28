@@ -55,7 +55,7 @@ async function generateDiagnostic(): Promise<void> {
   diagnosticMessage.value = "正在读取当前运行状态…";
   try {
     diagnosticText.value = formatDiagnosticReport(await getDiagnosticReport());
-    diagnosticMessage.value = "诊断摘要已生成；复制前可在页面内检查全部内容";
+    diagnosticMessage.value = "诊断摘要已生成";
   } catch (error) {
     diagnosticText.value = "";
     diagnosticMessage.value = error instanceof Error ? error.message : String(error);
@@ -125,9 +125,9 @@ onMounted(() => {
     </header>
 
     <article class="card about-card">
-      <img class="app-logo" src="/app-logo.png" alt="遥控 Coding · 本地版 应用图标" />
+      <img class="app-logo" src="/app-logo.png" alt="无线麦应用图标" />
       <div>
-        <h2>遥控 Coding · 本地版</h2>
+        <h2>无线麦 SayAll Windows 版</h2>
         <p>版本 {{ runtime?.appVersion ?? "0.1.0" }}</p>
       </div>
     </article>
@@ -161,7 +161,7 @@ onMounted(() => {
 
     <article class="card">
       <h2>启动行为</h2>
-      <p class="muted">登录 Windows 后自动启动遥控 Coding · 本地版。</p>
+      <p class="muted">登录 Windows 后自动启动无线麦。</p>
       <label class="toggle-row" title="使用当前用户的 Windows 登录启动项，不需要管理员权限。">
         <input
           v-if="launchAtLoginReady"
@@ -179,15 +179,14 @@ onMounted(() => {
     </article>
 
     <article class="card">
-      <h2>本地定制版</h2>
-      <p>基于 SayAll Windows 的 GPL-3.0 开源代码，增加 Codex 遥控方案。</p>
-      <p class="muted">使用独立设置与原创图标。此版本通过本地仓库构建更新，不连接上游更新通道。</p>
+      <h2>开源许可</h2>
+      <p>基于 SayAll Windows，遵循 GPL-3.0 开源许可。</p>
     </article>
     <article class="card diagnostics-card">
       <div class="card-title-row">
         <div>
           <h2>诊断摘要</h2>
-          <p class="muted">摘要不含设备地址、语音内容等隐私信息，可放心复制发给开发者排查问题。</p>
+          <p class="muted">遇到问题时可提供诊断摘要；摘要不含设备地址和语音内容。</p>
         </div>
         <div class="button-row">
           <button

@@ -61,12 +61,14 @@ const devices = ref<PairedRemote[]>([]);
 const scanMessage = ref("尚未扫描");
 const operationMessage = ref("");
 const audioEndpoints = ref<AudioEndpoint[]>([]);
+const showAdvancedAudio = ref(false);
 const showEndpointList = ref(false);
 const scanningAudio = ref(false);
 const audioScanComplete = ref(false);
 const selectingEndpointId = ref("");
 const openingVbCablePage = ref(false);
 const audioMessage = ref("尚未读取语音设备");
+const audioOperationError = ref("");
 const voiceHotkey = ref<KeyChord | null>(null);
 const loadingVoiceHotkey = ref(true);
 const voiceHotkeyLoaded = ref(false);
@@ -193,6 +195,9 @@ const virtualCableEndpoints = computed(() =>
 );
 
 const virtualCableInstalled = computed(() => virtualCableEndpoints.value.length > 0);
+const selectedVirtualCable = computed(() =>
+  virtualCableEndpoints.value.some((endpoint) => endpoint.id === audio.value.selectedEndpointId),
+);
 
 const phaseTone = computed(() => {
   if (connection.value.phase === "failed") return "error";
@@ -204,12 +209,12 @@ const phaseTone = computed(() => {
 
 const phaseDetail = computed(() => {
   if (connection.value.lastError) return connection.value.lastError;
-  if (connection.value.capabilities) return "语音功能已确认，可以按住遥控器语音键说话";
+  if (connection.value.capabilities) return "可以按住遥控器语音键说话";
   return "连接后即可使用遥控器语音键";
 });
 
 const audioTone = computed(() => {
-  if (audio.value.phase === "failed") return "error";
+  if (audioOperationError.value || audio.value.phase === "failed") return "error";
   if (audio.value.phase === "streaming") return "active";
   if (audio.value.phase === "ready") return "success";
   if (audio.value.phase === "draining") return "warning";
@@ -217,10 +222,22 @@ const audioTone = computed(() => {
 });
 
 const audioDetail = computed(() => {
+  if (audioOperationError.value) return audioOperationError.value;
   if (audio.value.lastError) return audio.value.lastError;
-  if (audio.value.selectedEndpointName) return "语音会写入选中的设备";
-  return "不会自动改动系统默认设备，需要在这里明确选择";
+  if (audio.value.phase === "failed") return "声音传送失败，请在高级设置中重新选择传送设备";
+  if (selectedVirtualCable.value && wasapiReady.value) return "声音传送已就绪，请在目标应用中确认麦克风设置";
+  if (audio.value.selectedEndpointId && audioScanComplete.value && !selectedVirtualCable.value) {
+    return "已保留原有声音传送设置，请在高级设置中确认";
+  }
+  return scanningAudio.value || !audioScanComplete.value
+    ? "正在准备声音传送，设置详情见下方"
+    : "声音传送待设置，请查看下方提示";
 });
+
+function toggleAdvancedAudio() {
+  showAdvancedAudio.value = !showAdvancedAudio.value;
+  reportFrontendEvent({ event: "audio_advanced_settings", phase: "completed", result: "passed", reason: showAdvancedAudio.value ? "expanded" : "collapsed" });
+}
 
 async function refreshConnection() {
   try {
@@ -287,6 +304,7 @@ async function disconnect() {
 async function detectAudioEndpoints(autoSelectVirtualCable: boolean) {
   scanningAudio.value = true;
   audioMessage.value = "正在读取语音设备…";
+  audioOperationError.value = "";
   try {
     audioEndpoints.value = await listAudioEndpoints();
     audioScanComplete.value = true;
@@ -297,13 +315,16 @@ async function detectAudioEndpoints(autoSelectVirtualCable: boolean) {
       await chooseAudioEndpoint(virtualCables[0], true);
       return;
     }
+    reportFrontendEvent({ event: "audio_route_detection", phase: "completed", result: "passed", reason: audio.value.selectedEndpointId ? "preserved_selection" : !virtualCables.length ? "no_virtual_cable" : virtualCables.length > 1 ? "multiple_virtual_cables" : "manual_selection_available" });
     audioMessage.value = virtualCables.length
       ? `已检测到 ${virtualCables.length} 个 VB-CABLE 语音设备`
       : "未检测到 VB-CABLE；安装完成后需要重启电脑，再重新检测";
   } catch (error) {
     audioEndpoints.value = [];
-    audioScanComplete.value = true;
+    audioScanComplete.value = false;
     audioMessage.value = error instanceof Error ? error.message : String(error);
+    audioOperationError.value = `声音传送设备读取失败：${audioMessage.value}`;
+    reportFrontendEvent({ event: "audio_route_detection", phase: "completed", result: "failed", reason: "endpoint_enumeration_failed" });
   } finally {
     scanningAudio.value = false;
   }
@@ -318,15 +339,21 @@ async function scanAudio() {
 async function chooseAudioEndpoint(endpoint: AudioEndpoint, automatic = false) {
   selectingEndpointId.value = endpoint.id;
   audioMessage.value = "正在打开语音设备…";
+  audioOperationError.value = "";
+  const started = performance.now();
+  const route = automatic ? "automatic_virtual_cable" : endpoint.isVirtualCableCandidate ? "manual_virtual_cable" : "manual_other_output";
   try {
     audio.value = await selectAudioEndpoint(endpoint.id);
     audioMessage.value = automatic
       ? `已自动选择 ${endpoint.name}`
       : `已选择 ${endpoint.name}`;
     showEndpointList.value = false;
+    reportFrontendEvent({ event: "audio_route_selection", phase: "completed", result: "passed", reason: route, elapsedMs: Math.round(performance.now() - started) });
   } catch (error) {
     audioMessage.value = error instanceof Error ? error.message : String(error);
+    audioOperationError.value = `声音传送设备启用失败：${audioMessage.value}`;
     await refreshAudio();
+    reportFrontendEvent({ event: "audio_route_selection", phase: "completed", result: "failed", reason: route, elapsedMs: Math.round(performance.now() - started) });
   } finally {
     selectingEndpointId.value = "";
   }
@@ -447,7 +474,7 @@ onUnmounted(() => {
             <span>{{ voiceHotkeyDisplay }}</span>
           </div>
         </div>
-        <p class="muted voice-hotkey-row">按住遥控器语音键时按下所选快捷键，松开时释放。遥控器麦克风的声音送入右侧设备，由 Codex 听写或语音输入法转成文字。</p>
+        <p class="muted voice-hotkey-row">按住遥控器语音键时按下所选快捷键，松开时释放。使用遥控器麦克风说话，由 Codex 听写或语音输入法转成文字。</p>
         <div class="button-row voice-hotkey-presets">
           <button
             v-for="preset in voiceHotkeyPresets"
@@ -466,9 +493,9 @@ onUnmounted(() => {
         <details v-if="codexDictationActive" class="usage-hint-details" open>
           <summary>Codex 听写使用步骤</summary>
           <ol>
-            <li>在右侧选择 CABLE Input，把遥控器麦克风的声音送入 VB-CABLE；</li>
+            <li>确认右侧遥控器麦克风的声音传送已就绪；需要调整时打开高级设置；</li>
             <li>让 Codex 听写使用 CABLE Output 麦克风；若 Codex 没有麦克风选择入口，在 Windows 中将它使用的录音设备设为 CABLE Output；</li>
-            <li>将 Codex 切到前台，点击输入框。先用键盘按住 Ctrl + Shift + D，确认 Codex 的听写可用；</li>
+            <li>将 Codex 切到前台，点击输入框；</li>
             <li>按住遥控器语音键说话，松开结束。检查识别文字后再发送；本程序不会自动发送。</li>
           </ol>
           <p>此模式不需要微信输入法。使用遥控器麦克风仍需要 VB-CABLE。</p>
@@ -476,83 +503,47 @@ onUnmounted(() => {
         <details v-else-if="wetypeActive" class="usage-hint-details">
           <summary>微信输入法使用步骤（点开查看）</summary>
           <ol>
-            <li>语音设备选择 CABLE Input；</li>
+            <li>确认右侧遥控器麦克风的声音传送已就绪；需要调整时打开高级设置；</li>
             <li>在微信输入法的语音设置里，把麦克风设为 CABLE Output；若没有这个选项，把系统默认录音设备设为 CABLE Output；</li>
             <li>在目标应用的文本框内切换到微信输入法（看任务栏输入指示器确认）；</li>
-            <li>按住遥控器语音键约半秒以上再说话，松开后等待文字出现（需要联网）。快速点按不出文字是微信输入法自己的最短按住要求，不是故障。遥控器语音键自带的 F5 按键会被应用自动屏蔽，物理键盘的 F5 不受影响。</li>
+            <li>按住遥控器语音键约半秒后再说话，松开后等待文字出现（需要联网）。</li>
           </ol>
         </details>
       </article>
 
-      <article class="card">
+      <article class="card audio-settings-card">
         <div class="card-title-row">
           <div>
-            <h2>语音设备</h2>
-            <p class="muted">遥控器麦克风写入 CABLE Input；Codex 或语音输入法从 CABLE Output 录音。</p>
+            <h2>麦克风</h2>
+            <p class="muted">使用遥控器说话，让目标应用将声音转成文字。</p>
           </div>
-          <button
-            class="secondary-button"
-            type="button"
-            :disabled="scanningAudio || audioBusy || !runtime?.platform.windowsApiAvailable"
-            @click="scanAudio()"
-          >
-            {{ scanningAudio ? "读取中…" : "刷新设备列表" }}
-          </button>
         </div>
 
         <div class="status-panel" aria-live="polite">
           <div class="status-copy">
+            <small>语音来源</small>
             <div class="status-heading">
               <span class="status-dot" :class="audioTone"></span>
-              <strong>{{ audio.selectedEndpointName ?? audioPhaseLabel(audio.phase) }}</strong>
+              <strong>遥控器麦克风</strong>
             </div>
             <small>{{ audioDetail }}</small>
           </div>
         </div>
 
-        <p class="muted scan-summary">{{ audioMessage }}</p>
-        <div v-if="audioEndpoints.length" class="endpoint-select-row">
-          <button
-            class="secondary-button"
-            type="button"
-            @click="showEndpointList = !showEndpointList"
-          >
-            {{ showEndpointList ? "收起列表" : audio.selectedEndpointId ? "更换设备" : "选择设备" }}
-          </button>
-          <span v-if="!showEndpointList" class="muted endpoint-count">
-            共 {{ audioEndpoints.length }} 个设备可选
-          </span>
-        </div>
-        <ul v-if="showEndpointList && audioEndpoints.length" class="device-list endpoint-list">
-          <li v-for="endpoint in audioEndpoints" :key="endpoint.id">
-            <div>
-              <strong>{{ endpoint.name }}</strong>
-              <small>{{ endpoint.isVirtualCableCandidate ? "推荐（Codex 听写、语音输入法使用）" : "其他音频设备" }}</small>
-            </div>
-            <button
-              type="button"
-              :disabled="audioBusy || Boolean(selectingEndpointId) || audio.selectedEndpointId === endpoint.id"
-              @click="chooseAudioEndpoint(endpoint)"
-            >
-              {{
-                selectingEndpointId === endpoint.id
-                  ? "正在启用…"
-                  : audio.selectedEndpointId === endpoint.id
-                    ? "当前设备"
-                    : "选择"
-              }}
-            </button>
-          </li>
-        </ul>
-
-        <div class="setting-list compact two-col">
+        <div class="setting-list compact">
           <div class="setting-row">
-            <strong>语音设备</strong>
-            <span>{{ wasapiReady ? audioPhaseLabel(audio.phase) : "待选择" }}</span>
+            <strong>目标应用使用的麦克风</strong>
+            <span>CABLE Output</span>
           </div>
         </div>
+        <p class="muted">请在 Codex 或语音输入法中将麦克风设为 CABLE Output。</p>
+        <p class="muted">电脑扬声器保持原有设置。</p>
 
-        <div v-if="audioScanComplete && !virtualCableInstalled" class="info-callout warning vb-cable-callout">
+        <div v-if="audioOperationError" class="info-callout warning audio-error-callout" role="alert">
+          <strong>{{ audioOperationError }}</strong>
+          <p>请在高级设置中刷新设备列表或重新选择传送设备。</p>
+        </div>
+        <div v-else-if="audioScanComplete && !virtualCableInstalled" class="info-callout warning vb-cable-callout">
           <div>
             <strong>需要安装 VB-CABLE</strong>
             <p>由 VB-Audio 提供的免费虚拟声卡。安装需要管理员权限，完成后需重启电脑。</p>
@@ -566,14 +557,84 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-        <div v-else class="info-callout" :class="{ warning: !wasapiReady }">
+        <div v-else class="info-callout" :class="{ warning: !wasapiReady || !selectedVirtualCable }">
           {{
-            wasapiReady
-              ? "语音设备已就绪。"
+            selectedVirtualCable && wasapiReady
+              ? "声音传送已就绪。按住遥控器语音键说话，松开结束。"
+              : audio.selectedEndpointId
+                ? "已保留原有声音传送设置。如需将声音送入 CABLE Output，请在高级设置中确认传送设备。"
               : virtualCableInstalled
-                ? "已检测到 VB-CABLE。这里选择 CABLE Input；让 Codex 或语音输入法使用 CABLE Output 麦克风。"
+                ? "已检测到 VB-CABLE，请在高级设置中确认声音传送设备。"
                 : "正在检测 VB-CABLE…"
           }}
+        </div>
+
+        <div class="endpoint-select-row">
+          <button
+            class="secondary-button"
+            type="button"
+            :aria-expanded="showAdvancedAudio"
+            aria-controls="advanced-audio-settings"
+            @click="toggleAdvancedAudio"
+          >
+            {{ showAdvancedAudio ? "收起高级设置" : "高级设置" }}
+          </button>
+        </div>
+        <div v-if="showAdvancedAudio" id="advanced-audio-settings">
+          <p class="muted">声音传送设备接收遥控器的声音。VB-CABLE 使用 CABLE Input 接收，再由 CABLE Output 提供给目标应用录音。</p>
+          <div class="setting-list compact">
+            <div class="setting-row">
+              <strong>声音传送设备</strong>
+              <span>{{ audio.selectedEndpointName ?? "尚未选择" }}</span>
+            </div>
+            <div class="setting-row">
+              <strong>传送状态</strong>
+              <span>{{ audioPhaseLabel(audio.phase) }}</span>
+            </div>
+          </div>
+          <p class="muted">通常选择 CABLE Input。更换此设备不会修改 Windows 默认扬声器或麦克风。</p>
+          <p class="muted scan-summary" role="status">{{ audioMessage }}</p>
+          <div class="endpoint-select-row">
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="scanningAudio || audioBusy || !runtime?.platform.windowsApiAvailable"
+              @click="scanAudio()"
+            >
+              {{ scanningAudio ? "读取中…" : "刷新设备列表" }}
+            </button>
+            <button
+              v-if="audioEndpoints.length"
+              class="secondary-button"
+              type="button"
+              :aria-expanded="showEndpointList"
+              aria-controls="audio-endpoint-list"
+              @click="showEndpointList = !showEndpointList"
+            >
+              {{ showEndpointList ? "收起列表" : audio.selectedEndpointId ? "更换传送设备" : "选择传送设备" }}
+            </button>
+          </div>
+          <ul v-if="showEndpointList && audioEndpoints.length" id="audio-endpoint-list" class="device-list endpoint-list">
+            <li v-for="endpoint in audioEndpoints" :key="endpoint.id">
+              <div>
+                <strong>{{ endpoint.name }}</strong>
+                <small>{{ endpoint.isVirtualCableCandidate ? "虚拟声卡 · 供目标应用录音" : "播放设备 · 仅用于试听或自定义传送" }}</small>
+              </div>
+              <button
+                type="button"
+                :disabled="audioBusy || Boolean(selectingEndpointId) || audio.selectedEndpointId === endpoint.id"
+                @click="chooseAudioEndpoint(endpoint)"
+              >
+                {{
+                  selectingEndpointId === endpoint.id
+                    ? "正在启用…"
+                    : audio.selectedEndpointId === endpoint.id
+                      ? "当前设备"
+                      : "选择"
+                }}
+              </button>
+            </li>
+          </ul>
         </div>
       </article>
     </div>

@@ -74,10 +74,5 @@ const ICON_PATHS: Record<NavIcon, { strokes: string[]; fills?: string[] }> = {
         <span>{{ item.label }}</span>
       </button>
     </nav>
-
-    <div class="sidebar-footer">
-      <span class="status-dot pending"></span>
-      预览版
-    </div>
   </aside>
 </template>

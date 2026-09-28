@@ -14,7 +14,7 @@ if ($config.productName -ne "Remote Coding") {
 if ($config.identifier -ne "local.remote-coding.windows") {
     throw "Unexpected application identifier: $($config.identifier)"
 }
-if ($config.bundle.publisher -ne "Local build") {
+if ($config.bundle.publisher -ne "MrPhotato") {
     throw "Unexpected publisher: $($config.bundle.publisher)"
 }
 if ($config.bundle.windows.nsis.installMode -ne "currentUser") {

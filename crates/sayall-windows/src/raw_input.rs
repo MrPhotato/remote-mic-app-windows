@@ -125,8 +125,14 @@ impl RawKeyboardEvent {
 
     pub fn button(self) -> Option<RemoteButton> {
         // RawKeyboardEvent enters the engine only after the listener matches the
-        // selected remote. Keep filter aliases out of the identity-free LL hook.
+        // selected remote. Keep shared Home/TV keys and filter aliases out of
+        // the identity-free LL hook: only this attributed path may decode them.
         filter_alias_for_keyboard(self.virtual_key)
+            .or_else(|| match self.virtual_key {
+                0x24 => Some(RemoteButton::Home),
+                0xC0 => Some(RemoteButton::Tv),
+                _ => None,
+            })
             .or_else(|| button_for_keyboard(self.virtual_key, self.make_code))
     }
 }
@@ -266,8 +272,9 @@ pub(crate) fn filter_alias_for_keyboard(virtual_key: u16) -> Option<RemoteButton
     }
 }
 
-/// Identity-free decoder shared with the LL hook. F13/F14/F15 must stay absent:
-/// an ordinary keyboard using those keys must never inherit remote attribution.
+/// Identity-free decoder shared with the LL hook. Home/OEM_3 and F13/F14/F15
+/// must stay absent: an ordinary keyboard must never inherit their remote
+/// attribution, even while a remote key is held or recently armed.
 pub fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<RemoteButton> {
     if virtual_key == 0xFF {
         return Some(match make_code {
@@ -285,9 +292,7 @@ pub fn button_for_keyboard(virtual_key: u16, make_code: u16) -> Option<RemoteBut
         0x28 => RemoteButton::Down,
         0x26 => RemoteButton::Up,
         0x0D => RemoteButton::Ok,
-        0x24 => RemoteButton::Home,
         0x5D => RemoteButton::Menu,
-        0xC0 => RemoteButton::Tv,
         0x5F => RemoteButton::Power,
         0xAD => RemoteButton::VolumeMute,
         0xAF => RemoteButton::VolumeUp,
@@ -552,6 +557,60 @@ mod tests {
         }
         assert_eq!(filter_alias_for_keyboard(0x74), None);
         assert_eq!(filter_alias_for_usage(0x003E), None);
+    }
+
+    #[test]
+    fn home_tv_decode_only_after_keyboard_device_attribution() {
+        for (vk, usage, button) in [
+            (0x24, 0x004A, RemoteButton::Home),
+            (0xC0, 0x0035, RemoteButton::Tv),
+        ] {
+            assert_eq!(button_for_usage(usage), Some(button));
+            for make in [0, 0x29, 0x35, 0x47] {
+                assert_eq!(button_for_keyboard(vk, make), None);
+                let mut event = keyboard(vk, 0x0100);
+                event.make_code = make;
+                assert_eq!(event.button(), Some(button));
+            }
+        }
+    }
+
+    #[test]
+    fn home_tv_attributed_holds_survive_repeat_and_release_cleanly_on_restart() {
+        for (vk, usage, button) in [
+            (0x24, 0x004A, RemoteButton::Home),
+            (0xC0, 0x0035, RemoteButton::Tv),
+        ] {
+            let mut merger = ButtonStateMerger::default();
+            let down = ButtonEdge {
+                button,
+                is_pressed: true,
+            };
+            let up = ButtonEdge {
+                button,
+                is_pressed: false,
+            };
+            assert_eq!(merger.update_keyboard(keyboard(vk, 0x0100)), vec![down]);
+            assert!(merger.update_keyboard(keyboard(vk, 0x0100)).is_empty());
+            assert!(merger
+                .update_hid_report(&report(&[usage]))
+                .unwrap()
+                .is_empty());
+            // A duplicate source cannot end the real remote hold prematurely.
+            assert!(merger.update_keyboard(keyboard(vk, 0x0101)).is_empty());
+            assert_eq!(merger.update_hid_report(&report(&[])).unwrap(), vec![up]);
+            assert!(merger.update_keyboard(keyboard(vk, 0x0101)).is_empty());
+
+            assert_eq!(merger.update_keyboard(keyboard(vk, 0x0100)), vec![down]);
+            // Listener stop/device removal cancels the remote hold exactly once.
+            assert_eq!(merger.release_all(), vec![up]);
+            assert!(merger.release_all().is_empty());
+            assert!(merger.update_keyboard(keyboard(vk, 0x0101)).is_empty());
+            let mut restarted = ButtonStateMerger::default();
+            assert!(restarted.update_keyboard(keyboard(vk, 0x0101)).is_empty());
+            assert_eq!(restarted.update_keyboard(keyboard(vk, 0x0100)), vec![down]);
+            assert_eq!(restarted.update_keyboard(keyboard(vk, 0x0101)), vec![up]);
+        }
     }
 
     #[test]

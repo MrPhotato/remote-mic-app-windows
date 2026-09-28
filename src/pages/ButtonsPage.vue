@@ -9,7 +9,6 @@ import {
   CODEX_SHORTCUT_GROUPS,
   CODEX_SHORTCUTS,
   CODEX_SHORTCUTS_SOURCE,
-  CODEX_SHORTCUTS_VERIFIED,
   codexShortcutAction,
   type CodexShortcut,
   type CodexShortcutGroup,
@@ -520,21 +519,20 @@ function isActivePreset(keys: KeyCode[]): boolean {
 }
 
 /**
- * 编辑器提示（信息性）：Home/TV 已落地"遥控器优先"（2026-09-07 方案 C）——
- * 已配置映射且遥控器连接期间原生按键被接管，任意按压（含闲置后首次）严格
- * 单响应；确定/方向的同键映射仍由泄漏对冲保证单响应，其余配置冷首按附带
- * 一次原生动作（结构性泄漏）。
+ * Home/TV 只接收已识别遥控器的事件，普通键盘保留原生输入。
+ * 无设备身份的钩子不拦截这两键，因此遥控器也可能带出原生动作。
+ * 确定/方向仍保留既有冷首按能力提示。
  */
 const capabilityNote = computed<string | null>(() => {
   if (!editingTarget.value) return null;
   const button = editingTarget.value.button;
   if (button === "home" || button === "tv") {
-    return "提示：保存后本按键启用“遥控器优先”——遥控器连接期间原生按键（Home / `）被接管，任意按压（含闲置后首次）严格单响应；此期间物理键盘上的对应按键将触发映射动作，断开遥控器或删除本键映射即恢复原生。";
+    return "遥控器的主页或 TV 键可能同时触发 Home 或输入反引号，按住时可能重复。普通键盘不受此映射影响。";
   }
   if (shortcutCapability(button, "single", remoteModel.value) === "identity") {
     const identity = identityShortcutByButton[button];
     const label = identity ? chordLabel({ keys: [identity] }) : "";
-    return `提示：此按键闲置约 4 秒后的首次按压会附带一次原生按键动作（结构性泄漏，调查已归档）；4 秒内连按严格单响应，单击配置为同键映射（${label}）时由引擎对冲为单响应。`;
+    return `此按键闲置约 4 秒后，首次按下可能额外触发 ${label}。单击保持为 ${label} 时不会重复执行。`;
   }
   return null;
 });
@@ -834,7 +832,7 @@ function phaseLabel(phase: RawInputPhase | undefined): string {
     case "stopped":
       return "监听已停止";
     case "awaiting":
-      return "等待遥控器连接（系统 HID 接口未就绪）";
+      return "等待遥控器连接";
     case "unsupported":
       return "当前环境暂不支持";
     default:
@@ -1068,7 +1066,7 @@ onUnmounted(() => {
             />
           </svg>
           <strong>{{ buttonLabels[placement.button] }}</strong>
-          <small v-if="needsHardwareCheck(placement.button)" class="back-hardware-badge" title="RC003 可启用三键增强接收此按键，再检查高亮与动作。">RC003 三键增强</small>
+          <small v-if="needsHardwareCheck(placement.button)" class="back-hardware-badge" title="RC003 需启用三键增强才能使用此按键。">RC003 三键增强</small>
         </div>
         <div class="mapping-cells">
           <button
@@ -1117,11 +1115,11 @@ onUnmounted(() => {
           <strong>语音键</strong>
           <span class="badge pending voice-badge" :class="{ active: voiceActive }">按住说话</span>
         </div>
-        <p class="voice-note">按下开始、松开结束；不参与自定义映射，不加双击/长按延迟。</p>
+        <p class="voice-note">按住说话，松开结束。快捷键在「连接与语音」中设置。</p>
       </article>
     </div>
 
-    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">返回和音量键均可配置。RC003 可通过图例上方的开关补齐这三个按键；收到按键信号后，程序才会执行对应动作。未配置动作时只显示高亮。</p>
+    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">RC003 的返回和音量键需先开启上方的三键增强，再配置动作。</p>
 
     <article v-if="editingTarget" ref="editorPanel" class="card mapping-editor">
       <div class="card-title-row">
@@ -1159,7 +1157,7 @@ onUnmounted(() => {
             <h4 id="codex-shortcuts-title" class="action-section-title">Codex 快捷键</h4>
             <a :href="CODEX_SHORTCUTS_SOURCE" target="_blank" rel="noopener noreferrer" @click.prevent="openCodexReference">官方快捷键表</a>
           </div>
-          <p class="muted codex-shortcuts-intro">Windows 默认快捷键 · {{ CODEX_SHORTCUTS_VERIFIED }} 核对。点击只保存绑定；操作遥控器时发送给当前前台应用，请先切到 Codex。</p>
+          <p class="muted codex-shortcuts-intro">点击快捷键即可绑定。使用遥控器前，请先切到 Codex。</p>
           <div class="codex-shortcuts-controls">
             <label>
               <span class="muted">分类</span>

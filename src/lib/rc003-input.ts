@@ -61,7 +61,7 @@ export function stopRc003Input(): Promise<Rc003InputStatus> {
 export function rc003InputErrorMessage(cause: unknown): string {
   const code = (cause instanceof Error ? cause.message : String(cause ?? "")).toLowerCase();
   const knownErrors: Record<string, string> = {
-    "请先连接 rc003 遥控器并启动按键监听。": "请先在「连接与语音」中连接 RC003，并在「按键映射」中启动按键监听，然后再启用三键增强。",
+    "请先连接 rc003 遥控器并启动按键监听。": "请先连接 RC003，等待按键监听就绪后再启用三键增强。",
     helper_start_failed: "无法启动三键增强，请重试；若仍失败，可查看诊断日志。",
     helper_start_timeout: "三键增强启动超时，请重新启用；若仍失败，可查看诊断日志。",
     helper_heartbeat_timeout: "三键增强响应超时，请重新启用；若仍失败，可查看诊断日志。",
@@ -75,7 +75,7 @@ export function rc003InputErrorMessage(cause: unknown): string {
     return "未获得 Windows 管理员授权。请再次点击启用，并在授权窗口中允许。";
   }
   if (/preview|simulation|unsupported|not_supported/.test(code)) {
-    return "请在 Windows 客户端中使用三键增强；浏览器预览和仿真模式无法启用。";
+    return "请在 Windows 应用中启用三键增强。";
   }
   if (/missing|not_found|not found|dependency|未找到|缺少/.test(code)) {
     return "三键增强组件不完整，请安装包含三键增强组件的完整版本后重试。";

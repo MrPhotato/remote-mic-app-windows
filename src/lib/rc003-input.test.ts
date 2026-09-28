@@ -62,7 +62,7 @@ describe("RC003 input commands", () => {
     new Error("请先连接 RC003 遥控器并启动按键监听。"),
   ])("preserves the connection and listener prerequisites for %s", (cause) => {
     expect(rc003InputErrorMessage(cause)).toBe(
-      "请先在「连接与语音」中连接 RC003，并在「按键映射」中启动按键监听，然后再启用三键增强。",
+      "请先连接 RC003，等待按键监听就绪后再启用三键增强。",
     );
   });
 });

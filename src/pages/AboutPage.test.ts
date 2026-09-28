@@ -149,10 +149,10 @@ describe("about page update panel", () => {
     expect(wrapper.get('[role="alert"]').text()).toContain("外观设置保存失败");
   });
 
-  it("本地版显示来源且不调用或提供上游更新", async () => {
+  it("显示开源许可且不调用或提供上游更新", async () => {
     const wrapper = mount(AboutPage, { props: { runtime } });
     await flushPromises();
-    expect(wrapper.text()).toContain("本地定制版");
+    expect(wrapper.text()).toContain("开源许可");
     expect(wrapper.text()).toContain("GPL-3.0");
     expect(wrapper.text()).not.toContain("检查更新");
     expect(wrapper.text()).not.toContain("下载并安装");

@@ -297,7 +297,7 @@ const browserSnapshot: RuntimeSnapshot = {
     wasapiReady: false,
     rawInputReady: false,
     sendInputReady: false,
-    verificationStatus: "浏览器预览仅展示界面，不代表真机已通过",
+    verificationStatus: "请在 Windows 应用中连接遥控器。",
     connection: {
       phase: "idle",
       remoteName: null,
@@ -887,11 +887,9 @@ export type ShortcutCapability = "all" | "identity" | "none";
  * - **none**：TV/音量沿用既有单响应能力分类；不限制配置。
  *   RC003 音量是否上报仍需真机验证。
  *
- * 2026-09-07 增补（方案 C"遥控器优先"落地，key_gate 常驻抑制族）：
- * Home/TV 已配置映射且遥控器连接期间原生按键被接管——任意按压（含孤立
- * 冷首按）严格单响应，本矩阵的 identity/none 标注对这两键仅剩编辑参考
- * 意义（见 ButtonsPage capabilityNote 的接管提示）。左键自 2026-09-08
- * 起恢复为与上/下/右/确定相同的逐键武装与泄漏对冲机制。
+ * Home/TV 只从已归因的 Raw Input 识别，不再接管物理键盘 Home/反引号。
+ * 遥控器这两键可能伴随原生输入，identity/none 仅作编辑参考，见界面提示。
+ * 左键与上/下/右/确定继续使用逐键武装与泄漏对冲机制。
  */
 export function shortcutCapability(
   button: RemoteButton,

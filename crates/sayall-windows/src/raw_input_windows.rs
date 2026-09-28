@@ -619,8 +619,8 @@ fn handle_raw_input(handle: HRAWINPUT) -> Result<(), String> {
             }
             // 透传的键盘事件交给引擎合并；同时武装 key_gate
             // （覆盖键盘-only 按键的重复沿与首沿泄漏后的续期）。
-            // The LL hook has no device identity. Filter F13/F14/F15 aliases are
-            // routed only here, and must not arm any shared semantic button.
+            // The LL hook has no device identity. Home/OEM_3 and filter
+            // F13/F14/F15 aliases are routed only here and must never arm it.
             if let Some(button) = button_for_keyboard(event.virtual_key, event.make_code) {
                 key_gate::arm_button(button, GATE_ARM_GRACE_MS);
             }
@@ -661,6 +661,7 @@ fn gate_button_for_usage(usage: u16) -> Option<RemoteButton> {
         None
     } else {
         button_for_usage(usage)
+            .filter(|button| !matches!(button, RemoteButton::Home | RemoteButton::Tv))
     }
 }
 
@@ -760,6 +761,14 @@ mod tests {
         }
         assert_eq!(gate_button_for_usage(0x003E), None);
         assert_eq!(gate_button_for_usage(0xFFFF), None);
+    }
+
+    #[test]
+    fn home_tv_hid_reports_never_arm_shared_keyboard_keys() {
+        assert_eq!(gate_button_for_usage(0x0035), None);
+        assert_eq!(gate_button_for_usage(0x004A), None);
+        // Existing arming for other remote buttons is unchanged.
+        assert_eq!(gate_button_for_usage(0x0052), Some(RemoteButton::Up));
     }
 
     #[test]

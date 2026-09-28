@@ -551,7 +551,7 @@ fn start_shortcut_capture() -> Result<(), String> {
             "shortcut_capture action=start phase=completed terminal_result=failed error_domain=keyboard_hook error_code=gate_unavailable reason=hook_not_active retryable=true elapsed_ms={}",
             started.elapsed().as_millis()
         ));
-        return Err("键盘保护钩子尚未就绪，请稍后重试".to_owned());
+        return Err("按键录入尚未就绪，请稍后重试".to_owned());
     }
     sayall_windows::gatt_note(format!(
         "shortcut_capture action=start phase=completed terminal_result=passed capture_mode=main_key_only elapsed_ms={}",
@@ -1211,7 +1211,7 @@ pub fn run() {
                     .icon(icon)
                     .menu(&menu)
                     .show_menu_on_left_click(false)
-                    .tooltip("遥控 Coding · 本地版")
+                    .tooltip("无线麦 SayAll Windows 版")
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "tray-show" => {
                             if let Some(window) = app.get_webview_window("main") {
