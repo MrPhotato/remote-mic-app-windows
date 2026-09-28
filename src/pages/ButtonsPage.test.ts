@@ -567,7 +567,8 @@ describe("buttons mapping page", () => {
     expect(chipState(wrapper, "静音")).toBe(false);
     expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).toContain("遥控器优先");
+    expect(wrapper.find(".mapping-editor").text()).toContain("普通键盘的 Home、反引号和波浪号保持原样");
+    expect(wrapper.find(".mapping-editor").text()).toContain("可能同时带出原生 Home 或反引号");
   });
 
   it("左键与其余方向键同样开放自定义并显示结构性泄漏提示", async () => {

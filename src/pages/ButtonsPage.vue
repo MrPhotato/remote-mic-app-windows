@@ -520,16 +520,15 @@ function isActivePreset(keys: KeyCode[]): boolean {
 }
 
 /**
- * 编辑器提示（信息性）：Home/TV 已落地"遥控器优先"（2026-09-07 方案 C）——
- * 已配置映射且遥控器连接期间原生按键被接管，任意按压（含闲置后首次）严格
- * 单响应；确定/方向的同键映射仍由泄漏对冲保证单响应，其余配置冷首按附带
- * 一次原生动作（结构性泄漏）。
+ * Home/TV 只接收已识别遥控器的事件，普通键盘保留原生输入。
+ * 无设备身份的钩子不拦截这两键，因此遥控器也可能带出原生动作。
+ * 确定/方向仍保留既有冷首按能力提示。
  */
 const capabilityNote = computed<string | null>(() => {
   if (!editingTarget.value) return null;
   const button = editingTarget.value.button;
   if (button === "home" || button === "tv") {
-    return "提示：保存后本按键启用“遥控器优先”——遥控器连接期间原生按键（Home / `）被接管，任意按压（含闲置后首次）严格单响应；此期间物理键盘上的对应按键将触发映射动作，断开遥控器或删除本键映射即恢复原生。";
+    return "普通键盘的 Home、反引号和波浪号保持原样。此映射仅由已识别的遥控器触发；遥控器本键可能同时带出原生 Home 或反引号，包括按住时的重复输入。";
   }
   if (shortcutCapability(button, "single", remoteModel.value) === "identity") {
     const identity = identityShortcutByButton[button];

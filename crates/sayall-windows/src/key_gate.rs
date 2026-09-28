@@ -14,10 +14,9 @@
 //!      2026-09-06 纳入）物理键盘实际极罕见。三者无需武装直接吞（见
 //!      docs/investigations/2026-09-06-left-double-response-arm-deadlock.md
 //!      的结构性武装死锁：孤立按压首沿在 60ms 有界等待内无法武装必泄漏）；
-//!   2. 常驻抑制族（"遥控器优先"，2026-09-07 用户选定方案 C 落地）：Home/TV
-//!      已映射且遥控器在线（`set_remote_connected`，ble.rs 相位提交点同步）
-//!      时无需武装直接吞——孤立首按不再泄漏，代价是物理键盘 Home/` 在
-//!      遥控器连接期间被接管（用户确认接受；断开连接或取消映射即恢复）；
+//!   2. Home/TV 的共享 VK（Home / OEM_3）始终透传，不参与无设备身份的
+//!      武装、配对或映射投递。仅经设备路径确认的 Raw Input 事件识别这两键；
+//!      遥控器原生效果仍会交付，物理键盘 Home、反引号和波浪号完整保留；
 //!   3. 其余 VK（方向/Enter/音量 VK）需"武装"：Raw Input
 //!      监听器观察到该按键的 HID 报文（独立管线，不受键盘 LL 钩子影响）后
 //!      武装对应按键；钩子在按下沿做 60ms 有界等待（key_suppressor 同款，
@@ -197,7 +196,7 @@ mod windows_impl {
     /// 会被误吞（用户已确认接受）。
     ///
     /// 直接归因族（[`direct_attributed`]，VK 0xFF + VK_APPS + VK_SLEEP）
-    /// 不受此死锁约束：无需武装即可吞，孤立首按也不泄漏。方向/Enter/Home/TV 等
+    /// 不受此死锁约束：无需武装即可吞，孤立首按也不泄漏。方向/Enter 等
     /// 常见物理键 VK 不能直接归因，>4s 间隔的孤立首按泄漏仍是结构性残留
     /// （Helper 轨解决；同键映射的泄漏由映射引擎对冲，见 button_mapping.rs）。
     const ARM_GRACE_MS: u64 = 4_000;
@@ -215,12 +214,6 @@ mod windows_impl {
     };
     static ENABLED: AtomicBool = AtomicBool::new(false);
     static MAPPED_MASK: AtomicU64 = AtomicU64::new(0);
-    /// 常驻抑制掩码（"遥控器优先"）：遥 online 期间无需武装直接吞。
-    /// 由映射引擎在映射变化时写入（当前仅 Home/TV，见 button_mapping.rs）。
-    static PERSISTENT_MASK: AtomicU64 = AtomicU64::new(0);
-    /// 遥控器在线状态（BLE 连接相位推导，ble.rs 在相位提交点同步）。
-    /// 常驻抑制键仅在线时接管；离线恢复物理键盘原生透传（不劫持）。
-    static REMOTE_CONNECTED: AtomicBool = AtomicBool::new(false);
     static LISTENER_ACTIVE: AtomicBool = AtomicBool::new(false);
     static SWALLOWED_EDGES: AtomicU64 = AtomicU64::new(0);
     static LEAKED_DOWNS: AtomicU64 = AtomicU64::new(0);
@@ -258,17 +251,6 @@ mod windows_impl {
         mask != 0 && (mask >> button.ordinal()) & 1 == 1
     }
 
-    /// 常驻抑制键（"遥控器优先"）：位掩码由映射引擎写入（已映射的 Home/TV）。
-    fn persistent(button: RemoteButton) -> bool {
-        let mask = PERSISTENT_MASK.load(Ordering::Relaxed);
-        mask != 0 && (mask >> button.ordinal()) & 1 == 1
-    }
-
-    /// 遥控器在线（BLE 连接相位推导，ble.rs 同步）。
-    fn remote_connected() -> bool {
-        REMOTE_CONNECTED.load(Ordering::Relaxed)
-    }
-
     /// 直接归因族（无需武装即可吞）：
     /// - VK 0xFF（厂商键：返回/电源/音量）：物理键盘不会产生未分配 VK；
     /// - VK_APPS 0x5D（菜单键）：物理键盘仅全尺寸键盘右 Ctrl 旁的上下文
@@ -302,8 +284,7 @@ mod windows_impl {
     ///
     /// - 注入事件一律放行；
     /// - 未映射/总开关关闭/监听器停止 → 放行（替换语义不生效=原始行为）；
-    /// - 无需武装即可归因（直接归因族 VK 0xFF/0x5D/0x5F，或常驻抑制键
-    ///   Home/TV 已映射且遥控器在线——调用方把两者折算进本参数）→ 吞；
+    /// - 无需武装即可归因（直接归因族 VK 0xFF/0x5D/0x5F）→ 吞；
     /// - 其余按下沿按武装归因；
     /// - 释放沿只看按住配对：本次按住的 DOWN 全被吞才吞 UP（防粘键规则）。
     #[allow(clippy::too_many_arguments)]
@@ -464,11 +445,9 @@ mod windows_impl {
             return swallow;
         }
 
-        // 按下沿：直接归因族（VK 0xFF 厂商键 + VK_APPS 菜单键 + VK_SLEEP）与
-        // 常驻抑制键（Home/TV"遥控器优先"：已映射 + 遥控器在线）无需武装；
-        // 其余等待武装（有界 60ms）。常驻抑制键跳过有界等待，响应零额外延迟。
-        let attributed = if direct_attributed(vk_code) || (persistent(button) && remote_connected())
-        {
+        // Home/TV have already returned through the identity-free decoder above.
+        // Only the existing direct family or bounded arming may suppress other keys.
+        let attributed = if direct_attributed(vk_code) {
             true
         } else if armed(button) {
             true
@@ -578,8 +557,6 @@ mod windows_impl {
             SHORTCUT_CAPTURE_ACTIVE.store(false, Ordering::Relaxed);
             ENABLED.store(false, Ordering::Relaxed);
             MAPPED_MASK.store(0, Ordering::Relaxed);
-            PERSISTENT_MASK.store(0, Ordering::Relaxed);
-            REMOTE_CONNECTED.store(false, Ordering::Relaxed);
             LISTENER_ACTIVE.store(false, Ordering::Relaxed);
             for slot in &ARMED_UNTIL_MS {
                 slot.store(0, Ordering::Relaxed);
@@ -631,21 +608,16 @@ mod windows_impl {
     pub fn configure(enabled: bool, mapped_mask: u64) {
         ENABLED.store(enabled, Ordering::Relaxed);
         MAPPED_MASK.store(mapped_mask, Ordering::Relaxed);
+        crate::ble::gatt_note(format!(
+            "key_gate feature=home_tv_keyboard_isolation enabled={enabled} home_mapped={} tv_mapped={} shared_vk=passthrough attribution=selected_raw_input",
+            (mapped_mask >> RemoteButton::Home.ordinal()) & 1 != 0,
+            (mapped_mask >> RemoteButton::Tv.ordinal()) & 1 != 0,
+        ));
     }
 
-    /// 更新常驻抑制掩码（"遥控器优先"，映射引擎在映射变化时调用）：
-    /// 当前为已映射的 Home/TV 位。仅在掩码位命中且遥控器在线时，
-    /// 该键按下沿无需武装直接吞（跳过 60ms 有界等待，零额外延迟）。
-    pub fn set_persistent_mask(mask: u64) {
-        PERSISTENT_MASK.store(mask, Ordering::Relaxed);
-    }
-
-    /// 同步遥控器在线状态（ble.rs 在连接相位提交点调用）：
-    /// 在线时常驻抑制键接管（吞 + 引擎执行映射动作）；离线时恢复
-    /// 原生透传（物理键盘 Home/` 不被劫持）。
-    pub fn set_remote_connected(connected: bool) {
-        REMOTE_CONNECTED.store(connected, Ordering::Relaxed);
-    }
+    /// 保留 BLE 生命周期调用接口。连接状态不提供键盘设备身份，不能据此
+    /// 接管物理 Home/OEM_3；这两键始终由已归因的 Raw Input 路径处理。
+    pub fn set_remote_connected(_connected: bool) {}
 
     /// Raw Input 监听器起止：监听器停止时门控不吞任何键（无归因来源）。
     pub fn set_listener_active(active: bool) {
@@ -660,6 +632,9 @@ mod windows_impl {
     /// 监听器观察到遥控器按键活动（HID 报文或透传键盘事件）后武装该按键：
     /// 其键盘候选键在武装宽限内可被吞键归因。
     pub fn arm_button(button: RemoteButton, grace_ms: u64) {
+        if matches!(button, RemoteButton::Home | RemoteButton::Tv) {
+            return;
+        }
         let until = now_ms() + grace_ms.max(1);
         ARMED_UNTIL_MS[button.ordinal()].store(until, Ordering::Relaxed);
     }
@@ -727,15 +702,94 @@ mod windows_impl {
                 assert!(!handle_keyboard(vk, 0, 0x0100, LLKHF_INJECTED));
             }
         }
+
+        #[test]
+        fn home_tv_physical_edges_bypass_pairing_with_modifiers_and_repeats() {
+            // Exercise the production handler directly, without installing a
+            // global hook or enabling interception on the user's desktop.
+            for (vk, make, flags) in [
+                (0xC0, 0x29, KBDLLHOOKSTRUCT_FLAGS(0)),
+                (0xC0, 0x35, KBDLLHOOKSTRUCT_FLAGS(0)),
+                (0x24, 0x47, LLKHF_EXTENDED),
+            ] {
+                assert_eq!(button_for_keyboard(vk as u16, make), None);
+                HOLD_PAIRING.with(|pairing| pairing.borrow_mut().clear());
+                // Plain backquote, Shift+backquote (tilde), Ctrl/Alt/Win chords.
+                // Modifier state cannot give the LL hook a device identity.
+                for (modifier, scan) in [(0xA0, 0x2A), (0xA2, 0x1D), (0xA4, 0x38), (0x5B, 0x5B)] {
+                    assert!(!handle_keyboard(
+                        modifier,
+                        scan,
+                        0x0100,
+                        KBDLLHOOKSTRUCT_FLAGS(0)
+                    ));
+                    for message in [0x0100, 0x0100, 0x0104, 0x0101, 0x0105] {
+                        assert!(!handle_keyboard(vk, make, message, flags));
+                        HOLD_PAIRING.with(|pairing| assert!(pairing.borrow().is_empty()));
+                    }
+                    assert!(!handle_keyboard(
+                        modifier,
+                        scan,
+                        0x0101,
+                        KBDLLHOOKSTRUCT_FLAGS(0)
+                    ));
+                }
+                assert!(!handle_keyboard(vk, make, 0x0100, flags | LLKHF_INJECTED));
+                assert!(!handle_keyboard(vk, make, 0x0101, flags | LLKHF_INJECTED));
+            }
+        }
+
+        #[test]
+        fn home_tv_overlap_and_lifecycle_boundaries_never_claim_down_ownership() {
+            for (vk, make, button) in [
+                (0xC0, 0x29, RemoteButton::Tv),
+                (0x24, 0x47, RemoteButton::Home),
+            ] {
+                // Neither remote activity nor BLE online transitions can arm
+                // the shared key; even a huge grace must be rejected unchanged.
+                let before = ARMED_UNTIL_MS[button.ordinal()].load(Ordering::Relaxed);
+                set_remote_connected(true);
+                arm_button(button, u64::MAX);
+                assert_eq!(
+                    ARMED_UNTIL_MS[button.ordinal()].load(Ordering::Relaxed),
+                    before
+                );
+
+                HOLD_PAIRING.with(|pairing| pairing.borrow_mut().clear());
+                // Physical DOWN predates startup; repeats arrive after startup.
+                // A remote DOWN/UP overlaps with the same VK/scan, followed by
+                // another physical repeat and physical release. No edge may be
+                // claimed on the basis of this indistinguishable sequence.
+                for message in [0x0100, 0x0100, 0x0101, 0x0100, 0x0101] {
+                    assert!(!handle_keyboard(
+                        vk,
+                        make,
+                        message,
+                        KBDLLHOOKSTRUCT_FLAGS(0)
+                    ));
+                    HOLD_PAIRING.with(|pairing| assert!(pairing.borrow().is_empty()));
+                }
+                set_remote_connected(false);
+                // Exit/restart leaves no ownership; late and duplicate releases
+                // must pass, including a release after stale legacy pairing.
+                HOLD_PAIRING.with(|pairing| pairing.borrow_mut().insert((vk as u16, make), true));
+                assert!(!handle_keyboard(vk, make, 0x0101, KBDLLHOOKSTRUCT_FLAGS(0)));
+                HOLD_PAIRING.with(|pairing| pairing.borrow_mut().clear());
+                assert!(!handle_keyboard(vk, make, 0x0101, KBDLLHOOKSTRUCT_FLAGS(0)));
+                assert!(!handle_keyboard(vk, make, 0x0100, KBDLLHOOKSTRUCT_FLAGS(0)));
+                assert!(!handle_keyboard(vk, make, 0x0101, KBDLLHOOKSTRUCT_FLAGS(0)));
+                HOLD_PAIRING.with(|pairing| assert!(pairing.borrow().is_empty()));
+            }
+        }
     }
 }
 
 #[cfg(windows)]
 pub use windows_impl::{
     arm_button, configure, decide, is_gate_thread_alive, leaked_down_count, listener_active,
-    set_edge_sink, set_listener_active, set_persistent_mask, set_remote_connected,
-    set_shortcut_capture_active, set_shortcut_capture_sink, swallowed_edge_count, KeyGate,
-    HOLD_LEAKED, HOLD_NONE, HOLD_SWALLOWED_ALL,
+    set_edge_sink, set_listener_active, set_remote_connected, set_shortcut_capture_active,
+    set_shortcut_capture_sink, swallowed_edge_count, KeyGate, HOLD_LEAKED, HOLD_NONE,
+    HOLD_SWALLOWED_ALL,
 };
 
 #[cfg(not(windows))]
@@ -756,7 +810,6 @@ mod fallback {
     }
 
     pub fn configure(_enabled: bool, _mapped_mask: u64) {}
-    pub fn set_persistent_mask(_mask: u64) {}
     pub fn set_remote_connected(_connected: bool) {}
     pub fn set_listener_active(_active: bool) {}
     pub fn arm_button(_button: RemoteButton, _grace_ms: u64) {}
@@ -857,31 +910,6 @@ mod tests {
         assert!(windows_impl::direct_attributed(0xFF));
         // 电源键 VK_SLEEP 形态：罕见物理键，直接归因（防孤立泄漏触发系统睡眠）。
         assert!(windows_impl::direct_attributed(0x5F));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn persistent_suppression_folds_into_no_arm_attribution() {
-        // 常驻抑制键（Home/TV"遥控器优先"）在钩子层折算进"无需武装归因"参数：
-        // 已映射 + 遥控器在线 → 未武装也吞（孤立冷首按单响应，2026-09-07 方案 C）。
-        assert!(decide(
-            0xC0, 0x35, false, false, true, false, HOLD_NONE, true
-        ));
-        // UP 沿仍按配对裁决：DOWN 全吞 → UP 吞（防粘键规则不变）。
-        assert!(decide(
-            0xC0,
-            0x35,
-            true,
-            false,
-            true,
-            false,
-            HOLD_SWALLOWED_ALL,
-            true
-        ));
-        // 注入一律放行（自家注入与其他程序注入不受常驻抑制影响）。
-        assert!(!decide(
-            0xC0, 0x35, false, true, true, false, HOLD_NONE, true
-        ));
     }
 
     #[cfg(windows)]

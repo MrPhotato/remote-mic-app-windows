@@ -16,9 +16,9 @@
 //! - 监听器停止/设备移除 → 释放全部按住状态并取消计时（不触发动作）；
 //! - 语音键不参与映射（RemoteButton 无语音键条目，保持 ATVV 实时生命周期）。
 //!
-//! 泄漏对冲（2026-09-06 调查档案修复记录，结构性武装死锁的缓解）：常见
-//! 物理 VK（方向/Enter/Home/TV）不能直接归因（见 key_gate.rs），孤立首按
-//! 的原始键必泄漏进 OS。泄漏路径（[`EngineMessage::Keyboard`]，监听器按
+//! 原生交付对冲：方向/Enter 等常见物理 VK 的孤立首按可能因武装归因
+//! 不及时而透传；Home/TV 为保留物理键盘输入始终透传（见 key_gate.rs）。
+//! 原生交付路径（[`EngineMessage::Keyboard`]，监听器按
 //! 设备路径过滤，只含遥控器事件）的按压会把该键标记为"原生已交付"：
 //! 若映射动作与原生动作相同（右→右 等，见 [`native_key`]），该次 Single
 //! 跳过注入——冷首按单响应；Long/Double 与按住连发始终注入（原生无法
@@ -410,17 +410,6 @@ struct EngineState {
     last_error: Option<String>,
 }
 
-/// 常驻抑制（"遥控器优先"）掩码：已映射按键中需要接管原生输入的键位。
-///
-/// 2026-09-07 用户选定方案 C 落地（见 2026-09-06 调查档案"竞品佐证"与
-/// "方案空间"节）：仅 Home/TV——物理键盘 Home/` 低频，遥控器在线期间的
-/// 接管代价可接受，换取这两键孤立冷首按也严格单响应（无需武装直接吞，
-/// 跳过 60ms 有界等待，零额外延迟）。方向/Enter 等物理高频键不纳入
-///（接管=劫持物理键盘；左键与其他方向键使用逐键武装机制）。
-pub(crate) fn persistent_suppress_mask(mapped_mask: u64) -> u64 {
-    mapped_mask & ((1u64 << RemoteButton::Home.ordinal()) | (1u64 << RemoteButton::Tv.ordinal()))
-}
-
 /// 按键映射引擎运行时。持有句柄即运行；线程在 `Shutdown` 或通道关闭时退出。
 pub struct ButtonMappingRuntime {
     mappings: Arc<RwLock<ButtonMappings>>,
@@ -516,7 +505,6 @@ impl ButtonMappingRuntime {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = mappings.clone();
         let mapped_mask = mappings.mapped_mask();
         key_gate::configure(mappings.enabled, mapped_mask);
-        key_gate::set_persistent_mask(persistent_suppress_mask(mapped_mask));
         let _ = self.sender.send(EngineMessage::MappingsChanged);
     }
 
@@ -2584,29 +2572,6 @@ mod tests {
             .unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(usage.snapshot().button_presses, 1);
-    }
-
-    #[test]
-    fn persistent_suppress_mask_covers_only_home_and_tv() {
-        let _isolation = MAPPING_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        // 常驻抑制（"遥控器优先"）只覆盖 Home/TV：已映射时接管，未映射不吞；
-        // 方向/Enter 等物理高频键即使已映射也不纳入（接管=劫持物理键盘）。
-        let mapped = (1u64 << RemoteButton::Home.ordinal())
-            | (1u64 << RemoteButton::Tv.ordinal())
-            | (1u64 << RemoteButton::Ok.ordinal())
-            | (1u64 << RemoteButton::Up.ordinal());
-        assert_eq!(
-            persistent_suppress_mask(mapped),
-            (1u64 << RemoteButton::Home.ordinal()) | (1u64 << RemoteButton::Tv.ordinal()),
-        );
-        assert_eq!(
-            persistent_suppress_mask(1u64 << RemoteButton::Ok.ordinal()),
-            0,
-            "未纳入常驻抑制族的键位掩码必须为空"
-        );
-        assert_eq!(persistent_suppress_mask(0), 0);
     }
 
     #[test]
