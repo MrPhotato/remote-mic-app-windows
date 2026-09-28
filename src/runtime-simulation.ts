@@ -64,7 +64,7 @@ async function openPage(label: string, heading = label): Promise<void> {
 }
 
 async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
-  // 应用默认打开"按键"页（对齐 Mac 页序），先导航到连接与语音完成连接旅程。
+  // 先导航到连接与语音，避免依赖上次保存的默认页面。
   await openPage("连接与语音");
   await waitFor(
     () => (document.querySelector("h1")?.textContent?.trim() === "连接与语音" ? true : null),
@@ -92,15 +92,17 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   assert(connection.capabilities?.sampleRate === 16_000, "RC001 仿真能力不是 16 kHz");
   steps.push("RC001 连接 command 返回 16 kHz ATVV 就绪状态");
 
+  assert(!document.querySelector("#advanced-audio-settings"), "音频高级设置没有默认收起");
+  await clickButton("高级设置");
   await waitFor(
-    () => (document.body.textContent?.includes("CABLE Input (CI Simulation)") ? true : null),
+    () => (document.querySelector("#advanced-audio-settings")?.textContent?.includes("CABLE Input (CI Simulation)") ? true : null),
     "仿真音频端点",
   );
-  // 端点列表默认收起（用户每次只用一个）：自动选择后以"更换设备"入口呈现。
+  // 高级设置内，自动选择的端点通过“更换传送设备”入口调整。
   await waitFor(
     () =>
       Array.from(document.querySelectorAll<HTMLButtonElement>("button")).some((button) =>
-        button.textContent?.trim().includes("更换设备"),
+        button.textContent?.trim().includes("更换传送设备"),
       )
         ? true
         : null,
@@ -111,7 +113,9 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   const audio = await getAudioSnapshot();
   assert(audio.phase === "ready", "仿真音频端点没有进入 WASAPI 就绪");
   assert(audio.selectedEndpointId === endpoints[0].id, "仿真 CABLE Input 没有被自动选择");
-  steps.push("连接页面首次检测并自动选择唯一的仿真 CABLE Input");
+  await clickButton("收起高级设置");
+  await waitFor(() => (!document.querySelector("#advanced-audio-settings") ? true : null), "音频高级设置收起");
+  steps.push("连接页面自动选择唯一仿真 CABLE Input，高级设置可展开和收起");
 
   await openPage("按键", "按键映射");
   await waitFor(
@@ -212,7 +216,7 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   steps.push("关于页深色/系统外观经 Windows WebView、Tauri capability 与设置持久化闭环");
 
   await openPage("连接与语音");
-  steps.push("五个侧栏页面均在 Windows WebView 中完成导航和渲染");
+  steps.push("连接、按键、权限与关于页面在 Windows WebView 中完成导航和渲染");
 
   const voice = await invoke<PlatformSnapshot>("run_runtime_simulation_voice_session");
   assert(voice.connection.decodedSamples === 240, "40 + 80 字节语音没有解码为 240 个采样");
