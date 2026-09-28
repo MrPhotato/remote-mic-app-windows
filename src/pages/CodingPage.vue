@@ -109,7 +109,7 @@ async function changeProfile(restore: boolean): Promise<void> {
       const result = await applyCodingProfile(port);
       current.value = result.mappings;
       backup.value = result.backup;
-      message.value = "Codex 预设已保存。请连接遥控器，并在 Codex 前台确认按键效果。";
+      message.value = "Codex 预设已保存，请切到 Codex 使用。";
     }
     restoreReview.value = null;
     report(event, "passed", "settings_saved", started);
@@ -129,7 +129,6 @@ onMounted(load);
   <section class="coding-page">
     <header class="page-header">
       <div>
-        <p class="eyebrow">遥控 Coding · 本地版</p>
         <h1>Codex 遥控</h1>
         <p class="intro muted">按住说话，改字发送，切换任务，再查看代码改动。</p>
       </div>
@@ -145,7 +144,7 @@ onMounted(load);
         <button class="secondary-button" type="button" @click="emit('navigate', 'connection')">连接设置</button>
       </article>
       <article class="card readiness-card">
-        <div class="card-title-row"><h2>语音输出</h2><span class="badge" :class="audioConfigured ? 'success' : 'pending'">{{ audioConfigured ? '音频已配置' : '待配置' }}</span></div>
+        <div class="card-title-row"><h2>麦克风</h2><span class="badge" :class="audioConfigured ? 'success' : 'pending'">{{ audioConfigured ? '音频已配置' : '待配置' }}</span></div>
         <p>{{ audio ? audioPhaseLabel(audio.phase) : '正在读取' }}<span class="muted"> · 配合 Codex 听写或语音输入法</span></p>
         <button class="secondary-button" type="button" @click="emit('navigate', 'connection')">配置语音</button>
       </article>
@@ -169,7 +168,7 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
-      <p class="preserved-note muted">主页、菜单和 TV 启用了双按，单按需等待约 0.3 秒。返回每次按下立即普通退格，快速连按继续删除，按住连续退格、松开停止。TV 长按撤销（Ctrl + Z）；可在「按键映射」中改到其他可配置的单击、双击或长按，也可禁用。方向键按住连续操作。音量＋/－用于切换上一/下一任务或标签页；RC003 请先启用三键增强。搜索文件可从命令菜单进入。</p>
+      <p class="preserved-note muted">主页、菜单和 TV 的单按需等待约 0.3 秒。返回键按一下退格，按住连续删除，松开停止。方向键和音量键支持按住连续操作；RC003 的返回及音量键需先启用三键增强。需要调整时打开「按键映射」。</p>
       <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter：在输入框中可能发送内容，在审批提示中可能批准操作。电源键在本方案中配置为 Esc，用于关闭弹层或取消当前操作。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>
@@ -191,15 +190,14 @@ onMounted(load);
 
     <article class="card voice-guide">
       <h2>说话录入，确认后发送</h2>
-      <p>在「连接与语音」中选择「Codex 听写 · Ctrl + Shift + D」，也可以保留微信输入法。使用遥控器麦克风时，语音设备选择 VB-CABLE 的 CABLE Input，并让 Codex 或输入法使用 CABLE Output 麦克风。将 Codex 切到前台并点击输入框，按住遥控器语音键说话，松开结束。Codex 听写模式不需要微信输入法。</p>
-      <p class="muted">沿用当前 Codex 按住听写或已选的语音热键，不改语音设置与自定义应用列表。松开语音键后检查文字，再按确定发送。音频已配置只表示输出通道就绪，识别文字是否进入 Codex 需要实际试用确认。</p>
+      <p>在「连接与语音」中选择「Codex 听写 · Ctrl + Shift + D」或微信输入法，并让目标应用使用 CABLE Output 麦克风。切到 Codex 输入框，按住遥控器语音键说话，松开结束。</p>
+      <p class="muted">使用遥控器麦克风需要安装 VB-CABLE。松开语音键后检查文字，再按确定发送。</p>
     </article>
   </section>
 </template>
 
 <style scoped>
 .coding-page { max-width: 1040px; margin: 0 auto; }
-.eyebrow { margin: 0 0 9px; color: var(--accent-text); font-size: 12px; font-weight: 600; letter-spacing: .5px; }
 .intro { font-size: 14px; margin: 9px 0 4px; }
 .readiness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
 .readiness-card { padding: 18px; }

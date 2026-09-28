@@ -209,7 +209,7 @@ const phaseTone = computed(() => {
 
 const phaseDetail = computed(() => {
   if (connection.value.lastError) return connection.value.lastError;
-  if (connection.value.capabilities) return "语音功能已确认，可以按住遥控器语音键说话";
+  if (connection.value.capabilities) return "可以按住遥控器语音键说话";
   return "连接后即可使用遥控器语音键";
 });
 
@@ -495,7 +495,7 @@ onUnmounted(() => {
           <ol>
             <li>确认右侧遥控器麦克风的声音传送已就绪；需要调整时打开高级设置；</li>
             <li>让 Codex 听写使用 CABLE Output 麦克风；若 Codex 没有麦克风选择入口，在 Windows 中将它使用的录音设备设为 CABLE Output；</li>
-            <li>将 Codex 切到前台，点击输入框。先用键盘按住 Ctrl + Shift + D，确认 Codex 的听写可用；</li>
+            <li>将 Codex 切到前台，点击输入框；</li>
             <li>按住遥控器语音键说话，松开结束。检查识别文字后再发送；本程序不会自动发送。</li>
           </ol>
           <p>此模式不需要微信输入法。使用遥控器麦克风仍需要 VB-CABLE。</p>
@@ -506,7 +506,7 @@ onUnmounted(() => {
             <li>确认右侧遥控器麦克风的声音传送已就绪；需要调整时打开高级设置；</li>
             <li>在微信输入法的语音设置里，把麦克风设为 CABLE Output；若没有这个选项，把系统默认录音设备设为 CABLE Output；</li>
             <li>在目标应用的文本框内切换到微信输入法（看任务栏输入指示器确认）；</li>
-            <li>按住遥控器语音键约半秒以上再说话，松开后等待文字出现（需要联网）。快速点按不出文字是微信输入法自己的最短按住要求，不是故障。遥控器语音键自带的 F5 按键会被应用自动屏蔽，物理键盘的 F5 不受影响。</li>
+            <li>按住遥控器语音键约半秒后再说话，松开后等待文字出现（需要联网）。</li>
           </ol>
         </details>
       </article>
@@ -536,7 +536,7 @@ onUnmounted(() => {
             <span>CABLE Output</span>
           </div>
         </div>
-        <p class="muted">请在 Codex 或语音输入法中选择 CABLE Output。此处仅提示设置，本程序不会更改目标应用的麦克风。</p>
+        <p class="muted">请在 Codex 或语音输入法中将麦克风设为 CABLE Output。</p>
         <p class="muted">电脑扬声器保持原有设置。</p>
 
         <div v-if="audioOperationError" class="info-callout warning audio-error-callout" role="alert">
@@ -592,7 +592,7 @@ onUnmounted(() => {
               <span>{{ audioPhaseLabel(audio.phase) }}</span>
             </div>
           </div>
-          <p class="muted">仅在尚未配置且检测到唯一虚拟声卡时自动选择。已保存的选择会保留；更换传送设备不会修改 Windows 默认扬声器或麦克风。</p>
+          <p class="muted">通常选择 CABLE Input。更换此设备不会修改 Windows 默认扬声器或麦克风。</p>
           <p class="muted scan-summary" role="status">{{ audioMessage }}</p>
           <div class="endpoint-select-row">
             <button

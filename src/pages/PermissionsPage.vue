@@ -6,13 +6,13 @@ const props = defineProps<{ runtime: RuntimeSnapshot | null }>();
 
 const bluetoothStatus = computed(() => {
   if (props.runtime?.platform.bleVoiceReady) return { tone: "success", label: "语音链路已就绪" };
-  if (props.runtime?.platform.bleScanAvailable) return { tone: "warning", label: "待验证" };
+  if (props.runtime?.platform.bleScanAvailable) return { tone: "warning", label: "待连接" };
   return { tone: "pending", label: "当前电脑不支持" };
 });
 
 const inputStatus = computed(() => {
   if (props.runtime?.platform.rawInputReady) return { tone: "success", label: "已运行" };
-  if (props.runtime?.platform.windowsApiAvailable) return { tone: "warning", label: "待验证" };
+  if (props.runtime?.platform.windowsApiAvailable) return { tone: "warning", label: "未就绪" };
   return { tone: "pending", label: "当前电脑不支持" };
 });
 
@@ -46,7 +46,7 @@ const audioStatus = computed(() => {
       </div>
       <div class="permission-row">
         <div class="permission-icon">AU</div>
-        <div><strong>音频设备</strong><p>语音设备由你明确选择，不改动系统默认设备。</p></div>
+        <div><strong>音频设备</strong><p>将遥控器声音传给目标应用，不改动系统默认设备。</p></div>
         <span class="badge" :class="audioStatus.tone">{{ audioStatus.label }}</span>
       </div>
     </article>

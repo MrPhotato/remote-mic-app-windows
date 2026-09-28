@@ -162,7 +162,7 @@ describe("Connection and voice settings", () => {
     expect(audioCard.text()).toContain("语音来源");
     expect(audioCard.get(".setting-row").text()).toContain("目标应用使用的麦克风");
     expect(audioCard.get(".setting-row span").text()).toBe("CABLE Output");
-    expect(audioCard.text()).toContain("此处仅提示设置");
+    expect(audioCard.text()).toContain("请在 Codex 或语音输入法中将麦克风设为 CABLE Output");
     expect(audioCard.text()).toContain("电脑扬声器保持原有设置");
     expect(audioCard.text()).not.toContain("CABLE Input");
     expect(audioCard.text()).not.toContain(speakerEndpoint.name);

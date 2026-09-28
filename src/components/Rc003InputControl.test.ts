@@ -52,9 +52,9 @@ describe("RC003 enhancement control", () => {
     expect(view.get("button").attributes("disabled")).toBeDefined();
     await view.setProps({ connected: true });
     expect(view.get("button").attributes("disabled")).toBeUndefined();
-    expect(view.text()).toContain("主程序保持普通权限");
-    expect(view.text()).toContain("未配置动作的增强按键只显示高亮");
-    expect(view.text()).toContain("按键动作以当前映射为准");
+    expect(view.text()).toContain("需要管理员权限");
+    expect(view.text()).toContain("每次启动无线麦后需手动开启");
+    expect(view.text()).toContain("按键动作可在「按键映射」中设置");
     expect(view.text()).not.toContain("原始行为");
   });
 
@@ -63,7 +63,7 @@ describe("RC003 enhancement control", () => {
     const view = await render();
     await view.get("button").trigger("click");
     await vi.advanceTimersByTimeAsync(3000);
-    expect(view.text()).toContain("浏览器预览和仿真模式无法启用");
+    expect(view.text()).toContain("请在 Windows 应用中启用三键增强");
     expect(getRc003InputStatus).not.toHaveBeenCalled();
     expect(startRc003Input).not.toHaveBeenCalled();
   });
@@ -81,7 +81,7 @@ describe("RC003 enhancement control", () => {
     expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
     resolve({ ...snapshot("waiting", 2), lastError: "awaiting_neutral" });
     await flushPromises();
-    expect(view.text()).toContain("请按一下方向键并松开，完成首次初始化");
+    expect(view.text()).toContain("请按一下方向键并松开");
     expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("true");
     expect(view.get('[role="switch"]').attributes("aria-label")).toBe(label);
     expect(view.get('[role="status"]').text()).toBe("正在准备…");

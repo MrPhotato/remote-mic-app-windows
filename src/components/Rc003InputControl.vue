@@ -108,14 +108,14 @@ onUnmounted(() => {
         <span aria-hidden="true">{{ busy ? active ? '正在关闭…' : '等待 Windows 授权…' : active ? '已开启' : '已关闭' }}</span>
       </button>
     </div>
-    <p :id="permissionId" class="permission-note"><strong>RC003 · 需要管理员权限</strong>。开启时由辅助程序申请 Windows 授权；主程序保持普通权限，无需修改驱动。</p>
-    <p class="muted">每次启动无线麦后需手动开启。按键动作以当前映射为准，未配置动作的增强按键只显示高亮。关闭会停止增强并释放增强按键。</p>
-    <p v-if="!available" class="muted">浏览器预览和仿真模式无法启用三键增强。</p>
+    <p :id="permissionId" class="permission-note"><strong>RC003 · 需要管理员权限</strong>。开启时请在 Windows 授权提示中确认。</p>
+    <p class="muted">每次启动无线麦后需手动开启。按键动作可在「按键映射」中设置。</p>
+    <p v-if="!available" class="muted">请在 Windows 应用中启用三键增强。</p>
     <p v-else-if="active && !connected || status.phase === 'waiting' && status.lastError === 'waiting_for_connection'" class="muted">正在等待遥控器连接恢复，请稍候。</p>
     <p v-else-if="!connected" class="muted">请先在「连接与语音」中连接 RC003。</p>
-    <p v-else-if="status.phase === 'waiting' && status.lastError === 'awaiting_neutral'" class="muted">请按一下方向键并松开，完成首次初始化。</p>
+    <p v-else-if="status.phase === 'waiting' && status.lastError === 'awaiting_neutral'" class="muted">请按一下方向键并松开。</p>
     <p v-else-if="status.phase === 'waiting'" class="muted">正在准备或恢复三键增强，请稍候。</p>
-    <p v-else-if="status.phase === 'ready'" class="muted">按下返回或音量键，在「按键映射」中检查高亮与已配置动作。</p>
+    <p v-else-if="status.phase === 'ready'" class="muted">返回和音量键已可使用。</p>
     <p v-if="errorMessage" class="error-text" role="alert">{{ errorMessage }}</p>
     <p v-else-if="readError" class="error-text" role="alert">暂时无法读取三键增强状态，正在重试。</p>
   </section>

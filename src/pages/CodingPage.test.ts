@@ -46,9 +46,9 @@ describe("Coding page", () => {
     expect(wrapper.get(".mapping-table").text()).not.toContain("原始行为");
     expect(wrapper.text()).toContain("已连接");
     expect(wrapper.text()).toContain("音频已配置");
-    expect(wrapper.text()).toContain("识别文字是否进入 Codex 需要实际试用确认");
+    expect(wrapper.text()).toContain("CABLE Output 麦克风");
     expect(wrapper.get(".voice-guide").text()).toContain("Codex 听写 · Ctrl + Shift + D");
-    expect(wrapper.get(".voice-guide").text()).toContain("Codex 听写模式不需要微信输入法");
+    expect(wrapper.get(".voice-guide").text()).toContain("松开语音键后检查文字，再按确定发送");
     expect(wrapper.get(".voice-guide").text()).toContain("VB-CABLE");
     const voice = wrapper.findAll("button").find((button) => button.text() === "配置语音")!;
     await voice.trigger("click");
@@ -77,9 +77,9 @@ describe("Coding page", () => {
     expect(wrapper.get(".mapping-table").text()).toContain("未配置动作");
     expect(wrapper.get(".mapping-table").text()).not.toContain("系统音量＋（原始行为）");
     expect(wrapper.text()).toContain("单按需等待约 0.3 秒");
-    expect(wrapper.text()).toContain("返回每次按下立即普通退格");
-    expect(wrapper.text()).toContain("快速连按继续删除");
-    expect(wrapper.text()).toContain("TV 长按撤销（Ctrl + Z）");
+    expect(wrapper.text()).toContain("返回键按一下退格");
+    expect(wrapper.text()).toContain("按住连续删除，松开停止");
+    expect(wrapper.get(".mapping-table").text()).toContain("撤销 · Ctrl + Z");
     expect(wrapper.text()).not.toContain("删除当前短句");
     expect(wrapper.text()).not.toContain("本预设未配置音量动作");
     await wrapper.get('[data-testid="apply-profile"]').trigger("click");

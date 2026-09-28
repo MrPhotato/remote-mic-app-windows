@@ -297,7 +297,7 @@ const browserSnapshot: RuntimeSnapshot = {
     wasapiReady: false,
     rawInputReady: false,
     sendInputReady: false,
-    verificationStatus: "浏览器预览仅展示界面，不代表真机已通过",
+    verificationStatus: "请在 Windows 应用中连接遥控器。",
     connection: {
       phase: "idle",
       remoteName: null,
