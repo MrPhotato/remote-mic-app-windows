@@ -718,10 +718,20 @@ describe("buttons mapping page", () => {
     wrapper.unmount();
   });
 
-  it.each(["rc001", "unknown"] as const)("does not offer the enhancement switch for %s", async model => {
-    const wrapper = await mountPage(model);
+  it("does not offer the enhancement switch for confirmed RC001", async () => {
+    const wrapper = await mountPage("rc001");
     expect(wrapper.find(".rc003-input-control").exists()).toBe(false);
     expect(wrapper.find('[role="switch"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("keeps the unknown model enhancement visible with a disabled switch", async () => {
+    const wrapper = await mountPage("unknown");
+    const control = wrapper.get(".rc003-input-control");
+    expect(control.get('[role="status"]').text()).toBe("型号尚未确认");
+    expect(control.get('[role="switch"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get(".mapping-canvas").element.previousElementSibling).toBe(control.element);
+    expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 

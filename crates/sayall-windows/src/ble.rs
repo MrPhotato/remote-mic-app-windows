@@ -1,9 +1,10 @@
+mod model_probe;
+
 use crate::wetype_revive::{response_since, wetype_mic_observation, MicObservation, MicResponse};
 use crate::{
     audio::AudioRuntime, power::PowerNotifications, reconnect::ReconnectBackoff,
-    remote_model_from_model_number, remote_model_from_name, send_input::KeyChord,
-    send_input_windows::SendInputRuntime, ConnectionPhase, ConnectionSnapshot, PlatformError,
-    RemoteModel, UsageCounters,
+    remote_model_from_name, send_input::KeyChord, send_input_windows::SendInputRuntime,
+    ConnectionPhase, ConnectionSnapshot, PlatformError, RemoteModel, UsageCounters,
 };
 use sayall_core::{AtvvCommand, AtvvVoicePipeline, PipelineOutput, VoiceSessionState};
 use std::future::IntoFuture;
@@ -219,6 +220,11 @@ pub(crate) enum WorkerMessage {
     /// （30s）压到立即（2026-09-05 实证：遥控器沉睡 52 分钟后首按，
     /// GATT 重连耗 3 秒，期间按键全部无响应）。
     WakeReconnect,
+    ModelRead {
+        connection_generation: u64,
+        attempt: u32,
+        model: Option<RemoteModel>,
+    },
     BatteryRead {
         connection_generation: u64,
         reading: crate::battery::BatteryReading,
@@ -317,17 +323,28 @@ fn worker_loop(
     // 资源探针（2026-09-16）：判定 0x80070008 成因的必要证据，见
     // resource_probe 模块头部的判读方法。
     let mut resource_probe = crate::resource_probe::ResourceProbe::default();
+    let mut model_recovery = model_probe::Recovery::new();
+    let mut model_update_needed = true;
 
     loop {
+        // Optional model discovery is dispatched only after ATVV is ready and idle.
+        if model_update_needed {
+            let snapshot = lock(&state).clone();
+            model_recovery.tick(session.as_mut(), &snapshot, connection_generation, &sender);
+        }
         let deadline = nearest_deadline(
-            nearest_deadline(capabilities_deadline, reconnect_deadline),
-            extend_deadline,
+            nearest_deadline(
+                nearest_deadline(capabilities_deadline, reconnect_deadline),
+                extend_deadline,
+            ),
+            model_recovery.deadline(),
         );
         let message = match deadline {
             Some(deadline) => {
                 match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(message) => message,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
+                        model_update_needed = true;
                         let now = Instant::now();
                         if capabilities_deadline.is_some_and(|deadline| deadline <= now) {
                             capabilities_deadline = None;
@@ -545,6 +562,8 @@ fn worker_loop(
             },
         };
 
+        // Audio packets do not drive optional discovery or clone connection metadata.
+        model_update_needed = !matches!(&message, WorkerMessage::Audio { .. });
         match message {
             WorkerMessage::Connect { device_id, reply } => {
                 preferred_device_id = Some(device_id.clone());
@@ -819,6 +838,7 @@ fn worker_loop(
                         &mut active_voice_samples,
                         &bytes,
                     );
+                    model_update_needed = pipeline.state() == VoiceSessionState::Idle;
                 }
             }
             WorkerMessage::ConnectionChanged {
@@ -894,6 +914,19 @@ fn worker_loop(
                         apply_input_connection_phase(ConnectionPhase::Failed);
                     }
                 }
+            }
+            WorkerMessage::ModelRead {
+                connection_generation: message_generation,
+                attempt,
+                model,
+            } => {
+                model_recovery.complete(
+                    message_generation,
+                    attempt,
+                    model,
+                    &mut lock(&state),
+                    Instant::now(),
+                );
             }
             WorkerMessage::BatteryRead {
                 connection_generation: message_generation,
@@ -1383,6 +1416,9 @@ fn handle_control(
             let epoch = voice_session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             *active_voice_samples = 0;
             if let Some(session) = session {
+                if let Some(cancel) = &session.model_cancel {
+                    cancel.cancel_for_voice();
+                }
                 session.microphone_opened = true;
             }
             // 排定 MIC_EXTEND 续期节拍：遥控器固件只给约 5-6 秒免费音频窗口，
@@ -1665,6 +1701,7 @@ fn close_session(session: &mut Option<BleSession>) -> Result<(), PlatformError> 
 }
 
 struct BleSession {
+    model_cancel: Option<Arc<model_probe::Cancellation>>,
     battery_monitor: Option<crate::battery::BatteryMonitor>,
     name: String,
     model: RemoteModel,
@@ -1743,6 +1780,7 @@ impl PendingBleConnection {
 
     fn finish(mut self, name: String, model: RemoteModel) -> BleSession {
         BleSession {
+            model_cancel: None,
             battery_monitor: None,
             name,
             model,
@@ -1918,12 +1956,17 @@ impl BleSession {
                 .map_err(windows_error)
                 .map(|name| name.to_string())
         })?;
-        let inferred_model = remote_model_from_name(&name);
-        let model = if inferred_model == RemoteModel::Unknown {
-            read_remote_model(pending.device()).unwrap_or(RemoteModel::Unknown)
-        } else {
-            inferred_model
-        };
+        // Ambiguous names remain unknown; optional GATT identification runs only
+        // after ATVV readiness on a separate, cancellable worker.
+        let model = remote_model_from_name(&name);
+        gatt_note(format!(
+            "remote_model phase=infer source=device_name result={} connection_generation={connection_generation}",
+            match model {
+                RemoteModel::Rc001 => "rc001",
+                RemoteModel::Rc003 => "rc003",
+                RemoteModel::Unknown => "unknown",
+            }
+        ));
         {
             let mut snapshot = lock(state);
             snapshot.phase = ConnectionPhase::Discovering;
@@ -2052,6 +2095,9 @@ impl BleSession {
     }
 
     fn request_microphone_open(&mut self, version: u16, codec: u8) -> Result<(), PlatformError> {
+        if let Some(cancel) = &self.model_cancel {
+            cancel.cancel_for_voice();
+        }
         if self.microphone_opened {
             return Ok(());
         }
@@ -2080,6 +2126,9 @@ impl BleSession {
     }
 
     fn close(&mut self) -> Result<(), PlatformError> {
+        if let Some(cancel) = self.model_cancel.take() {
+            cancel.cancel();
+        }
         if self.closed {
             return Ok(());
         }
@@ -2664,61 +2713,6 @@ fn find_characteristic(
         return Err(PlatformError::VoiceCharacteristicMissing(label));
     }
     characteristics.GetAt(0).map_err(windows_error)
-}
-
-fn read_remote_model(device: &BluetoothLEDevice) -> Option<RemoteModel> {
-    let result = block_on(
-        device
-            .GetGattServicesForUuidWithCacheModeAsync(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                BluetoothCacheMode::Uncached,
-            )
-            .ok()?,
-    )
-    .ok()?;
-    if result.Status().ok()? != GattCommunicationStatus::Success {
-        return None;
-    }
-    let services = result.Services().ok()?;
-    if services.Size().ok()? != 1 {
-        return None;
-    }
-    let service = services.GetAt(0).ok()?;
-    let model = read_model_number(&service);
-    let _ = service.Close();
-    model
-}
-
-fn read_model_number(service: &GattDeviceService) -> Option<RemoteModel> {
-    let result = block_on(
-        service
-            .GetCharacteristicsForUuidWithCacheModeAsync(
-                MODEL_NUMBER_UUID,
-                BluetoothCacheMode::Uncached,
-            )
-            .ok()?,
-    )
-    .ok()?;
-    if result.Status().ok()? != GattCommunicationStatus::Success {
-        return None;
-    }
-    let characteristics = result.Characteristics().ok()?;
-    if characteristics.Size().ok()? != 1 {
-        return None;
-    }
-    let characteristic = characteristics.GetAt(0).ok()?;
-    let value = block_on(
-        characteristic
-            .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)
-            .ok()?,
-    )
-    .ok()?;
-    if value.Status().ok()? != GattCommunicationStatus::Success {
-        return None;
-    }
-    let bytes = buffer_to_vec(&value.Value().ok()?).ok()?;
-    let model_number = String::from_utf8(bytes).ok()?;
-    remote_model_from_model_number(&model_number)
 }
 
 fn buffer_to_vec(buffer: &IBuffer) -> windows::core::Result<Vec<u8>> {

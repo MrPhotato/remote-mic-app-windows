@@ -84,11 +84,11 @@ describe("Coding page", () => {
     expect(wrapper.text()).not.toContain("本预设未配置音量动作");
     await wrapper.get('[data-testid="apply-profile"]').trigger("click");
     await flushPromises();
-    expect(wrapper.find('[role="status"]').exists()).toBe(false);
+    expect(wrapper.find('.preset-card [role="status"]').exists()).toBe(false);
     expect(wrapper.get('[data-testid="apply-profile"]').attributes("disabled")).toBeDefined();
     resolveSave(mocks.saveButtonMappings.mock.calls[0][0]);
     await flushPromises();
-    expect(wrapper.get('[role="status"]').text()).toContain("Codex 预设已保存");
+    expect(wrapper.get('.preset-card [role="status"]').text()).toContain("Codex 预设已保存");
     expect(mocks.setVoiceHoldHotkey).not.toHaveBeenCalled();
     expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
     expect(mocks.testButtonMapping).not.toHaveBeenCalled();
@@ -104,7 +104,7 @@ describe("Coding page", () => {
     await wrapper.get('[data-testid="apply-profile"]').trigger("click");
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain("无法保存按键配置");
-    expect(wrapper.find('[role="status"]').exists()).toBe(false);
+    expect(wrapper.find('.preset-card [role="status"]').exists()).toBe(false);
     expect(localStorage.getItem(CODING_BACKUP_KEY)).not.toBeNull();
     expect(mocks.reportFrontendEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "coding_profile_apply", result: "failed", reason: "backup_or_settings_failed" }));
     wrapper.unmount();
@@ -121,7 +121,7 @@ describe("Coding page", () => {
     await wrapper.get('[data-testid="restore-profile"]').trigger("click");
     await flushPromises();
     expect(mocks.saveButtonMappings).toHaveBeenLastCalledWith(original);
-    expect(wrapper.get('[role="status"]').text()).toContain("已恢复最近一次应用预设前");
+    expect(wrapper.get('.preset-card [role="status"]').text()).toContain("已恢复最近一次应用预设前");
     wrapper.unmount();
   });
 
@@ -137,7 +137,7 @@ describe("Coding page", () => {
     await wrapper.get('[data-testid="restore-profile"]').trigger("click");
     await flushPromises();
     expect(mocks.saveButtonMappings).toHaveBeenLastCalledWith(original);
-    expect(wrapper.get('[role="status"]').text()).toContain("已恢复首次应用预设前");
+    expect(wrapper.get('.preset-card [role="status"]').text()).toContain("已恢复首次应用预设前");
     expect(localStorage.getItem(CODING_LATEST_BACKUP_KEY)).not.toBeNull();
     wrapper.unmount();
   });

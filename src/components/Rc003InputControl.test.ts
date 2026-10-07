@@ -31,12 +31,47 @@ afterEach(() => {
 });
 
 describe("RC003 enhancement control", () => {
-  it.each(["rc001", "unknown"])("is hidden and does not poll for %s", async (model) => {
-    const view = await render(model);
+  it("is hidden and does not poll for confirmed RC001", async () => {
+    const view = await render("rc001");
     await vi.advanceTimersByTimeAsync(3000);
     expect(view.find("section").exists()).toBe(false);
     expect(getRc003InputStatus).not.toHaveBeenCalled();
     expect(startRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("keeps unknown models visible and disabled until RC003 is confirmed", async () => {
+    const view = await render("unknown");
+    expect(view.find("section").exists()).toBe(true);
+    expect(view.get('[role="status"]').text()).toBe("型号尚未确认");
+    expect(view.text()).toContain("型号确认后会自动更新");
+    expect(view.get('[role="switch"]').attributes("disabled")).toBeDefined();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
+    await view.get('[role="switch"]').trigger("click");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getRc003InputStatus).not.toHaveBeenCalled();
+    expect(startRc003Input).not.toHaveBeenCalled();
+    await view.setProps({ remoteModel: "rc003" });
+    await flushPromises();
+    expect(getRc003InputStatus).toHaveBeenCalledTimes(1);
+    expect(view.get('[role="switch"]').attributes("disabled")).toBeUndefined();
+    expect(startRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("does not treat generic or unknown devices as RC003 after a late status read", async () => {
+    let resolve!: (status: Rc003InputStatus) => void;
+    vi.mocked(getRc003InputStatus).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const view = await render("rc003");
+    await view.setProps({ remoteModel: "unknown" });
+    resolve(snapshot("ready", 3));
+    await flushPromises();
+    expect(view.get('[role="status"]').text()).toBe("型号尚未确认");
+    expect(view.get('[role="switch"]').attributes("disabled")).toBeDefined();
+    expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getRc003InputStatus).toHaveBeenCalledTimes(1);
+    expect(startRc003Input).not.toHaveBeenCalled();
+    await view.setProps({ remoteModel: "rc001" });
+    expect(view.find("section").exists()).toBe(false);
   });
 
   it("reads status without starting and requires a connected real runtime", async () => {

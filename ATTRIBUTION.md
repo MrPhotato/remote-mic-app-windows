@@ -381,3 +381,9 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 ## 诊断输出失败恢复（2026-10-07）
 
 先复核本仓库生产日志初始化、结构化元数据和断连重试的既有职责，再以 Rust 标准库文件输出、互斥状态和单调时钟实现局部恢复，不引入第三方日志框架或复制外部实现。5 秒只约束故障后的重开频率，不修改 BLE、按键或语音时序；Windows 真实文件障碍移开后约 5101 ms 恢复写入，写入/刷新失败另由确定性测试覆盖。恢复只报告计数，不重放用户内容；安装版边界见 [Bug 记录](Bugs/2026-10-07-diagnostic-log-recovery.md)。
+
+## 型号失败补识别（2026-10-07）
+
+沿用本仓库 `battery.rs` 的后台读取及真实连接编号隔离、`reconnect.rs` 既有 2 秒/4 秒退避和 `ble.rs` 的显式资源释放边界。实际核对锁定依赖 `windows-future 0.3.2` 的 `when.rs`、`bindings.rs` 中 `IAsyncOperation.when/GetResults/Cancel/Close`；本机包来源为 [microsoft/windows-rs，提交 32c3144490c016fe496a0aed769bce60987a2e9d](https://github.com/microsoft/windows-rs/tree/32c3144490c016fe496a0aed769bce60987a2e9d/crates/libs/future/src)，MIT OR Apache-2.0。没有复制外部实现或增加依赖。
+
+型号查询移出语音工作线程，保留既有 30 秒请求预算；正常语音抢占不扣失败次数，迟到回调释放完成前不叠加下一次型号查询。若系统永不完成回调则保留单飞槽，不能宣称必定恢复。8 项型号测试及 58 项前端定向测试 passed；真实 GATT 故障恢复、语音抢占及时性与 RC001/RC003 分别验收见 [Bug 记录](Bugs/2026-10-07-model-discovery-recovery.md)。

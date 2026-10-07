@@ -14,12 +14,13 @@ const loaded = ref(false);
 const busy = ref(false);
 const commandError = ref("");
 const readError = ref(false);
-const active = computed(() => ["starting", "waiting", "ready"].includes(status.value.phase));
-const canStart = computed(() => available && props.connected && loaded.value && !readError.value && !busy.value && !active.value);
+const modelConfirmed = computed(() => props.remoteModel === "rc003");
+const active = computed(() => modelConfirmed.value && ["starting", "waiting", "ready"].includes(status.value.phase));
+const canStart = computed(() => modelConfirmed.value && available && props.connected && loaded.value && !readError.value && !busy.value && !active.value);
 const phaseLabels: Record<Rc003InputStatus["phase"], string> = {
   stopped: "未启用", starting: "正在启用…", waiting: "正在准备…", ready: "增强已就绪", failed: "增强未就绪",
 };
-const statusLabel = computed(() => !available ? "预览模式" : readError.value ? "状态读取失败" : !loaded.value ? "正在读取状态…" : active.value && !props.connected ? "等待连接恢复" : phaseLabels[status.value.phase]);
+const statusLabel = computed(() => !modelConfirmed.value ? "型号尚未确认" : !available ? "预览模式" : readError.value ? "状态读取失败" : !loaded.value ? "正在读取状态…" : active.value && !props.connected ? "等待连接恢复" : phaseLabels[status.value.phase]);
 const errorMessage = computed(() => commandError.value || (status.value.phase === "failed" ? rc003InputErrorMessage(status.value.lastError) : ""));
 let timer: ReturnType<typeof setInterval> | undefined;
 let disposed = false;
@@ -71,6 +72,9 @@ async function change(start: boolean): Promise<void> {
 watch(() => props.remoteModel, (model) => {
   revision += 1;
   loaded.value = false;
+  status.value = stoppedRc003InputStatus();
+  commandError.value = "";
+  readError.value = false;
   if (timer !== undefined) clearInterval(timer);
   timer = undefined;
   if (model !== "rc003" || !available) return;
@@ -87,7 +91,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section v-if="remoteModel === 'rc003'" class="card rc003-input-control" aria-label="RC003 三键增强">
+  <section v-if="remoteModel !== 'rc001'" class="card rc003-input-control" aria-label="RC003 三键增强">
     <div class="enhancement-heading">
       <div class="enhancement-title">
         <h2>补齐返回、音量＋/－按键</h2>
@@ -110,7 +114,8 @@ onUnmounted(() => {
     </div>
     <p :id="permissionId" class="permission-note"><strong>RC003 · 需要管理员权限</strong>。开启时请在 Windows 授权提示中确认。</p>
     <p class="muted">每次启动无线麦后需手动开启。按键动作可在「按键映射」中设置。</p>
-    <p v-if="!available" class="muted">请在 Windows 应用中启用三键增强。</p>
+    <p v-if="!modelConfirmed" class="muted">尚未确认遥控器型号，三键增强暂不可用；型号确认后会自动更新。</p>
+    <p v-else-if="!available" class="muted">请在 Windows 应用中启用三键增强。</p>
     <p v-else-if="active && !connected || status.phase === 'waiting' && status.lastError === 'waiting_for_connection'" class="muted">正在等待遥控器连接恢复，请稍候。</p>
     <p v-else-if="!connected" class="muted">请先在「连接与语音」中连接 RC003。</p>
     <p v-else-if="status.phase === 'waiting' && status.lastError === 'awaiting_neutral'" class="muted">请按一下方向键并松开。</p>
