@@ -196,6 +196,16 @@ export interface DiagnosticReport {
   appVersion: string;
   platform: string;
   verificationStatus: string;
+  diagnosticLog: {
+    configured: boolean;
+    ready: boolean;
+    droppedRecords: number;
+    openFailures: number;
+    writeFailures: number;
+    flushFailures: number;
+    recoveries: number;
+    lastErrorCode: string | null;
+  };
   capabilities: {
     windowsApiAvailable: boolean;
     bleScanAvailable: boolean;
@@ -206,6 +216,7 @@ export interface DiagnosticReport {
   };
   connection: {
     phase: ConnectionPhase;
+    remoteModel: RemoteModel;
     capabilitiesConfirmed: boolean;
     sampleRate: number | null;
     frameSize: number | null;
@@ -360,6 +371,10 @@ export async function getDiagnosticReport(): Promise<DiagnosticReport> {
       appVersion: browserSnapshot.appVersion,
       platform: browserSnapshot.platform.platform,
       verificationStatus: browserSnapshot.platform.verificationStatus,
+      diagnosticLog: {
+        configured: false, ready: false, droppedRecords: 0, openFailures: 0,
+        writeFailures: 0, flushFailures: 0, recoveries: 0, lastErrorCode: null,
+      },
       capabilities: {
         windowsApiAvailable: false,
         bleScanAvailable: false,
@@ -370,6 +385,7 @@ export async function getDiagnosticReport(): Promise<DiagnosticReport> {
       },
       connection: {
         phase: browserSnapshot.platform.connection.phase,
+        remoteModel: browserSnapshot.platform.connection.remoteModel,
         capabilitiesConfirmed: false,
         sampleRate: null,
         frameSize: null,

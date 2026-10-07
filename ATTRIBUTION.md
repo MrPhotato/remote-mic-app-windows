@@ -377,3 +377,7 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 ## Actions 发布来源核验补充（2026-09-21）
 
 本次直接核对 GitHub REST `actions/runs/35529960366`、`pulls/1`、`git/commits/8733bbccf93136a287322c91dcf7cd0ed4fdc51d` 及 Actions checkout 日志：PR 合并后 run 的 `pull_requests` 变为空数组，而真实检出提交仍可核验。修复复用 `actions/checkout@v4` 现有日志和 Git 公共对象，不读取第三方私有配置、不复制外部实现，也不推断空关联等于成功。明确要求测试 merge 的父提交包含 PR head，且测试树等于发布树；旧绿灯不能覆盖最新失败。见 [发布关联记录](Bugs/2026-09-21-release-pr-association.md)。
+
+## 诊断输出失败恢复（2026-10-07）
+
+先复核本仓库生产日志初始化、结构化元数据和断连重试的既有职责，再以 Rust 标准库文件输出、互斥状态和单调时钟实现局部恢复，不引入第三方日志框架或复制外部实现。5 秒只约束故障后的重开频率，不修改 BLE、按键或语音时序；Windows 真实文件障碍移开后约 5101 ms 恢复写入，写入/刷新失败另由确定性测试覆盖。恢复只报告计数，不重放用户内容；安装版边界见 [Bug 记录](Bugs/2026-10-07-diagnostic-log-recovery.md)。

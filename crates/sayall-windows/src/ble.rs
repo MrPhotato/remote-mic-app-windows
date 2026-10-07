@@ -2211,6 +2211,7 @@ pub struct DiagnosticLogMetadata {
 
 static DIAGNOSTIC_LOG_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 static DIAGNOSTIC_LOG_METADATA: OnceLock<DiagnosticLogMetadata> = OnceLock::new();
+static DIAGNOSTIC_SINK: OnceLock<crate::diagnostic_sink::DiagnosticSink> = OnceLock::new();
 
 /// 在任何功能组件启动前配置生产诊断日志。环境变量仍可覆盖路径，方便受控取证；
 /// 正式应用由宿主传入 LocalAppData 下的固定路径，日志内容绝不打印该路径。
@@ -2221,13 +2222,9 @@ pub fn initialize_diagnostic_log(
     let path = std::env::var_os("SAYALL_GATT_LOG")
         .map(std::path::PathBuf::from)
         .unwrap_or(default_path);
-    let parent_ready = path
-        .parent()
-        .map(|parent| std::fs::create_dir_all(parent).is_ok())
-        .unwrap_or(false);
     let _ = DIAGNOSTIC_LOG_PATH.set(path);
     let _ = DIAGNOSTIC_LOG_METADATA.set(metadata);
-    parent_ready && gatt_sink().is_some()
+    gatt_sink().configure(DIAGNOSTIC_LOG_PATH.get().unwrap().clone())
 }
 
 /// 诊断日志实际落盘目录（供"打开日志目录"入口定位）。
@@ -2247,82 +2244,76 @@ pub fn diagnostic_log_directory() -> Option<std::path::PathBuf> {
 /// ATVV 诊断日志（宿主默认写入 LocalAppData；SAYALL_GATT_LOG 可覆盖路径）。
 /// 控制通知与 TRANSMIT 写入保留长度及有限预览用于协议取证；音频通知不在这里
 /// 逐包落盘，防止泄露语音内容并避免高频刷盘，改由音频会话终态聚合记录。
-fn gatt_sink() -> Option<&'static Mutex<std::fs::File>> {
-    static SINK: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
-    SINK.get_or_init(|| {
-        let path = DIAGNOSTIC_LOG_PATH
+fn gatt_sink() -> &'static crate::diagnostic_sink::DiagnosticSink {
+    DIAGNOSTIC_SINK.get_or_init(|| {
+        let sink = crate::diagnostic_sink::DiagnosticSink::default();
+        if let Some(path) = DIAGNOSTIC_LOG_PATH
             .get()
             .cloned()
-            .or_else(|| std::env::var_os("SAYALL_GATT_LOG").map(std::path::PathBuf::from))?;
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()
-            .map(Mutex::new)
+            .or_else(|| std::env::var_os("SAYALL_GATT_LOG").map(std::path::PathBuf::from))
+        {
+            sink.configure(path);
+        }
+        sink
     })
-    .as_ref()
+}
+
+/// Memory-only health read for the local diagnostic summary.
+pub fn diagnostic_log_health() -> crate::diagnostic_sink::DiagnosticLogHealth {
+    DIAGNOSTIC_SINK
+        .get()
+        .map(|sink| sink.health())
+        .unwrap_or_default()
+}
+
+fn diagnostic_record(note: &str) -> String {
+    let timestamp = utc_timestamp();
+    let metadata = DIAGNOSTIC_LOG_METADATA.get();
+    format!(
+        "{timestamp} pid={} ver={} build={} source_revision={} build_channel={} release_tag={} {note}",
+        std::process::id(),
+        metadata.map(|value| value.app_version.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.app_build.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.source_revision.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.build_channel.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.release_tag.as_str()).unwrap_or("unknown"),
+    )
+}
+
+fn write_diagnostic_record(note: &str) {
+    let record = diagnostic_record(note);
+    gatt_sink().write_record(&record, |recovery| {
+        diagnostic_record(&format!(
+            "diagnostic_sink phase=recovered terminal_result=passed dropped_records={} open_failures={} write_failures={} flush_failures={}",
+            recovery.dropped_records,
+            recovery.open_failures,
+            recovery.write_failures,
+            recovery.flush_failures,
+        ))
+    });
 }
 
 fn gatt_log(kind: &str, bytes: &[u8]) {
-    use std::io::Write as _;
-    // 原始音频包既是高频数据又可能承载语音内容，生产诊断日志绝不落盘。
-    // 会话级音频统计由 audio.rs 在开始、排空、失败时聚合记录。
+    // Audio content must never be persisted; only control packets are included.
     if kind == "A" {
         return;
     }
-    if let Some(sink) = gatt_sink() {
-        if let Ok(mut file) = sink.lock() {
-            let timestamp = utc_timestamp();
-            let metadata = DIAGNOSTIC_LOG_METADATA.get();
-            let preview: String = bytes
-                .iter()
-                .take(24)
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let _ = writeln!(
-                file,
-                "{timestamp} pid={} ver={} build={} component=gatt event=packet direction={kind} byte_count={} preview=[{preview}]",
-                std::process::id(),
-                metadata
-                    .map(|value| value.app_version.as_str())
-                    .unwrap_or("unknown"),
-                metadata
-                    .map(|value| value.app_build.as_str())
-                    .unwrap_or("unknown"),
-                bytes.len()
-            );
-            let _ = file.flush();
-        }
-    }
+    let preview = bytes
+        .iter()
+        .take(24)
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    write_diagnostic_record(&format!(
+        "component=gatt event=packet direction={kind} byte_count={} preview=[{preview}]",
+        bytes.len(),
+    ));
 }
 
-/// 功能点结构化诊断标记（同 SAYALL_GATT_LOG 开关；AGENTS.md"功能点必须自带
-/// 日志"规范）：语音链路的分支决策、外部调用结果与关键耗时以 "N" 标记
-/// 行落盘，报障后一次日志拉取即可定位环节。格式与 gatt_log 对齐：
-/// `N <墙钟ms> len=  0 note=<结构化键值>`。
-/// 2026-09-05 起对 src-tauri 应用层公开（应用内更新流程等非 GATT 功能点
-/// 复用同一日志载体与格式），保持"一次日志拉取"覆盖全部功能点。
+/// Structured feature diagnostics; failed records are counted without retaining
+/// their content, and later records retry a failed sink with bounded frequency.
 pub fn gatt_note(note: String) {
-    use std::io::Write as _;
-    if let Some(sink) = gatt_sink() {
-        if let Ok(mut file) = sink.lock() {
-            let timestamp = utc_timestamp();
-            let metadata = DIAGNOSTIC_LOG_METADATA.get();
-            let _ = writeln!(
-                file,
-                "{timestamp} pid={} ver={} build={} source_revision={} build_channel={} release_tag={} {note}",
-                std::process::id(),
-                metadata.map(|value| value.app_version.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.app_build.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.source_revision.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.build_channel.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.release_tag.as_str()).unwrap_or("unknown"),
-            );
-            let _ = file.flush();
-        }
-    }
+    write_diagnostic_record(&note);
 }
 
 fn utc_timestamp() -> String {

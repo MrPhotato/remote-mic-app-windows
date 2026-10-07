@@ -10,6 +10,7 @@ pub struct DiagnosticReport {
     pub app_version: String,
     pub platform: String,
     pub verification_status: String,
+    pub diagnostic_log: sayall_windows::diagnostic_sink::DiagnosticLogHealth,
     pub capabilities: DiagnosticCapabilities,
     pub connection: ConnectionDiagnostic,
     pub audio: AudioDiagnostic,
@@ -33,6 +34,7 @@ pub struct DiagnosticCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionDiagnostic {
     pub phase: ConnectionPhase,
+    pub remote_model: sayall_windows::RemoteModel,
     pub capabilities_confirmed: bool,
     pub sample_rate: Option<u32>,
     pub frame_size: Option<usize>,
@@ -99,6 +101,7 @@ impl DiagnosticReport {
             app_version: app_version.to_owned(),
             platform: platform.platform.clone(),
             verification_status: platform.verification_status.clone(),
+            diagnostic_log: diagnostic_log_health(),
             capabilities: DiagnosticCapabilities {
                 windows_api_available: platform.windows_api_available,
                 ble_scan_available: platform.ble_scan_available,
@@ -109,6 +112,7 @@ impl DiagnosticReport {
             },
             connection: ConnectionDiagnostic {
                 phase: platform.connection.phase,
+                remote_model: platform.connection.remote_model,
                 capabilities_confirmed: atvv.is_some(),
                 sample_rate: atvv.map(|capabilities| capabilities.sample_rate),
                 frame_size: atvv.map(|capabilities| capabilities.frame_size),
@@ -155,6 +159,17 @@ impl DiagnosticReport {
     }
 }
 
+fn diagnostic_log_health() -> sayall_windows::diagnostic_sink::DiagnosticLogHealth {
+    #[cfg(windows)]
+    {
+        sayall_windows::diagnostic_log_health()
+    }
+    #[cfg(not(windows))]
+    {
+        sayall_windows::diagnostic_sink::DiagnosticLogHealth::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,6 +191,7 @@ mod tests {
                 remote_name: Some("私人遥控器名称".to_owned()),
                 last_error: Some("蓝牙地址 AA:BB:CC:DD:EE:FF".to_owned()),
                 generation: 7,
+                remote_model: sayall_windows::RemoteModel::Rc003,
                 reconnect_attempt: 2,
                 ..ConnectionSnapshot::default()
             },
@@ -218,6 +234,12 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
 
         assert_eq!(report.connection.generation, 7);
+        assert_eq!(
+            report.connection.remote_model,
+            sayall_windows::RemoteModel::Rc003
+        );
+        assert!(json.contains("\"diagnosticLog\":"));
+        assert!(json.contains("\"remoteModel\":\"rc003\""));
         assert!(report.audio.endpoint_configured);
         assert_eq!(report.raw_input.last_button, Some(RemoteButton::Ok));
         assert!(report.connection.error_present);

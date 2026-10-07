@@ -22,13 +22,15 @@ pub use bluetooth_radio::prepare_bluetooth_radio_recovery;
 mod button_gestures;
 pub mod button_mapping;
 pub mod compatibility;
+pub mod diagnostic_sink;
 pub mod file_dialog;
 #[cfg(windows)]
 pub mod graceful_exit;
 pub mod registered_apps;
 #[cfg(windows)]
 pub use ble::{
-    diagnostic_log_directory, gatt_note, initialize_diagnostic_log, DiagnosticLogMetadata,
+    diagnostic_log_directory, diagnostic_log_health, gatt_note, initialize_diagnostic_log,
+    DiagnosticLogMetadata,
 };
 #[cfg(windows)]
 pub mod backspace_transaction;
