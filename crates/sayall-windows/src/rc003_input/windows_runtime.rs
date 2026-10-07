@@ -21,6 +21,8 @@ use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 const PAYLOAD_MANIFEST: &str =
     include_str!(concat!(env!("OUT_DIR"), "/rc003-helper-manifest.json"));
 const FRAME_LIMIT: usize = 4096;
+const IPC_READ_TIMEOUT: Duration = Duration::from_millis(100);
+const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 type Availability = dyn Fn() -> (bool, u64, u64) + Send + Sync;
 
 struct Worker {
@@ -236,13 +238,7 @@ impl Rc003InputRuntime {
                         if !peer.ip().is_loopback() {
                             continue;
                         }
-                        stream
-                            .set_read_timeout(Some(Duration::from_millis(100)))
-                            .map_err(|_| "ipc_setup_failed")?;
-                        stream
-                            .set_write_timeout(Some(Duration::from_secs(1)))
-                            .map_err(|_| "ipc_setup_failed")?;
-                        stream.set_nodelay(true).map_err(|_| "ipc_setup_failed")?;
+                        configure_ipc_stream(&stream)?;
                         let mut frames = Frames::default();
                         let hello_deadline = Instant::now();
                         while hello_deadline.elapsed() < Duration::from_secs(2)
@@ -441,6 +437,40 @@ impl Rc003InputRuntime {
         }
         result
     }
+}
+
+fn configure_ipc_stream(stream: &TcpStream) -> Result<(), &'static str> {
+    let started = Instant::now();
+    let configure = |stage: &str, result: std::io::Result<()>| {
+        result.map_err(|error| {
+            gatt_note(format!(
+                "rc003_input ipc_socket phase=completed terminal_result=failed stage={stage} error_domain=winsock error_code=socket_configuration_failed os_error={} retryable=true elapsed_ms={}",
+                error.raw_os_error().unwrap_or(0),
+                started.elapsed().as_millis(),
+            ));
+            "ipc_setup_failed"
+        })
+    };
+    // Winsock accept inherits the listener's nonblocking mode. SO_RCVTIMEO
+    // alone does not make recv wait: idle WouldBlock would spin the IPC loop.
+    // Restore blocking mode before applying the existing bounded waits.
+    configure("blocking_mode", stream.set_nonblocking(false))?;
+    configure(
+        "read_timeout",
+        stream.set_read_timeout(Some(IPC_READ_TIMEOUT)),
+    )?;
+    configure(
+        "write_timeout",
+        stream.set_write_timeout(Some(IPC_WRITE_TIMEOUT)),
+    )?;
+    configure("nodelay", stream.set_nodelay(true))?;
+    gatt_note(format!(
+        "rc003_input ipc_socket phase=completed terminal_result=passed mode=blocking read_timeout_ms={} write_timeout_ms={} elapsed_ms={}",
+        IPC_READ_TIMEOUT.as_millis(),
+        IPC_WRITE_TIMEOUT.as_millis(),
+        started.elapsed().as_millis(),
+    ));
+    Ok(())
 }
 
 fn cleanup_exit_result(code: Option<u32>) -> (&'static str, &'static str, u32) {
@@ -742,6 +772,56 @@ mod tests {
             assert_eq!(safe_code(Some(value)), None);
         }
     }
+
+    #[test]
+    fn rc003_ipc_nonblocking_accept_waits_delivers_frames_and_reports_eof() {
+        // Match the production listener, including Windows' inherited
+        // nonblocking mode; a default blocking listener misses this regression.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut writer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut reader, _) = listener.accept().unwrap();
+        configure_ipc_stream(&reader).unwrap();
+        let mut frames = Frames::default();
+
+        let idle_started = Instant::now();
+        let mut idle_reads = 0;
+        while idle_started.elapsed() < Duration::from_millis(250) {
+            assert!(frames.read(&mut reader).unwrap().is_empty());
+            idle_reads += 1;
+            assert!(
+                idle_reads <= 8,
+                "idle IPC busy-spun: {idle_reads} reads in {:?}",
+                idle_started.elapsed()
+            );
+        }
+        assert_eq!(reader.read_timeout().unwrap(), Some(IPC_READ_TIMEOUT));
+        assert_eq!(reader.write_timeout().unwrap(), Some(IPC_WRITE_TIMEOUT));
+
+        let expected = vec![
+            json!({"type": "heartbeat", "generation": 1}),
+            json!({"type": "state", "generation": 1, "sequence": 1, "pressed_mask": 0}),
+        ];
+        for message in &expected {
+            send(&mut writer, message).unwrap();
+        }
+        let receive_deadline = Instant::now() + Duration::from_secs(2);
+        let mut received = Vec::new();
+        while received.len() < expected.len() {
+            received.extend(frames.read(&mut reader).unwrap());
+            assert!(
+                Instant::now() < receive_deadline,
+                "IPC frames did not arrive"
+            );
+        }
+        assert_eq!(received, expected);
+
+        // A disconnected helper must still surface EOF to the worker's existing
+        // cleanup path, rather than being mistaken for another idle timeout.
+        writer.shutdown(Shutdown::Write).unwrap();
+        assert_eq!(frames.read(&mut reader), Err("helper_disconnected"));
+    }
+
     #[test]
     fn fragmented_frames_and_oversized_input_are_bounded() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();

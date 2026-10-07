@@ -2,6 +2,11 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 2026-10-07 RC003 空闲通信修复
+
+- 参考 Microsoft [accept](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept) 与 [recv](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-recv) 对非阻塞继承及 `WSAEWOULDBLOCK` 的规定；本机隔离 Winsock 实验确认空闲忙等，恢复阻塞后保留既有超时即可消除。
+- 对照 `GetSayAll/remote-mic-app-windows` 提交 `15a065298a6ab9c84a675bb24c0e419418704d71` 的 `rc003_bridge.rs`：新架构同样在 accept 后恢复阻塞。仅参考公开 API 用法，不移植桥接架构或代码。当前修复适配个人版原有 TCP Helper，证据与验收边界见 `Bugs/2026-10-07-rc003-ipc-idle-spin.md`。
+
 ## RC003 可选三键增强接入（2026-09-20）
 
 - 在下节独立实验成功后，用户明确要求完善软件，授权可选三键 Helper 集成；以 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md) 为当前范围。主程序普通权限、基础语音不依赖注入，只读取 RC003 返回/音量±。
