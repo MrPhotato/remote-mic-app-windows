@@ -387,3 +387,7 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 沿用本仓库 `battery.rs` 的后台读取及真实连接编号隔离、`reconnect.rs` 既有 2 秒/4 秒退避和 `ble.rs` 的显式资源释放边界。实际核对锁定依赖 `windows-future 0.3.2` 的 `when.rs`、`bindings.rs` 中 `IAsyncOperation.when/GetResults/Cancel/Close`；本机包来源为 [microsoft/windows-rs，提交 32c3144490c016fe496a0aed769bce60987a2e9d](https://github.com/microsoft/windows-rs/tree/32c3144490c016fe496a0aed769bce60987a2e9d/crates/libs/future/src)，MIT OR Apache-2.0。没有复制外部实现或增加依赖。
 
 型号查询移出语音工作线程，保留既有 30 秒请求预算；正常语音抢占不扣失败次数，迟到回调释放完成前不叠加下一次型号查询。若系统永不完成回调则保留单飞槽，不能宣称必定恢复。8 项型号测试及 58 项前端定向测试 passed；真实 GATT 故障恢复、语音抢占及时性与 RC001/RC003 分别验收见 [Bug 记录](Bugs/2026-10-07-model-discovery-recovery.md)。
+
+## TV 原生字符被动取证（2026-10-07）
+
+沿用上文 Microsoft `KBDLLHOOKSTRUCT` 无设备身份的边界，使用独立、始终透传的低级钩子和 Raw Input 观察器采样普通反引号、Shift＋反引号及 RC003 TV。三个分组均为 VK C0、扫描码 29、相同 DOWN/UP 标志，只有 Raw Input 来源分类能区分；两个通道各 18 条边沿，无丢弃或回调错误。证据不支持全局扫描码指纹，也不构成消字符方案；未复制外部实现，未改 TV 路径。见 [完整记录和脱敏附件](Bugs/2026-10-07-tv-native-character-source.md)。
