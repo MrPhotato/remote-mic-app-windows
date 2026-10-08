@@ -152,6 +152,12 @@ Rust workspace lib 309 项（5 项 ignored）、前端 170 项及构建/格式�
 证据见 [候选验证](../Testing/evidence/rc003-tv-candidate-20261008.json)；
 完整实体流程见 [TV 验收](../Testing/WindowsRc003Tv.md)。
 
+12:15（UTC+8）完成 0.2.11 本地升级：旧主程序和 Helper 正常退出；原 Helper
+备份后移入回收站，安装器返回 0，三份设置文件逐字节保留。安装后的主程序
+与构建产物仅有 NSIS 的预期标记替换；98 个 Helper 文件的大小、哈希、清单
+及主程序内嵌清单均通过核对。没有自动启动应用，等待用户手动启动后的实体测试。
+此项仅证明安装成功，TV 消字符、映射和普通键盘回归仍为 `deferred`。
+
 ## 验证
 
 - `passed`：用户在 Windows 上执行三组各 3 次实体按键；采样两通道各 18 条边沿，Raw Input 来源与操作顺序一致。
