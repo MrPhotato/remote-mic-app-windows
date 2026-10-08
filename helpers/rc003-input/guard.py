@@ -80,6 +80,10 @@ def _apis():
     kernel.CloseHandle.restype = wintypes.BOOL
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.ReleaseMutex.argtypes = [wintypes.HANDLE]
+    kernel.ReleaseMutex.restype = wintypes.BOOL
     kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
     kernel.GetProcessTimes.restype = wintypes.BOOL
     kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
@@ -99,6 +103,34 @@ def _apis():
 
 def _os_error(reason):
     return GuardError(reason, ctypes.get_last_error())
+
+
+class CaptureOwner:
+    """One report observer per logon session, held until all report cleanup ends.
+
+    The fixed Local name is not accepted from IPC or command-line input. Default
+    token DACL and a non-inheritable handle are retained; no permissions are
+    broadened. An inaccessible/precreated object fails closed before attachment.
+    """
+    def __init__(self):
+        self._handle = _apis().CreateMutexW(None, False, r"Local\SayAll.RC003.ReportCapture")
+        if not self._handle:
+            raise _os_error("capture_owner_open_failed")
+        result = _apis().WaitForSingleObject(self._handle, 0)
+        if result != 0:
+            # An abandoned mutex grants ownership too, but an unclean previous
+            # owner is not evidence of completed report restoration.
+            if result == 0x80:
+                _apis().ReleaseMutex(self._handle)
+            _apis().CloseHandle(self._handle)
+            self._handle = 0
+            raise GuardError("capture_owner_busy" if result == 258 else "capture_owner_unavailable")
+
+    def close(self):
+        if self._handle:
+            _apis().ReleaseMutex(self._handle)
+            _apis().CloseHandle(self._handle)
+            self._handle = 0
 
 
 def _names(key):
@@ -255,6 +287,21 @@ def revalidate(target):
             raise GuardError("target_process_identity_changed")
         target._counts = counts
         return True
+
+
+def target_exited(target):
+    """Use the original process handle; a reused PID is never exit evidence."""
+    if not isinstance(target, Target):
+        raise GuardError("invalid_target_object")
+    with target._lock:
+        if not target._handle:
+            raise GuardError("target_closed")
+        result = _apis().WaitForSingleObject(target._handle, 0)
+        if result == 0:
+            return True
+        if result == 258:
+            return False
+        raise _os_error("target_liveness_failed")
 
 
 def close_target(target):

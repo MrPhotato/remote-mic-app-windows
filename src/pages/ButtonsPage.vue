@@ -1066,7 +1066,7 @@ onUnmounted(() => {
             />
           </svg>
           <strong>{{ buttonLabels[placement.button] }}</strong>
-          <small v-if="needsHardwareCheck(placement.button)" class="back-hardware-badge" title="RC003 需启用三键增强才能使用此按键。">RC003 三键增强</small>
+          <small v-if="needsHardwareCheck(placement.button)" class="back-hardware-badge" title="RC003 需启用按键增强才能使用此按键。">RC003 按键增强</small>
         </div>
         <div class="mapping-cells">
           <button
@@ -1119,7 +1119,7 @@ onUnmounted(() => {
       </article>
     </div>
 
-    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">RC003 的返回和音量键需先开启上方的三键增强，再配置动作。</p>
+    <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">RC003 的返回和音量键需先开启上方的按键增强，再配置动作。</p>
 
     <article v-if="editingTarget" ref="editorPanel" class="card mapping-editor">
       <div class="card-title-row">

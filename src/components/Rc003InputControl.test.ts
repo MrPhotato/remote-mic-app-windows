@@ -79,7 +79,7 @@ describe("RC003 enhancement control", () => {
     const control = view.get('[role="switch"]');
     expect(control.element.tagName).toBe("BUTTON");
     expect(control.attributes("type")).toBe("button");
-    expect(control.attributes("aria-label")).toBe("补齐返回、音量＋/－按键");
+    expect(control.attributes("aria-label")).toBe("RC003 按键增强");
     expect(control.attributes("aria-checked")).toBe("false");
     const description = view.get(`[id="${control.attributes("aria-describedby")}"]`);
     expect(description.text()).toContain("需要管理员权限");
@@ -98,7 +98,7 @@ describe("RC003 enhancement control", () => {
     const view = await render();
     await view.get("button").trigger("click");
     await vi.advanceTimersByTimeAsync(3000);
-    expect(view.text()).toContain("请在 Windows 应用中启用三键增强");
+    expect(view.text()).toContain("请在 Windows 应用中启用按键增强");
     expect(getRc003InputStatus).not.toHaveBeenCalled();
     expect(startRc003Input).not.toHaveBeenCalled();
   });
@@ -202,7 +202,7 @@ describe("RC003 enhancement control", () => {
     const view = await render();
     expect(view.get('[role="switch"]').attributes("aria-checked")).toBe("false");
     expect(view.get('[role="switch"]').attributes("disabled")).toBeUndefined();
-    expect(view.get('[role="alert"]').text()).toContain("三键增强已退出");
+    expect(view.get('[role="alert"]').text()).toContain("按键增强已退出");
     await vi.advanceTimersByTimeAsync(2000);
     expect(startRc003Input).not.toHaveBeenCalled();
   });

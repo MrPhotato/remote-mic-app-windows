@@ -37,7 +37,7 @@ use crate::button_gestures::GestureRecognizer;
 use crate::key_gate;
 use crate::raw_input::{
     filter_alias_for_keyboard, ButtonEdge, ButtonStateMerger, RawInputSnapshot, RawKeyboardEvent,
-    RemoteButton, RC003_TAP_BUTTONS,
+    RemoteButton, RC003_TAP_BUTTONS, RC003_TV_MASK,
 };
 use crate::send_input::{
     native_key, ButtonAction, ButtonMappings, ButtonTrigger, KeyChord, KeyCode, MouseClickKind,
@@ -51,8 +51,10 @@ pub enum EngineMessage {
     /// A new authenticated helper session; generations never repeat in this engine.
     Rc003TapStart {
         generation: u64,
+        input_epoch: u64,
+        tv_enabled: bool,
     },
-    /// Absolute three-button state (Back, VolumeUp, VolumeDown), in sequence order.
+    /// Absolute Back/VolumeUp/VolumeDown/TV state, in sequence order.
     Rc003TapState {
         generation: u64,
         sequence: u64,
@@ -82,6 +84,8 @@ struct Rc003TapSession {
     epoch: Arc<AtomicU64>,
     newest_generation: Option<u64>,
     active_generation: Option<u64>,
+    input_epoch: u64,
+    tv_enabled: bool,
     sequence: Option<u64>,
     armed: bool,
     accepted_states: u64,
@@ -89,8 +93,34 @@ struct Rc003TapSession {
     logged_rejections: BTreeSet<&'static str>,
 }
 
+struct TvConfiguration {
+    epoch: Arc<AtomicU64>,
+    applied_epoch: u64,
+}
+
+impl TvConfiguration {
+    fn changed(&self) -> bool {
+        self.epoch.load(Ordering::Acquire) != self.applied_epoch
+    }
+
+    // A lifecycle reset increments the shared epoch exactly once. Preserve any
+    // concurrent configuration gap rather than acknowledging an unapplied mapping.
+    fn acknowledge_reset(&mut self) {
+        self.applied_epoch = self.applied_epoch.wrapping_add(1);
+    }
+
+    // Caller holds the mappings read lock, shared with set_mappings' write lock.
+    fn apply_current(&mut self) {
+        self.applied_epoch = self.epoch.load(Ordering::Acquire);
+    }
+}
+
 impl Rc003TapSession {
-    fn start(&mut self, generation: u64) -> bool {
+    fn start(&mut self, generation: u64, input_epoch: u64, tv_enabled: bool) -> bool {
+        if input_epoch != self.epoch.load(Ordering::Acquire) {
+            self.reject(generation, "stale_configuration");
+            return false;
+        }
         if self
             .newest_generation
             .is_some_and(|previous| generation <= previous)
@@ -101,13 +131,15 @@ impl Rc003TapSession {
         self.invalidate("replaced");
         self.newest_generation = Some(generation);
         self.active_generation = Some(generation);
+        self.input_epoch = input_epoch;
+        self.tv_enabled = tv_enabled;
         self.sequence = None;
         self.armed = false;
         self.accepted_states = 0;
         self.rejected_states = 0;
         self.logged_rejections.clear();
         crate::ble::gatt_note(format!(
-            "rc003_tap action=start phase=accepted generation={generation} awaiting_neutral=true"
+            "rc003_tap action=start phase=accepted generation={generation} input_epoch={input_epoch} tv_enabled={tv_enabled} awaiting_neutral=true"
         ));
         true
     }
@@ -124,8 +156,12 @@ impl Rc003TapSession {
     fn accept(&mut self, generation: u64, sequence: u64, pressed_mask: u8) -> bool {
         let reason = if self.active_generation != Some(generation) {
             Some("inactive_generation")
-        } else if pressed_mask & !0x07 != 0 {
+        } else if self.input_epoch != self.epoch.load(Ordering::Acquire) {
+            Some("stale_configuration")
+        } else if pressed_mask & !0x0f != 0 {
             Some("invalid_mask")
+        } else if pressed_mask & RC003_TV_MASK != 0 && !self.tv_enabled {
+            Some("tv_not_enabled")
         } else if self.sequence.is_some_and(|previous| sequence <= previous) {
             Some("stale_sequence")
         } else {
@@ -497,15 +533,31 @@ impl ButtonMappingRuntime {
         self.rc003_tap_epoch.load(Ordering::Acquire)
     }
 
+    /// Read the configuration and its lease epoch under the same lock.
+    pub fn rc003_tap_configuration(&self) -> (u64, bool) {
+        let mappings = read_lock(&self.mappings);
+        (
+            self.rc003_tap_epoch(),
+            mappings.enabled && mappings.actions(RemoteButton::Tv).any_configured(),
+        )
+    }
+
     /// 更新按键映射：热加载到引擎 + 同步门控吞键配置。
     pub fn set_mappings(&self, mappings: ButtonMappings) {
-        *self
+        let mut current = self
             .mappings
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = mappings.clone();
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *current == mappings {
+            key_gate::configure(mappings.enabled, mappings.mapped_mask());
+            return;
+        }
+        *current = mappings.clone();
+        self.rc003_tap_epoch.fetch_add(1, Ordering::AcqRel);
         let mapped_mask = mappings.mapped_mask();
         key_gate::configure(mappings.enabled, mapped_mask);
         let _ = self.sender.send(EngineMessage::MappingsChanged);
+        drop(current);
     }
 
     pub fn mappings(&self) -> ButtonMappings {
@@ -567,9 +619,17 @@ fn engine_worker(
     let mut merger = ButtonStateMerger::default();
     let mut recognizer = GestureRecognizer::new();
     let (delay, interval) = crate::button_gestures::keyboard_repeat_timing();
-    recognizer.configure_with_keyboard_repeat(&read_lock(&mappings).clone(), delay, interval);
-    if injector.supports_eager_backspace() {
-        recognizer.enable_eager_backspace(&read_lock(&mappings));
+    let mut tv_configuration = TvConfiguration {
+        epoch: Arc::clone(&rc003_tap_epoch),
+        applied_epoch: 0,
+    };
+    {
+        let mappings = read_lock(&mappings);
+        recognizer.configure_with_keyboard_repeat(&mappings, delay, interval);
+        if injector.supports_eager_backspace() {
+            recognizer.enable_eager_backspace(&mappings);
+        }
+        tv_configuration.apply_current();
     }
     // 泄漏对冲标记：本次按住的原始键已泄漏进 OS（原生动作已交付）的按键。
     // 由 [`EngineMessage::Keyboard`]（泄漏路径）的按压边沿置位，Single 同键
@@ -582,6 +642,15 @@ fn engine_worker(
     };
 
     loop {
+        cancel_changed_tv_configuration(
+            &tv_configuration,
+            &mut rc003_tap,
+            &mut merger,
+            &mut recognizer,
+            &snapshot,
+            &edge_callbacks,
+            &mut native_pending,
+        );
         let timeout = recognizer
             .next_deadline()
             .map(|deadline| deadline.saturating_duration_since(Instant::now()));
@@ -589,6 +658,15 @@ fn engine_worker(
             Some(timeout) => match receiver.recv_timeout(timeout) {
                 Ok(message) => message,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    cancel_changed_tv_configuration(
+                        &tv_configuration,
+                        &mut rc003_tap,
+                        &mut merger,
+                        &mut recognizer,
+                        &snapshot,
+                        &edge_callbacks,
+                        &mut native_pending,
+                    );
                     let now = Instant::now();
                     for (button, trigger) in recognizer.advance(now) {
                         if fire_gesture(
@@ -596,6 +674,7 @@ fn engine_worker(
                             trigger,
                             false,
                             &mappings,
+                            Some(&tv_configuration),
                             &state,
                             &gesture_callbacks,
                             &injector,
@@ -610,6 +689,7 @@ fn engine_worker(
                                 &edge_callbacks,
                                 &mut native_pending,
                             );
+                            tv_configuration.acknowledge_reset();
                             break;
                         }
                     }
@@ -622,6 +702,17 @@ fn engine_worker(
                 Err(_) => break,
             },
         };
+
+        // Configuration may change while recv/recv_timeout is blocked.
+        cancel_changed_tv_configuration(
+            &tv_configuration,
+            &mut rc003_tap,
+            &mut merger,
+            &mut recognizer,
+            &snapshot,
+            &edge_callbacks,
+            &mut native_pending,
+        );
 
         // Later physical input and lifecycle resets invalidate asynchronous bulk edits.
         let cancels_edit = match &message {
@@ -648,8 +739,12 @@ fn engine_worker(
             injector.cancel_eager_backspace();
         }
         match message {
-            EngineMessage::Rc003TapStart { generation } => {
-                if rc003_tap.start(generation) {
+            EngineMessage::Rc003TapStart {
+                generation,
+                input_epoch,
+                tv_enabled,
+            } => {
+                if rc003_tap.start(generation, input_epoch, tv_enabled) {
                     injector.cancel_text_edit();
                     injector.cancel_eager_backspace();
                     cancel_rc003_tap(
@@ -659,6 +754,7 @@ fn engine_worker(
                         &edge_callbacks,
                         &mut native_pending,
                     );
+                    merger.begin_rc003_tv(tv_enabled);
                 }
             }
             EngineMessage::Rc003TapState {
@@ -669,7 +765,18 @@ fn engine_worker(
                 if !rc003_tap.accept(generation, sequence, pressed_mask) {
                     continue;
                 }
+                if pressed_mask & RC003_TV_MASK != 0 && !merger.rc003_tv_participated() {
+                    // A confirmed cleared TV press must not complete an earlier native double.
+                    recognizer.cancel_button(RemoteButton::Tv);
+                    native_pending.remove(&RemoteButton::Tv);
+                }
                 let edges = merger.update_rc003_tap(pressed_mask);
+                if rc003_tap.tv_enabled {
+                    crate::ble::gatt_note(format!(
+                        "rc003_tv action=state generation={generation} sequence={sequence} pressed={} semantic_edges={} clear_confirmation=helper_report no_character_verified=false",
+                        pressed_mask & RC003_TV_MASK != 0, edges.len()
+                    ));
+                }
                 if !edges.is_empty() {
                     injector.cancel_text_edit();
                     crate::ble::gatt_note(format!(
@@ -685,6 +792,7 @@ fn engine_worker(
                     &mut merger,
                     &mut recognizer,
                     &mappings,
+                    &tv_configuration,
                     &state,
                     &snapshot,
                     &edge_callbacks,
@@ -694,6 +802,7 @@ fn engine_worker(
                     &mut native_pending,
                 ) {
                     rc003_tap.invalidate("terminal_action");
+                    tv_configuration.acknowledge_reset();
                 }
             }
             EngineMessage::Rc003TapLost { generation } => {
@@ -714,6 +823,12 @@ fn engine_worker(
             }
             EngineMessage::Keyboard(event) => {
                 let now = Instant::now();
+                if merger.rc003_tv_enabled() && event.button() == Some(RemoteButton::Tv) {
+                    crate::ble::gatt_note(format!(
+                        "rc003_tv action=native_report source=keyboard pressed={} mapping_source=helper native_delivery_possible=true",
+                        event.is_pressed()
+                    ));
+                }
                 let edges = merger.update_keyboard(event);
                 // 泄漏路径的按压边沿：原生动作已进 OS，标记待对冲。
                 for edge in &edges {
@@ -733,6 +848,7 @@ fn engine_worker(
                     &mut merger,
                     &mut recognizer,
                     &mappings,
+                    &tv_configuration,
                     &state,
                     &snapshot,
                     &edge_callbacks,
@@ -742,17 +858,26 @@ fn engine_worker(
                     &mut native_pending,
                 ) {
                     rc003_tap.invalidate("terminal_action");
+                    tv_configuration.acknowledge_reset();
                 }
             }
             EngineMessage::HidUsages(usages) => {
                 let now = Instant::now();
+                let native_tv_before = merger.native_tv_pressed();
                 let edges = merger.update_hid_usages(usages);
+                if merger.rc003_tv_enabled() && native_tv_before != merger.native_tv_pressed() {
+                    crate::ble::gatt_note(format!(
+                        "rc003_tv action=native_report source=hid pressed={} mapping_source=helper native_delivery_possible=true",
+                        merger.native_tv_pressed()
+                    ));
+                }
                 if handle_edges(
                     edges,
                     now,
                     &mut merger,
                     &mut recognizer,
                     &mappings,
+                    &tv_configuration,
                     &state,
                     &snapshot,
                     &edge_callbacks,
@@ -762,6 +887,7 @@ fn engine_worker(
                     &mut native_pending,
                 ) {
                     rc003_tap.invalidate("terminal_action");
+                    tv_configuration.acknowledge_reset();
                 }
             }
             EngineMessage::GateEdge(edge) => {
@@ -777,6 +903,7 @@ fn engine_worker(
                     &mut merger,
                     &mut recognizer,
                     &mappings,
+                    &tv_configuration,
                     &state,
                     &snapshot,
                     &edge_callbacks,
@@ -786,6 +913,7 @@ fn engine_worker(
                     &mut native_pending,
                 ) {
                     rc003_tap.invalidate("terminal_action");
+                    tv_configuration.acknowledge_reset();
                 }
             }
             EngineMessage::ListenerStopped | EngineMessage::DeviceRemoved => {
@@ -801,6 +929,9 @@ fn engine_worker(
                 recognizer.release_all();
                 let edges = merger.release_all();
                 native_pending.clear();
+                {
+                    tv_configuration.acknowledge_reset();
+                }
                 let now = Instant::now();
                 if handle_edges(
                     edges,
@@ -808,6 +939,7 @@ fn engine_worker(
                     &mut merger,
                     &mut recognizer,
                     &mappings,
+                    &tv_configuration,
                     &state,
                     &snapshot,
                     &edge_callbacks,
@@ -817,10 +949,20 @@ fn engine_worker(
                     &mut native_pending,
                 ) {
                     rc003_tap.invalidate("terminal_action");
+                    tv_configuration.acknowledge_reset();
                 }
             }
             EngineMessage::MappingsChanged => {
-                let mappings = read_lock(&mappings).clone();
+                rc003_tap.invalidate("configuration_changed");
+                cancel_rc003_tap(
+                    &mut merger,
+                    &mut recognizer,
+                    &snapshot,
+                    &edge_callbacks,
+                    &mut native_pending,
+                );
+                let mappings = read_lock(&mappings);
+                tv_configuration.apply_current();
                 let (delay, interval) = crate::button_gestures::keyboard_repeat_timing();
                 recognizer.configure_with_keyboard_repeat(&mappings, delay, interval);
                 if injector.supports_eager_backspace() {
@@ -856,6 +998,27 @@ fn engine_worker(
     injector.finish_text_edit();
 }
 
+#[allow(clippy::too_many_arguments)]
+fn cancel_changed_tv_configuration(
+    configuration: &TvConfiguration,
+    session: &mut Rc003TapSession,
+    merger: &mut ButtonStateMerger,
+    recognizer: &mut GestureRecognizer,
+    snapshot: &Arc<Mutex<RawInputSnapshot>>,
+    callbacks: &Arc<RwLock<Vec<ButtonEdgeCallback>>>,
+    native_pending: &mut BTreeSet<RemoteButton>,
+) {
+    if !configuration.changed() {
+        return;
+    }
+    recognizer.cancel_button(RemoteButton::Tv);
+    native_pending.remove(&RemoteButton::Tv);
+    if session.active_generation.is_some() {
+        session.invalidate("configuration_changed");
+        cancel_rc003_tap(merger, recognizer, snapshot, callbacks, native_pending);
+    }
+}
+
 fn cancel_rc003_tap(
     merger: &mut ButtonStateMerger,
     recognizer: &mut GestureRecognizer,
@@ -867,9 +1030,13 @@ fn cancel_rc003_tap(
         recognizer.cancel_button(button);
         native_pending.remove(&button);
     }
-    let edges = merger.update_rc003_tap(0);
+    let (tv_participated, edges) = merger.cancel_rc003_tap();
+    if tv_participated {
+        recognizer.cancel_button(RemoteButton::Tv);
+        native_pending.remove(&RemoteButton::Tv);
+    }
     crate::ble::gatt_note(format!(
-        "rc003_tap action=cancel phase=completed synthetic_releases={} other_sources_preserved=true",
+        "rc003_tap action=cancel phase=completed synthetic_releases={} tv_cancelled={tv_participated} other_sources_preserved=true",
         edges.len()
     ));
     // Synthetic release updates presentation only, never completes a click gesture.
@@ -898,6 +1065,7 @@ fn handle_edges(
     merger: &mut ButtonStateMerger,
     recognizer: &mut GestureRecognizer,
     mappings: &Arc<RwLock<ButtonMappings>>,
+    tv_configuration: &TvConfiguration,
     state: &Arc<Mutex<EngineState>>,
     snapshot: &Arc<Mutex<RawInputSnapshot>>,
     edge_callbacks: &Arc<RwLock<Vec<ButtonEdgeCallback>>>,
@@ -966,6 +1134,7 @@ fn handle_edges(
                 trigger,
                 eager_first && trigger == ButtonTrigger::Single,
                 mappings,
+                Some(tv_configuration),
                 state,
                 gesture_callbacks,
                 injector,
@@ -1031,11 +1200,26 @@ fn fire_gesture(
     trigger: ButtonTrigger,
     eager_first: bool,
     mappings: &Arc<RwLock<ButtonMappings>>,
+    tv_configuration: Option<&TvConfiguration>,
     state: &Arc<Mutex<EngineState>>,
     gesture_callbacks: &Arc<RwLock<Vec<ButtonGestureCallback>>>,
     injector: &Arc<dyn MappingInjector>,
     native_pending: &mut BTreeSet<RemoteButton>,
 ) -> bool {
+    // TV's epoch and action snapshot share a linearization point under the same
+    // read lock that excludes set_mappings' configuration+epoch write.
+    let tv_mappings = if button == RemoteButton::Tv {
+        let mappings = read_lock(mappings);
+        if tv_configuration.is_some_and(TvConfiguration::changed) {
+            crate::ble::gatt_note(
+                "rc003_tv action=gesture phase=cancelled reason=configuration_changed".into(),
+            );
+            return false;
+        }
+        Some(mappings.clone())
+    } else {
+        None
+    };
     let fired = FiredGesture { button, trigger };
     {
         let mut state = lock_state(state);
@@ -1046,7 +1230,7 @@ fn fire_gesture(
         callback(fired);
     }
 
-    let mappings = read_lock(mappings).clone();
+    let mappings = tv_mappings.unwrap_or_else(|| read_lock(mappings).clone());
     // 门控未运行时不注入：原始键未被吞（或无法归因），注入会造成双输入。
     if !mappings.enabled || !key_gate::is_gate_thread_alive() {
         if mappings.enabled {
@@ -1497,7 +1681,11 @@ mod tests {
                 let state = Arc::new(Mutex::new(EngineState::default()));
                 let (sender, receiver) = mpsc::channel();
                 sender
-                    .send(EngineMessage::Rc003TapStart { generation: 2 })
+                    .send(EngineMessage::Rc003TapStart {
+                        generation: 2,
+                        input_epoch: 0,
+                        tv_enabled: false,
+                    })
                     .unwrap();
                 sender.send(eager_state(2, 1, 0)).unwrap();
                 for (index, mask) in masks.iter().enumerate() {
@@ -1567,7 +1755,11 @@ mod tests {
                 button: RemoteButton::Up,
                 is_pressed: true,
             }),
-            EngineMessage::Rc003TapStart { generation: 2 },
+            EngineMessage::Rc003TapStart {
+                generation: 2,
+                input_epoch: 0,
+                tv_enabled: false,
+            },
             eager_state(2, 1, 0),
         ] {
             sender.send(message).unwrap();
@@ -1650,8 +1842,16 @@ mod tests {
             eager_state(2, 3, 0),
             EngineMessage::Rc003TapLost { generation: 1 },
             EngineMessage::Rc003TapLost { generation: 3 },
-            EngineMessage::Rc003TapStart { generation: 1 },
-            EngineMessage::Rc003TapStart { generation: 2 },
+            EngineMessage::Rc003TapStart {
+                generation: 1,
+                input_epoch: 0,
+                tv_enabled: false,
+            },
+            EngineMessage::Rc003TapStart {
+                generation: 2,
+                input_epoch: 0,
+                tv_enabled: false,
+            },
             eager_state(1, 4, 1),
             eager_state(2, 3, 1),
             eager_state(2, 4, 8),
@@ -1675,7 +1875,11 @@ mod tests {
     fn eager_other_sources_and_lifecycle_cancel_before_next_edge() {
         for reset in [
             EngineMessage::Rc003TapLost { generation: 2 },
-            EngineMessage::Rc003TapStart { generation: 3 },
+            EngineMessage::Rc003TapStart {
+                generation: 3,
+                input_epoch: 0,
+                tv_enabled: false,
+            },
             EngineMessage::ListenerStopped,
             EngineMessage::DeviceRemoved,
             EngineMessage::MappingsChanged,
@@ -1723,6 +1927,7 @@ mod tests {
                 ButtonTrigger::Single,
                 eager_first,
                 &mappings,
+                None,
                 &state,
                 &callbacks,
                 &injector,
@@ -1792,7 +1997,11 @@ mod tests {
             pressed_mask,
         };
         for message in [
-            EngineMessage::Rc003TapStart { generation: 2 },
+            EngineMessage::Rc003TapStart {
+                generation: 2,
+                input_epoch: 1,
+                tv_enabled: false,
+            },
             state(1, 0),
             EngineMessage::GateEdge(ButtonEdge {
                 button: RemoteButton::Up,
@@ -1848,7 +2057,11 @@ mod tests {
     fn rc003_tap_new_generation_cancels_already_started_double_edit() {
         assert_rc003_tap_pending_edit(
             RemoteButton::Back,
-            vec![EngineMessage::Rc003TapStart { generation: 3 }],
+            vec![EngineMessage::Rc003TapStart {
+                generation: 3,
+                input_epoch: 1,
+                tv_enabled: false,
+            }],
             false,
         );
     }
@@ -1867,8 +2080,16 @@ mod tests {
                 vec![
                     EngineMessage::Rc003TapLost { generation: 1 },
                     EngineMessage::Rc003TapLost { generation: 3 },
-                    EngineMessage::Rc003TapStart { generation: 1 },
-                    EngineMessage::Rc003TapStart { generation: 2 },
+                    EngineMessage::Rc003TapStart {
+                        generation: 1,
+                        input_epoch: 1,
+                        tv_enabled: false,
+                    },
+                    EngineMessage::Rc003TapStart {
+                        generation: 2,
+                        input_epoch: 1,
+                        tv_enabled: false,
+                    },
                     state(1, 6, 1), // Old generation.
                     state(2, 1, 1), // Duplicate sequence.
                     state(2, 6, 8), // Invalid mask.
@@ -1881,20 +2102,362 @@ mod tests {
     }
 
     #[test]
+    fn rc003_tv_configuration_epoch_and_neutral_reject_old_or_preheld_input() {
+        let mut session = Rc003TapSession::default();
+        assert!(session.start(1, 0, true));
+        assert!(!session.accept(1, 1, 8));
+        assert!(!session.armed);
+        assert!(session.accept(1, 2, 0));
+        assert!(session.accept(1, 3, 8));
+        assert!(!session.accept(1, 4, 16));
+        session.epoch.store(1, Ordering::Release);
+        assert!(!session.accept(1, 4, 0));
+        assert!(!session.start(2, 0, true));
+        assert!(session.start(2, 1, false));
+        assert!(session.accept(2, 1, 0));
+        assert!(!session.accept(2, 2, 8));
+        assert!(!session.accept(1, 5, 0));
+        assert!(session.accept(2, 2, 1));
+        assert!(session.start(3, 1, true));
+        assert!(!session.accept(3, 1, 8));
+        assert!(session.accept(3, 2, 0));
+        assert!(session.accept(3, 3, 8));
+    }
+
+    #[test]
+    fn rc003_tv_configuration_change_inside_release_callback_rejects_old_gesture() {
+        let _isolation = MAPPING_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut initial = mappings_with_single(RemoteButton::Tv, KeyCode::Enter);
+        initial.actions.get_mut(&RemoteButton::Tv).unwrap().long = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![KeyCode::Space],
+            },
+        };
+        let mappings = Arc::new(RwLock::new(initial));
+        let epoch = Arc::new(AtomicU64::new(0));
+        let changed_mappings = Arc::clone(&mappings);
+        let changed_epoch = Arc::clone(&epoch);
+        let edge_callback: ButtonEdgeCallback = Arc::new(move |edge| {
+            if edge.button == RemoteButton::Tv && !edge.is_pressed {
+                // Exact gap: old edge accepted, but fire_gesture has not read its
+                // action yet. Model set_mappings' atomic mapping+epoch mutation.
+                let mut mappings = changed_mappings.write().unwrap();
+                mappings.actions.get_mut(&RemoteButton::Tv).unwrap().single =
+                    ButtonAction::Shortcut {
+                        chord: KeyChord {
+                            keys: vec![KeyCode::Tab],
+                        },
+                    };
+                changed_epoch.fetch_add(1, Ordering::AcqRel);
+            }
+        });
+        let gestures = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&gestures);
+        let (sender, receiver) = mpsc::channel();
+        for message in [
+            tv_start(1, true),
+            eager_state(1, 1, 0),
+            eager_state(1, 2, 8),
+            eager_state(1, 3, 0),
+            EngineMessage::Shutdown,
+        ] {
+            sender.send(message).unwrap();
+        }
+        let state = Arc::new(Mutex::new(EngineState::default()));
+        engine_worker(
+            receiver,
+            mappings,
+            Arc::clone(&state),
+            Arc::new(Mutex::new(RawInputSnapshot::default())),
+            Arc::new(RwLock::new(vec![edge_callback])),
+            Arc::new(RwLock::new(vec![
+                Arc::new(move |gesture| sink.lock().unwrap().push(gesture))
+                    as ButtonGestureCallback,
+            ])),
+            Arc::new(RecordingInjector::default()),
+            Arc::new(UsageCounters::default()),
+            epoch,
+        );
+        assert!(gestures.lock().unwrap().is_empty());
+        assert_eq!(state.lock().unwrap().fired_gestures, 0);
+    }
+
+    #[test]
+    fn rc003_tv_changed_config_at_timeout_cancels_pending_single() {
+        let mut mappings = mappings_with_single(RemoteButton::Tv, KeyCode::Enter);
+        mappings.actions.get_mut(&RemoteButton::Tv).unwrap().double = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![KeyCode::Space],
+            },
+        };
+        let epoch = Arc::new(AtomicU64::new(0));
+        let mut configuration = TvConfiguration {
+            epoch: Arc::clone(&epoch),
+            applied_epoch: 0,
+        };
+        let mut session = Rc003TapSession {
+            epoch: Arc::clone(&epoch),
+            ..Default::default()
+        };
+        assert!(session.start(1, 0, true));
+        let mut merger = ButtonStateMerger::default();
+        merger.begin_rc003_tv(true);
+        let mut recognizer = GestureRecognizer::new();
+        recognizer.configure(&mappings);
+        let now = Instant::now();
+        merger.update_rc003_tap(8);
+        recognizer.press(RemoteButton::Tv, now);
+        merger.update_rc003_tap(0);
+        recognizer.release(RemoteButton::Tv, now);
+        assert!(recognizer.next_deadline().is_some());
+        // A timeout has won the wait while configuration changed. The exact
+        // post-wait boundary must run before advance, even without its message.
+        epoch.fetch_add(1, Ordering::AcqRel);
+        cancel_changed_tv_configuration(
+            &configuration,
+            &mut session,
+            &mut merger,
+            &mut recognizer,
+            &Arc::new(Mutex::new(RawInputSnapshot::default())),
+            &Arc::new(RwLock::new(Vec::new())),
+            &mut BTreeSet::new(),
+        );
+        assert!(recognizer.advance(now + Duration::from_secs(1)).is_empty());
+        assert_eq!(session.active_generation, None);
+        // A concurrent lifecycle increment cannot acknowledge that new mapping.
+        epoch.fetch_add(1, Ordering::AcqRel);
+        configuration.acknowledge_reset();
+        assert!(configuration.changed());
+    }
+
+    fn run_tv_messages(messages: Vec<EngineMessage>) -> (Vec<ButtonEdge>, Vec<FiredGesture>) {
+        // No global hook or real injector: exercise the actual worker's ordering.
+        let _isolation = MAPPING_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut mappings = mappings_with_single(RemoteButton::Tv, KeyCode::Enter);
+        mappings
+            .actions
+            .retain(|button, _| *button == RemoteButton::Tv);
+        mappings.actions.get_mut(&RemoteButton::Tv).unwrap().long = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![KeyCode::Space],
+            },
+        };
+        let edges = Arc::new(Mutex::new(Vec::new()));
+        let edge_sink = Arc::clone(&edges);
+        let gestures = Arc::new(Mutex::new(Vec::new()));
+        let gesture_sink = Arc::clone(&gestures);
+        let (sender, receiver) = mpsc::channel();
+        for message in messages {
+            sender.send(message).unwrap();
+        }
+        sender.send(EngineMessage::Shutdown).unwrap();
+        engine_worker(
+            receiver,
+            Arc::new(RwLock::new(mappings)),
+            Arc::new(Mutex::new(EngineState::default())),
+            Arc::new(Mutex::new(RawInputSnapshot::default())),
+            Arc::new(RwLock::new(vec![
+                Arc::new(move |edge| edge_sink.lock().unwrap().push(edge)) as ButtonEdgeCallback,
+            ])),
+            Arc::new(RwLock::new(vec![Arc::new(move |gesture| {
+                gesture_sink.lock().unwrap().push(gesture)
+            }) as ButtonGestureCallback])),
+            Arc::new(RecordingInjector::default()),
+            Arc::new(UsageCounters::default()),
+            Arc::new(AtomicU64::new(0)),
+        );
+        let edge_result = edges.lock().unwrap().clone();
+        let gesture_result = gestures.lock().unwrap().clone();
+        (edge_result, gesture_result)
+    }
+
+    fn tv_start(generation: u64, tv_enabled: bool) -> EngineMessage {
+        EngineMessage::Rc003TapStart {
+            generation,
+            input_epoch: 0,
+            tv_enabled,
+        }
+    }
+
+    #[test]
+    fn rc003_tv_worker_loss_cancels_single_and_late_edges_cannot_join_new_generation() {
+        let (edges, gestures) = run_tv_messages(vec![
+            tv_start(1, true),
+            eager_state(1, 1, 8),
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYDOWN)),
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYUP)),
+            eager_state(1, 2, 0),
+            eager_state(1, 3, 8),
+            EngineMessage::Rc003TapLost { generation: 1 },
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYDOWN)),
+            tv_start(2, true),
+            eager_state(2, 1, 0),
+            eager_state(2, 2, 8),
+            eager_state(1, 4, 0),
+            EngineMessage::Rc003TapLost { generation: 1 },
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYUP)),
+            eager_state(2, 3, 0),
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYDOWN)),
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYUP)),
+        ]);
+        assert_eq!(
+            edges.iter().map(|edge| edge.is_pressed).collect::<Vec<_>>(),
+            vec![true, false, true, false]
+        );
+        assert!(edges.iter().all(|edge| edge.button == RemoteButton::Tv));
+        assert_eq!(gestures.len(), 1);
+        assert_eq!(gestures[0].trigger, ButtonTrigger::Single);
+    }
+
+    #[test]
+    fn rc003_tv_worker_unrelated_helper_start_and_loss_preserve_native_single() {
+        for enabled in [false, true] {
+            let (_, gestures) = run_tv_messages(vec![
+                EngineMessage::Keyboard(keyboard_event(0xC0, KEYDOWN)),
+                tv_start(1, enabled),
+                eager_state(1, 1, 0),
+                eager_state(1, 2, 1),
+                EngineMessage::Rc003TapLost { generation: 1 },
+                EngineMessage::Keyboard(keyboard_event(0xC0, KEYUP)),
+            ]);
+            assert_eq!(gestures.len(), 1);
+            assert_eq!(gestures[0].button, RemoteButton::Tv);
+            assert_eq!(gestures[0].trigger, ButtonTrigger::Single);
+        }
+    }
+
+    #[test]
+    fn rc003_tv_worker_first_confirmed_press_retires_delayed_prelease_native_up() {
+        let (edges, gestures) = run_tv_messages(vec![
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYDOWN)),
+            tv_start(1, true),
+            eager_state(1, 1, 0),
+            eager_state(1, 2, 8),
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYUP)),
+            eager_state(1, 3, 0),
+        ]);
+        assert_eq!(
+            edges.iter().map(|edge| edge.is_pressed).collect::<Vec<_>>(),
+            vec![true, false, true, false]
+        );
+        assert_eq!(gestures.len(), 1);
+        assert_eq!(gestures[0].trigger, ButtonTrigger::Single);
+    }
+
+    #[test]
+    fn rc003_tv_worker_completed_cycle_stop_keeps_first_native_click() {
+        let (_, gestures) = run_tv_messages(vec![
+            tv_start(1, true),
+            eager_state(1, 1, 0),
+            eager_state(1, 2, 8),
+            eager_state(1, 3, 0),
+            EngineMessage::Rc003TapLost { generation: 1 },
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYDOWN)),
+            EngineMessage::Keyboard(keyboard_event(0xC0, KEYUP)),
+        ]);
+        assert_eq!(gestures.len(), 2);
+        assert!(gestures
+            .iter()
+            .all(|gesture| gesture.trigger == ButtonTrigger::Single));
+    }
+
+    #[test]
+    fn rc003_tv_worker_mapping_reset_cancels_and_requires_new_neutral() {
+        let (edges, gestures) = run_tv_messages(vec![
+            tv_start(1, true),
+            eager_state(1, 1, 0),
+            eager_state(1, 2, 8),
+            EngineMessage::MappingsChanged,
+            eager_state(1, 3, 0),
+            eager_state(1, 4, 8),
+            tv_start(2, true),
+            eager_state(2, 1, 8),
+            eager_state(2, 2, 0),
+            eager_state(2, 3, 8),
+            eager_state(2, 4, 0),
+        ]);
+        assert_eq!(
+            edges.iter().map(|edge| edge.is_pressed).collect::<Vec<_>>(),
+            vec![true, false, true, false]
+        );
+        assert_eq!(gestures.len(), 1);
+        assert_eq!(gestures[0].trigger, ButtonTrigger::Single);
+    }
+
+    #[test]
+    fn rc003_tv_source_loss_cancels_pending_double_without_single_timeout() {
+        let mut mappings = mappings_with_single(RemoteButton::Tv, KeyCode::Enter);
+        mappings.actions.get_mut(&RemoteButton::Tv).unwrap().double = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![KeyCode::Space],
+            },
+        };
+        let mut recognizer = GestureRecognizer::new();
+        recognizer.configure(&mappings);
+        let mut merger = ButtonStateMerger::default();
+        let now = Instant::now();
+        merger.begin_rc003_tv(true);
+        merger.update_rc003_tap(8);
+        assert!(recognizer.press(RemoteButton::Tv, now).is_empty());
+        merger.update_rc003_tap(0);
+        assert!(recognizer.release(RemoteButton::Tv, now).is_empty());
+        assert!(recognizer.next_deadline().is_some());
+        cancel_rc003_tap(
+            &mut merger,
+            &mut recognizer,
+            &Arc::new(Mutex::new(RawInputSnapshot::default())),
+            &Arc::new(RwLock::new(Vec::new())),
+            &mut BTreeSet::new(),
+        );
+        assert!(recognizer.advance(now + Duration::from_secs(1)).is_empty());
+    }
+
+    #[test]
+    fn rc003_tv_lease_configuration_tracks_enabled_cells_and_actual_changes() {
+        let _isolation = MAPPING_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let runtime = ButtonMappingRuntime::new(
+            Arc::new(RecordingInjector::default()),
+            Arc::new(UsageCounters::default()),
+            Arc::new(Mutex::new(RawInputSnapshot::default())),
+        );
+        let mut mappings = mappings_with_single(RemoteButton::Tv, KeyCode::Enter);
+        mappings.enabled = false;
+        runtime.set_mappings(mappings.clone());
+        let (first, enabled) = runtime.rc003_tap_configuration();
+        assert!(!enabled);
+        runtime.set_mappings(mappings.clone());
+        assert_eq!(runtime.rc003_tap_configuration(), (first, false));
+        mappings.enabled = true;
+        runtime.set_mappings(mappings.clone());
+        assert_eq!(runtime.rc003_tap_configuration(), (first + 1, true));
+        mappings.actions.get_mut(&RemoteButton::Tv).unwrap().single = ButtonAction::Disabled;
+        mappings.actions.get_mut(&RemoteButton::Tv).unwrap().double = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![KeyCode::Space],
+            },
+        };
+        runtime.set_mappings(mappings.clone());
+        assert_eq!(runtime.rc003_tap_configuration(), (first + 2, true));
+        mappings.actions.get_mut(&RemoteButton::Tv).unwrap().double = ButtonAction::Disabled;
+        runtime.set_mappings(mappings);
+        assert_eq!(runtime.rc003_tap_configuration(), (first + 3, false));
+    }
+
+    #[test]
     fn rc003_tap_generation_sequence_and_neutral_gate_fail_closed() {
         let mut session = Rc003TapSession::default();
         assert!(!session.accept(1, 0, 0));
-        assert!(session.start(1));
+        assert!(session.start(1, 0, false));
         assert!(!session.accept(1, 1, 1));
         assert!(!session.accept(1, 2, 8));
         assert!(session.accept(1, 2, 0));
         assert!(!session.accept(1, 2, 1));
         assert!(session.accept(1, 3, 7));
-        assert!(!session.start(1));
+        assert!(!session.start(1, 0, false));
         session.invalidate("test_loss");
         assert!(!session.accept(1, 4, 0));
-        assert!(!session.start(0));
-        assert!(session.start(2));
+        assert!(!session.start(0, 0, false));
+        assert!(session.start(2, 0, false));
         assert!(!session.accept(1, 5, 0));
         assert!(!session.accept(2, 1, 1));
         assert!(session.accept(2, 2, 0));
@@ -1937,7 +2500,11 @@ mod tests {
         };
         for message in [
             EngineMessage::Keyboard(keyboard_event(0x26, KEYDOWN)),
-            EngineMessage::Rc003TapStart { generation: 1 },
+            EngineMessage::Rc003TapStart {
+                generation: 1,
+                input_epoch: 1,
+                tv_enabled: false,
+            },
             state(1, 1, 1), // Starting while held is ignored.
             state(1, 2, 0),
             state(1, 3, 1),
@@ -1945,7 +2512,11 @@ mod tests {
             EngineMessage::Rc003TapLost { generation: 1 },
             state(1, 5, 1),
             state(1, 6, 0), // Late old edges cannot revive the key.
-            EngineMessage::Rc003TapStart { generation: 2 },
+            EngineMessage::Rc003TapStart {
+                generation: 2,
+                input_epoch: 1,
+                tv_enabled: false,
+            },
             EngineMessage::Rc003TapLost { generation: 1 }, // Old loss cannot stop new session.
             state(2, 1, 1),
             state(2, 2, 0),
@@ -1994,15 +2565,27 @@ mod tests {
                 pressed_mask,
             };
             for message in [
-                EngineMessage::Rc003TapStart { generation: 1 },
+                EngineMessage::Rc003TapStart {
+                    generation: 1,
+                    input_epoch: 0,
+                    tv_enabled: false,
+                },
                 state(1, 1, 0),
                 state(1, 2, 6),
                 reset,
                 state(1, 3, 0),
                 state(1, 4, 6),
-                EngineMessage::Rc003TapStart { generation: 1 },
+                EngineMessage::Rc003TapStart {
+                    generation: 1,
+                    input_epoch: 0,
+                    tv_enabled: false,
+                },
                 state(1, 5, 0),
-                EngineMessage::Rc003TapStart { generation: 2 },
+                EngineMessage::Rc003TapStart {
+                    generation: 2,
+                    input_epoch: 1,
+                    tv_enabled: false,
+                },
                 state(2, 1, 0),
                 state(2, 2, 6),
                 state(2, 3, 0),
@@ -2073,7 +2656,11 @@ mod tests {
                 4
             };
             for message in [
-                EngineMessage::Rc003TapStart { generation: 1 },
+                EngineMessage::Rc003TapStart {
+                    generation: 1,
+                    input_epoch: 1,
+                    tv_enabled: false,
+                },
                 EngineMessage::Rc003TapState {
                     generation: 1,
                     sequence: 1,

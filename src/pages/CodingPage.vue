@@ -168,7 +168,7 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
-      <p class="preserved-note muted">主页、菜单和 TV 的单按需等待约 0.3 秒。返回键按一下退格，按住连续删除，松开停止。方向键和音量键支持按住连续操作；RC003 的返回及音量键需先启用三键增强。需要调整时打开「按键映射」。</p>
+      <p class="preserved-note muted">主页、菜单和 TV 的单按需等待约 0.3 秒。返回键按一下退格，按住连续删除，松开停止。方向键和音量键支持按住连续操作；RC003 的返回及音量键需先启用按键增强。需要调整时打开「按键映射」。</p>
       <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter：在输入框中可能发送内容，在审批提示中可能批准操作。电源键在本方案中配置为 Esc，用于关闭弹层或取消当前操作。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>

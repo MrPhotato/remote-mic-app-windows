@@ -1,4 +1,4 @@
-"""Three-button lifecycle, separate from Frida and Windows for deterministic tests."""
+"""RC003 key lifecycle, separate from Frida and Windows for deterministic tests."""
 
 
 class InputState:
@@ -8,20 +8,24 @@ class InputState:
         self.sequence = 0
         self.armed = False
         self.mask = 0
+        self.tv_enabled = False
 
-    def begin(self, generation):
+    def begin(self, generation, tv_enabled=False):
+        if type(tv_enabled) is not bool:
+            raise ValueError("invalid_tv_configuration")
         if self.generation != generation:
             self.sequence = 0
         self.generation = generation
         self.armed = False
         self.mask = 0
+        self.tv_enabled = tv_enabled
         self.status("waiting", "awaiting_neutral")
 
     def status(self, phase, reason):
         self.emit({"type": "status", "generation": self.generation or 0, "phase": phase, "reason": reason})
 
     def observe(self, mask):
-        if type(mask) is not int or not 0 <= mask <= 7:
+        if type(mask) is not int or not 0 <= mask <= (15 if self.tv_enabled else 7):
             raise ValueError("invalid_mask")
         if not self.armed:
             if mask != 0:

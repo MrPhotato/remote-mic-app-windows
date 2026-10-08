@@ -61,30 +61,30 @@ export function stopRc003Input(): Promise<Rc003InputStatus> {
 export function rc003InputErrorMessage(cause: unknown): string {
   const code = (cause instanceof Error ? cause.message : String(cause ?? "")).toLowerCase();
   const knownErrors: Record<string, string> = {
-    "请先连接 rc003 遥控器并启动按键监听。": "请先连接 RC003，等待按键监听就绪后再启用三键增强。",
-    helper_start_failed: "无法启动三键增强，请重试；若仍失败，可查看诊断日志。",
-    helper_start_timeout: "三键增强启动超时，请重新启用；若仍失败，可查看诊断日志。",
-    helper_heartbeat_timeout: "三键增强响应超时，请重新启用；若仍失败，可查看诊断日志。",
-    helper_exited: "三键增强已退出，请重新启用。",
-    helper_disconnected: "三键增强连接已中断，请重新启用。",
-    ipc_authentication_failed: "三键增强安全校验未通过，请重试；若仍失败，可查看诊断日志。",
-    ipc_setup_failed: "无法建立三键增强通信，请重试；若仍失败，可查看诊断日志。",
+    "请先连接 rc003 遥控器并启动按键监听。": "请先连接 RC003，等待按键监听就绪后再启用按键增强。",
+    helper_start_failed: "无法启动按键增强，请重试；若仍失败，可查看诊断日志。",
+    helper_start_timeout: "按键增强启动超时，请重新启用；若仍失败，可查看诊断日志。",
+    helper_heartbeat_timeout: "按键增强响应超时，请重新启用；若仍失败，可查看诊断日志。",
+    helper_exited: "按键增强已退出，请重新启用。",
+    helper_disconnected: "按键增强连接已中断，请重新启用。",
+    ipc_authentication_failed: "按键增强安全校验未通过，请重试；若仍失败，可查看诊断日志。",
+    ipc_setup_failed: "无法建立按键增强通信，请重试；若仍失败，可查看诊断日志。",
   };
   if (knownErrors[code]) return knownErrors[code];
   if (/cancel|denied|elevation|permission|1223|授权|权限/.test(code)) {
     return "未获得 Windows 管理员授权。请再次点击启用，并在授权窗口中允许。";
   }
   if (/preview|simulation|unsupported|not_supported/.test(code)) {
-    return "请在 Windows 应用中启用三键增强。";
+    return "请在 Windows 应用中启用按键增强。";
   }
   if (/missing|not_found|not found|dependency|未找到|缺少/.test(code)) {
-    return "三键增强组件不完整，请安装包含三键增强组件的完整版本后重试。";
+    return "按键增强组件不完整，请安装包含按键增强组件的完整版本后重试。";
   }
   if (/operation_pending|already_starting/.test(code)) {
     return "上一项操作尚未完成，请先处理 Windows 授权窗口。";
   }
   if (/timeout|timed out|超时/.test(code)) {
-    return "三键增强启动超时，请重试；若仍失败，可查看诊断日志。";
+    return "按键增强启动超时，请重试；若仍失败，可查看诊断日志。";
   }
-  return "三键增强未能完成操作，请重试；若仍失败，可查看诊断日志。";
+  return "按键增强未能完成操作，请重试；若仍失败，可查看诊断日志。";
 }

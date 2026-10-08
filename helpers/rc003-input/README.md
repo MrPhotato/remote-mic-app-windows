@@ -1,9 +1,12 @@
 # SayAll optional RC003 key helper
 
 This Windows x64 helper is an explicit, elevated, optional source for Back and
-Volume Up/Down. The main SayAll application remains unelevated. The helper does
-not install drivers, change boot settings, modify device reports, suppress keys,
-inject keystrokes, or handle the microphone/F5 path. It does temporarily inject
+Volume Up/Down and configured TV actions. The main SayAll application remains unelevated.
+With the user's narrow authorization on 2026-10-08, it clears only the selected
+RC003's TV usage before Windows keyboard conversion. Other reports and the
+three original keys remain read-only. It does not install drivers, change boot
+settings or system Bluetooth, inject keystrokes, or handle the microphone/F5 path.
+It does temporarily inject
 Frida into the selected WUDFHost and inspect version-dependent UMDF internals.
 
 ## Build and deployment
@@ -30,16 +33,16 @@ in an administrator-controlled directory before elevating it. Do not elevate a
 bundle whose Python runtime, DLLs or JS are writable by ordinary users. There is
 no arbitrary script, target PID, log path, or command-execution option.
 
-## Protocol 1
+## Protocol 2
 
 CLI is only `--port <1..65535> --token <64 hex> --parent-pid <uint32>`.
 The helper verifies the loopback listener's PID and retains a parent process
-handle. It connects to `127.0.0.1`, sends a hello containing protocol 1, the token
+handle. It connects to `127.0.0.1`, sends a hello containing protocol 2, the token
 and its own PID. The parent verifies that hello before accepting any state.
 All messages are UTF-8 newline JSON, at most 4096 bytes including newline.
 
 The parent sends a lease every second:
-`{"type":"lease","generation":1,"enabled":true,"device_id":"<BLE AEP ID>"}`.
+`{"type":"lease","generation":1,"enabled":true,"device_id":"<BLE AEP ID>","tv_enabled":true}`.
 It may send `{"type":"stop"}`. Disabled leases may use an empty/null device ID.
 The device ID is used only in memory: its final peer address selects exactly one
 `Enum/BTHLE/Dev_<address>` instance, whose ContainerID must match the independently
@@ -47,16 +50,23 @@ selected unique RC003 HID1812/2717:32b8/REV00a4 target. No match means no captur
 
 Helper messages are `hello`, `heartbeat`, `status`, `state`, and `diagnostic`.
 State contains generation, increasing sequence, and an absolute `pressed_mask`:
-**1 = Back, 2 = Volume Up, 4 = Volume Down**. No other usage is exported.
+**1 = Back, 2 = Volume Up, 4 = Volume Down, 8 = TV**. No other usage is exported.
+Protocol 1 peers are rejected. `tv_enabled` is fixed for the attachment's generation;
+the parent enables it only while TV has an active mapping. TV reports must match
+the selected source, clear successfully, and pass readback and call-result checks
+before they can generate a mapped press. Failure cancels that gesture; it never
+enables a global backquote hook as a fallback.
 Status phases are waiting/ready/failed, with fixed English reason codes.
 Diagnostics contain fixed codes only, never exception text, paths, IDs, addresses,
 ContainerID hashes, tokens or reports. The hello token is authentication data and
 must never be included in parent logs.
 
 Each attachment first reports `waiting/awaiting_neutral`; it exports no nonzero
-state until a successful, attributed entry report has a real three-key mask 0.
+state until a successful, attributed entry report has a real neutral mask 0.
 That real zero emits state 0 then `ready/source_armed`. A direction press can
-provide this neutral three-key report after initial enable. Idle time does not
+provide this neutral report after initial enable. A TV held across attachment
+must be released before TV can be captured; a zero mask for only the original
+three keys is not proof of TV release. Idle time does not
 disarm an established capture. Reattachment always requires fresh neutrality.
 This deliberately avoids claiming that a synthetic zero proves physical release.
 
@@ -87,6 +97,13 @@ commit `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d`, modules
 Gadget persistence, broad event export, and upstream socket control; retain
 strict source binding and add bounded local IPC, narrow masks, and lifecycle guards.
 The upstream GPL license is copied in `licenses/GPL-3.0.txt`.
+
+The narrow TV extension also references `GetSayAll/remote-mic-app-windows`
+commit `15a065298a6ab9c84a675bb24c0e419418704d71`, module
+`hardware/RC003/helper/agent/rc003_agent.js` (GPLv3). It retains this helper's
+per-call source binding instead of the upstream shared-host content matching,
+and does not import full-key capture, host restart, or global-gate fallback.
+See the repository `ATTRIBUTION.md` and ADR 0003 for authorization and evidence.
 
 Frida 17.18.0: wxWindows Library Licence 3.1, with its referenced LGPL text;
 Python 3.11.9 and PyInstaller license/bootloader exception are also included.

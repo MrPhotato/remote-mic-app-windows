@@ -91,17 +91,17 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section v-if="remoteModel !== 'rc001'" class="card rc003-input-control" aria-label="RC003 三键增强">
+  <section v-if="remoteModel !== 'rc001'" class="card rc003-input-control" aria-label="RC003 按键增强">
     <div class="enhancement-heading">
       <div class="enhancement-title">
-        <h2>补齐返回、音量＋/－按键</h2>
+        <h2>RC003 按键增强</h2>
         <span class="badge" :class="status.phase === 'ready' && connected && !readError ? 'success' : 'pending'" role="status">{{ statusLabel }}</span>
       </div>
       <button
         class="enhancement-switch"
         type="button"
         role="switch"
-        aria-label="补齐返回、音量＋/－按键"
+        aria-label="RC003 按键增强"
         :aria-checked="active"
         :aria-describedby="permissionId"
         :aria-busy="busy"
@@ -113,16 +113,16 @@ onUnmounted(() => {
       </button>
     </div>
     <p :id="permissionId" class="permission-note"><strong>RC003 · 需要管理员权限</strong>。开启时请在 Windows 授权提示中确认。</p>
-    <p class="muted">每次启动无线麦后需手动开启。按键动作可在「按键映射」中设置。</p>
-    <p v-if="!modelConfirmed" class="muted">尚未确认遥控器型号，三键增强暂不可用；型号确认后会自动更新。</p>
-    <p v-else-if="!available" class="muted">请在 Windows 应用中启用三键增强。</p>
+    <p class="muted">启用返回、音量＋/－，并防止 TV 映射时多输入字符。每次启动无线麦后需手动开启。按键动作可在「按键映射」中设置。</p>
+    <p v-if="!modelConfirmed" class="muted">尚未确认遥控器型号，按键增强暂不可用；型号确认后会自动更新。</p>
+    <p v-else-if="!available" class="muted">请在 Windows 应用中启用按键增强。</p>
     <p v-else-if="active && !connected || status.phase === 'waiting' && status.lastError === 'waiting_for_connection'" class="muted">正在等待遥控器连接恢复，请稍候。</p>
     <p v-else-if="!connected" class="muted">请先在「连接与语音」中连接 RC003。</p>
     <p v-else-if="status.phase === 'waiting' && status.lastError === 'awaiting_neutral'" class="muted">请按一下方向键并松开。</p>
-    <p v-else-if="status.phase === 'waiting'" class="muted">正在准备或恢复三键增强，请稍候。</p>
+    <p v-else-if="status.phase === 'waiting'" class="muted">正在准备或恢复按键增强，请稍候。</p>
     <p v-else-if="status.phase === 'ready'" class="muted">返回和音量键已可使用。</p>
     <p v-if="errorMessage" class="error-text" role="alert">{{ errorMessage }}</p>
-    <p v-else-if="readError" class="error-text" role="alert">暂时无法读取三键增强状态，正在重试。</p>
+    <p v-else-if="readError" class="error-text" role="alert">暂时无法读取按键增强状态，正在重试。</p>
   </section>
 </template>
 

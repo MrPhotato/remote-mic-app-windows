@@ -337,10 +337,13 @@ impl Default for WindowsPlatform {
                     let mapping = Arc::clone(&button_mapping);
                     move || {
                         let connection = runtime.snapshot();
-                        connection.rc003_input_availability(
-                            lock(&raw_snapshot).phase == RawInputPhase::Ready,
-                            mapping.rc003_tap_epoch(),
-                        )
+                        let (input_epoch, tv_enabled) = mapping.rc003_tap_configuration();
+                        let (available, connection_generation, input_epoch) = connection
+                            .rc003_input_availability(
+                                lock(&raw_snapshot).phase == RawInputPhase::Ready,
+                                input_epoch,
+                            );
+                        (available, connection_generation, input_epoch, tv_enabled)
                     }
                 }),
             ));

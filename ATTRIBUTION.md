@@ -2,6 +2,13 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 2026-10-08 RC003 TV 原生字符抑制
+
+- 用户明确授权将可选 Helper 的内部接口例外仅扩展到所选 RC003 的 TV，先做本地验证；见 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。不安装驱动，不改变系统蓝牙或普通键盘输入。
+- 参考 `GetSayAll/remote-mic-app-windows` 提交 `15a065298a6ab9c84a675bb24c0e419418704d71` 中 `hardware/RC003/helper/agent/rc003_agent.js` 的 Report 1 TV usage `0x0035` 入口清除及返回恢复，相关历史提交 `6a4aaf8`、`3e2ac06`。其 GPLv3 来源沿用本仓库许可。仅改编现有 `helpers/rc003-input/observer.js` 的 TV 路径，不移植整套全按键 Helper。
+- 不沿用上游允许共享宿主而只按报告内容归属的做法：TV 与普通键盘反引号使用相同 usage，必须保留本地 `rc003Source.matches(args)` 的逐调用设备来源校验。上游先报告边沿再尝试清除、租约丢失后恢复全局门控的行为也不采用；TV 状态须有本帧清除读回与调用结果依据，失败时取消手势，普通 OEM3 始终放行。
+- 上游全按键自动化和协议 ACK 不证明本机物理 TV 已不输出字符；真实报告来源、冷态首按、按住停止和普通键盘负对照需分别实测。此前“同一输入框以前正常”的用户证据保留，突发时间点的触发原因仍未知，不能把长期存在的泄漏路径当作已证明的突发原因。
+
 ## 2026-10-07 RC003 空闲通信修复
 
 - 参考 Microsoft [accept](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept) 与 [recv](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-recv) 对非阻塞继承及 `WSAEWOULDBLOCK` 的规定；本机隔离 Winsock 实验确认空闲忙等，恢复阻塞后保留既有超时即可消除。

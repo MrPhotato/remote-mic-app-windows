@@ -41,7 +41,7 @@ describe("Coding page", () => {
     expect(wrapper.text()).toContain("RC003");
     expect(wrapper.find(".rc003-input-control").exists()).toBe(true);
     expect(wrapper.findAll(".rc003-input-control")).toHaveLength(1);
-    expect(wrapper.get('.rc003-input-control [role="switch"]').attributes("aria-label")).toBe("补齐返回、音量＋/－按键");
+    expect(wrapper.get('.rc003-input-control [role="switch"]').attributes("aria-label")).toBe("RC003 按键增强");
     expect(wrapper.get(".rc003-input-control").text()).toContain("需要管理员权限");
     expect(wrapper.get(".mapping-table").text()).not.toContain("原始行为");
     expect(wrapper.text()).toContain("已连接");

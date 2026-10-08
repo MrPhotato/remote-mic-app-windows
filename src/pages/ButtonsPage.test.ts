@@ -708,10 +708,10 @@ describe("buttons mapping page", () => {
     const controls = wrapper.findAll(".rc003-input-control");
     expect(controls).toHaveLength(1);
     expect(wrapper.get(".mapping-canvas").element.previousElementSibling).toBe(controls[0]!.element);
-    expect(controls[0]!.get('[role="switch"]').attributes("aria-label")).toBe("补齐返回、音量＋/－按键");
+    expect(controls[0]!.get('[role="switch"]').attributes("aria-label")).toBe("RC003 按键增强");
     expect(controls[0]!.text()).toContain("需要管理员权限");
-    expect(wrapper.get(".back-hardware-note").text()).toContain("上方的三键增强");
-    expect(wrapper.text()).not.toContain("下方启用三键增强");
+    expect(wrapper.get(".back-hardware-note").text()).toContain("上方的按键增强");
+    expect(wrapper.text()).not.toContain("下方启用按键增强");
     expect(wrapper.text()).not.toContain("系统音量原始行为");
     expect(saveButtonMappings).not.toHaveBeenCalled();
     expect(testButtonMapping).not.toHaveBeenCalled();
