@@ -87,4 +87,9 @@ Esc、Backspace、Enter、方向键等单键显示键名；组合快捷键使用
 
 - `passed`：205 项前端回归；实际 Vue 页面在独立无界面 Edge 中，1029、1280、1600 像素宽，五页签及正常/有匹配/无匹配搜索共 45 组，列表顶部、底部、高度及鼠标控制/打开应用位置逐项一致。无横向溢出、无页面异常，列表末项可滚动到达。
 - `passed`：前端类型检查、生产构建及 Rust 格式检查。没有 Rust 或 Helper 行为变更，复用既有底层验证，不重复全量硬件验收。
+- `passed`：0.2.15 完整本地 NSIS 包，源码 `0edc3f695ed3ebc3bec6105641198caa213e5c42`，49,617,727 字节，SHA-256 `3480c0d56502862a50acc86fe804317cf163480a8ccf90f640e66dc2511e5555`；GUI 子系统、版本、安装约束及 98 个 Helper 文件、内嵌清单校验通过。无 Authenticode 签名，仅本地测试，未上传或发布。
+- `passed`：旧 0.2.14 正常退出后升级，安装器退出码 0，安装后版本 0.2.15；三份配置及 11 个 WebView 本地存储文件哈希保持一致，Helper 清单不变且 98 项校验通过。未强杀、未自动启动新版、未操作蓝牙。
+- `deferred`：用户手动启动后的页签高度确认。
 - 截图、尺寸结果和检查日志保留于忽略目录 `target/local-launch/mapping-height-0215/`。此项是实际浏览器布局验证，不计作安装版或遥控器实测。
+
+验证命令沿用上一节：`npm.cmd test -- --maxWorkers=2 --minWorkers=1`、`npm.cmd run build`、`cargo fmt --all -- --check`、`scripts/build-local.ps1 -Installer -SkipTests -SkipHelperBuild`、`scripts/verify-rc003-helper-bundle.ps1`，以及锁定单个候选的包检查器。实际浏览器尺寸检查由本轮忽略目录中的 `check-ui.cjs` 执行。功能代码已在上述本地提交保存，未推送。
