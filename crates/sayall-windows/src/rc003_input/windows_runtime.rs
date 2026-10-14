@@ -21,7 +21,9 @@ use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 const PAYLOAD_MANIFEST: &str =
     include_str!(concat!(env!("OUT_DIR"), "/rc003-helper-manifest.json"));
 const FRAME_LIMIT: usize = 4096;
-type Availability = dyn Fn() -> (bool, u64, u64) + Send + Sync;
+const IPC_READ_TIMEOUT: Duration = Duration::from_millis(100);
+const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+type Availability = dyn Fn() -> (bool, u64, u64, bool) + Send + Sync;
 
 struct Worker {
     stop: Arc<AtomicBool>,
@@ -167,7 +169,12 @@ impl Rc003InputRuntime {
         let _ = self.sender.send(EngineMessage::Rc003TapLost { generation });
     }
 
-    fn begin_generation(&self, stop: &AtomicBool) -> Option<u64> {
+    fn begin_generation(
+        &self,
+        stop: &AtomicBool,
+        input_epoch: u64,
+        tv_enabled: bool,
+    ) -> Option<u64> {
         let _gate = self.input_gate.lock().unwrap();
         if stop.load(Ordering::SeqCst) {
             return None;
@@ -178,9 +185,11 @@ impl Rc003InputRuntime {
         });
         let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
         self.status.lock().unwrap().generation = generation;
-        let _ = self
-            .sender
-            .send(EngineMessage::Rc003TapStart { generation });
+        let _ = self.sender.send(EngineMessage::Rc003TapStart {
+            generation,
+            input_epoch,
+            tv_enabled,
+        });
         Some(generation)
     }
 
@@ -236,28 +245,16 @@ impl Rc003InputRuntime {
                         if !peer.ip().is_loopback() {
                             continue;
                         }
-                        stream
-                            .set_read_timeout(Some(Duration::from_millis(100)))
-                            .map_err(|_| "ipc_setup_failed")?;
-                        stream
-                            .set_write_timeout(Some(Duration::from_secs(1)))
-                            .map_err(|_| "ipc_setup_failed")?;
-                        stream.set_nodelay(true).map_err(|_| "ipc_setup_failed")?;
+                        configure_ipc_stream(&stream)?;
                         let mut frames = Frames::default();
                         let hello_deadline = Instant::now();
                         while hello_deadline.elapsed() < Duration::from_secs(2)
                             && !stop.load(Ordering::SeqCst)
                         {
                             for hello in frames.read(&mut stream)? {
-                                if hello["type"] == "hello"
-                                    && hello["protocol"] == 1
-                                    && hello["token"] == token
-                                    && hello["pid"]
-                                        .as_u64()
-                                        .is_some_and(|pid| pid > 0 && pid <= u32::MAX as u64)
-                                {
+                                if valid_hello(&hello, &token) {
                                     gatt_note(
-                                        "rc003_input ipc phase=authenticated protocol=1".into(),
+                                        "rc003_input ipc phase=authenticated protocol=2".into(),
                                     );
                                     return Ok((stream, frames));
                                 }
@@ -294,20 +291,26 @@ impl Rc003InputRuntime {
                 if last_contact.elapsed() > Duration::from_secs(5) {
                     return Err("helper_heartbeat_timeout");
                 }
-                let (available, connection_generation, input_epoch) = (self.available)();
+                let (available, connection_generation, input_epoch, tv_enabled) =
+                    (self.available)();
                 let selected = self.selected.lock().unwrap().clone();
+                let capture_tv_enabled =
+                    tv_capture_enabled(available, selected.is_some(), tv_enabled);
                 let selection = (
                     available,
                     connection_generation,
                     input_epoch,
+                    tv_enabled,
                     selected.clone(),
                 );
                 if last_selection.as_ref() != Some(&selection) {
                     gatt_note(format!(
-                        "rc003_input selection phase=changed available={available} connection_generation={connection_generation} input_epoch={input_epoch} selected={}",
+                        "rc003_input selection phase=changed available={available} connection_generation={connection_generation} input_epoch={input_epoch} tv_enabled={tv_enabled} selected={}",
                         selected.is_some()
                     ));
-                    let Some(next_generation) = self.begin_generation(stop) else {
+                    let Some(next_generation) =
+                        self.begin_generation(stop, input_epoch, capture_tv_enabled)
+                    else {
                         return Ok(());
                     };
                     generation = next_generation;
@@ -329,7 +332,8 @@ impl Rc003InputRuntime {
                     send(
                         &mut stream,
                         &json!({"type":"lease", "generation":generation,
-                        "enabled":available && selected.is_some(), "device_id":selected}),
+                        "enabled":available && selected.is_some(), "device_id":selected,
+                        "tv_enabled":capture_tv_enabled}),
                     )?;
                     last_lease = Instant::now();
                 }
@@ -349,7 +353,9 @@ impl Rc003InputRuntime {
                                 message["sequence"].as_u64().ok_or("ipc_invalid_state")?;
                             let mask = message["pressed_mask"]
                                 .as_u64()
-                                .filter(|mask| *mask <= 7)
+                                .filter(|mask| {
+                                    *mask <= 15 && (capture_tv_enabled || *mask & 8 == 0)
+                                })
                                 .ok_or("ipc_invalid_state")?
                                 as u8;
                             if last_sequence.is_some_and(|previous| sequence <= previous) {
@@ -383,8 +389,11 @@ impl Rc003InputRuntime {
                                 Some("ready") => {} // A real neutral state, not a status label, arms input.
                                 Some("waiting" | "failed") => {
                                     if armed {
-                                        let Some(next_generation) = self.begin_generation(stop)
-                                        else {
+                                        let Some(next_generation) = self.begin_generation(
+                                            stop,
+                                            input_epoch,
+                                            capture_tv_enabled,
+                                        ) else {
                                             return Ok(());
                                         };
                                         generation = next_generation;
@@ -443,6 +452,40 @@ impl Rc003InputRuntime {
     }
 }
 
+fn configure_ipc_stream(stream: &TcpStream) -> Result<(), &'static str> {
+    let started = Instant::now();
+    let configure = |stage: &str, result: std::io::Result<()>| {
+        result.map_err(|error| {
+            gatt_note(format!(
+                "rc003_input ipc_socket phase=completed terminal_result=failed stage={stage} error_domain=winsock error_code=socket_configuration_failed os_error={} retryable=true elapsed_ms={}",
+                error.raw_os_error().unwrap_or(0),
+                started.elapsed().as_millis(),
+            ));
+            "ipc_setup_failed"
+        })
+    };
+    // Winsock accept inherits the listener's nonblocking mode. SO_RCVTIMEO
+    // alone does not make recv wait: idle WouldBlock would spin the IPC loop.
+    // Restore blocking mode before applying the existing bounded waits.
+    configure("blocking_mode", stream.set_nonblocking(false))?;
+    configure(
+        "read_timeout",
+        stream.set_read_timeout(Some(IPC_READ_TIMEOUT)),
+    )?;
+    configure(
+        "write_timeout",
+        stream.set_write_timeout(Some(IPC_WRITE_TIMEOUT)),
+    )?;
+    configure("nodelay", stream.set_nodelay(true))?;
+    gatt_note(format!(
+        "rc003_input ipc_socket phase=completed terminal_result=passed mode=blocking read_timeout_ms={} write_timeout_ms={} elapsed_ms={}",
+        IPC_READ_TIMEOUT.as_millis(),
+        IPC_WRITE_TIMEOUT.as_millis(),
+        started.elapsed().as_millis(),
+    ));
+    Ok(())
+}
+
 fn cleanup_exit_result(code: Option<u32>) -> (&'static str, &'static str, u32) {
     match code {
         Some(0) => ("passed", "helper_cleanup_completed", 0),
@@ -450,6 +493,19 @@ fn cleanup_exit_result(code: Option<u32>) -> (&'static str, &'static str, u32) {
         Some(_) => ("failed", "helper_exit_failed", 0),
         None => ("unknown", "exit_status_unavailable", 0),
     }
+}
+
+fn tv_capture_enabled(available: bool, selected: bool, configured: bool) -> bool {
+    available && selected && configured
+}
+
+fn valid_hello(hello: &Value, token: &str) -> bool {
+    hello["type"] == "hello"
+        && hello["protocol"].as_u64() == Some(2)
+        && hello["token"] == token
+        && hello["pid"]
+            .as_u64()
+            .is_some_and(|pid| pid > 0 && pid <= u32::MAX as u64)
 }
 
 fn safe_code(code: Option<&str>) -> Option<&str> {
@@ -659,11 +715,42 @@ mod tests {
     }
 
     #[test]
+    fn rc003_tv_authority_requires_an_enabled_selected_capture_lease() {
+        for available in [false, true] {
+            for selected in [false, true] {
+                for configured in [false, true] {
+                    assert_eq!(
+                        tv_capture_enabled(available, selected, configured),
+                        (available, selected, configured) == (true, true, true)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rc003_tv_protocol_requires_v2_and_rejects_legacy_hello() {
+        let mut hello = json!({"type":"hello", "protocol":2, "token":"test-token", "pid":1});
+        assert!(valid_hello(&hello, "test-token"));
+        for protocol in [json!(1), json!(3), json!(true), json!("2"), Value::Null] {
+            hello["protocol"] = protocol;
+            assert!(!valid_hello(&hello, "test-token"));
+        }
+        hello["protocol"] = json!(2);
+        assert!(!valid_hello(&hello, "wrong-token"));
+        hello["pid"] = json!(0);
+        assert!(!valid_hello(&hello, "test-token"));
+    }
+
+    #[test]
     fn stop_after_loop_check_rejects_late_generation_and_state() {
         let (sender, events) = mpsc::channel();
-        let runtime = Arc::new(Rc003InputRuntime::new(sender, Arc::new(|| (true, 1, 0))));
+        let runtime = Arc::new(Rc003InputRuntime::new(
+            sender,
+            Arc::new(|| (true, 1, 0, false)),
+        ));
         let stop = Arc::new(AtomicBool::new(false));
-        let generation = runtime.begin_generation(&stop).unwrap();
+        let generation = runtime.begin_generation(&stop, 0, false).unwrap();
         let _ = events.try_iter().collect::<Vec<_>>();
         let (checked, checked_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
@@ -674,7 +761,7 @@ mod tests {
             assert!(!input_stop.load(Ordering::SeqCst));
             checked.send(()).unwrap();
             resume_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert_eq!(input.begin_generation(&input_stop), None);
+            assert_eq!(input.begin_generation(&input_stop, 0, false), None);
             assert!(!input
                 .forward_state(&input_stop, generation, 1, 1, 0)
                 .unwrap());
@@ -694,16 +781,19 @@ mod tests {
     #[test]
     fn stop_cancels_the_generation_that_won_the_gate_before_it() {
         let (sender, events) = mpsc::channel();
-        let runtime = Arc::new(Rc003InputRuntime::new(sender, Arc::new(|| (true, 1, 0))));
+        let runtime = Arc::new(Rc003InputRuntime::new(
+            sender,
+            Arc::new(|| (true, 1, 0, false)),
+        ));
         let stop = Arc::new(AtomicBool::new(false));
-        let first = runtime.begin_generation(&stop).unwrap();
+        let first = runtime.begin_generation(&stop, 0, false).unwrap();
         let _ = events.try_iter().collect::<Vec<_>>();
         let (forwarded, forwarded_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
         let input = Arc::clone(&runtime);
         let input_stop = Arc::clone(&stop);
         let worker = thread::spawn(move || {
-            let generation = input.begin_generation(&input_stop).unwrap();
+            let generation = input.begin_generation(&input_stop, 0, false).unwrap();
             assert!(input
                 .forward_state(&input_stop, generation, 1, 0, 0)
                 .unwrap());
@@ -723,7 +813,7 @@ mod tests {
         let messages = events.try_iter().collect::<Vec<_>>();
         assert!(matches!(messages.as_slice(), [
             EngineMessage::Rc003TapLost { generation: replaced },
-            EngineMessage::Rc003TapStart { generation: started },
+            EngineMessage::Rc003TapStart { generation: started, input_epoch: 0, tv_enabled: false },
             EngineMessage::Rc003TapState { generation: neutral, pressed_mask: 0, .. },
             EngineMessage::Rc003TapState { generation: pressed, pressed_mask: 1, .. },
             EngineMessage::Rc003TapLost { generation: stopped },
@@ -742,6 +832,56 @@ mod tests {
             assert_eq!(safe_code(Some(value)), None);
         }
     }
+
+    #[test]
+    fn rc003_ipc_nonblocking_accept_waits_delivers_frames_and_reports_eof() {
+        // Match the production listener, including Windows' inherited
+        // nonblocking mode; a default blocking listener misses this regression.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut writer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut reader, _) = listener.accept().unwrap();
+        configure_ipc_stream(&reader).unwrap();
+        let mut frames = Frames::default();
+
+        let idle_started = Instant::now();
+        let mut idle_reads = 0;
+        while idle_started.elapsed() < Duration::from_millis(250) {
+            assert!(frames.read(&mut reader).unwrap().is_empty());
+            idle_reads += 1;
+            assert!(
+                idle_reads <= 8,
+                "idle IPC busy-spun: {idle_reads} reads in {:?}",
+                idle_started.elapsed()
+            );
+        }
+        assert_eq!(reader.read_timeout().unwrap(), Some(IPC_READ_TIMEOUT));
+        assert_eq!(reader.write_timeout().unwrap(), Some(IPC_WRITE_TIMEOUT));
+
+        let expected = vec![
+            json!({"type": "heartbeat", "generation": 1}),
+            json!({"type": "state", "generation": 1, "sequence": 1, "pressed_mask": 0}),
+        ];
+        for message in &expected {
+            send(&mut writer, message).unwrap();
+        }
+        let receive_deadline = Instant::now() + Duration::from_secs(2);
+        let mut received = Vec::new();
+        while received.len() < expected.len() {
+            received.extend(frames.read(&mut reader).unwrap());
+            assert!(
+                Instant::now() < receive_deadline,
+                "IPC frames did not arrive"
+            );
+        }
+        assert_eq!(received, expected);
+
+        // A disconnected helper must still surface EOF to the worker's existing
+        // cleanup path, rather than being mistaken for another idle timeout.
+        writer.shutdown(Shutdown::Write).unwrap();
+        assert_eq!(frames.read(&mut reader), Err("helper_disconnected"));
+    }
+
     #[test]
     fn fragmented_frames_and_oversized_input_are_bounded() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();

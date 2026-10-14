@@ -50,25 +50,27 @@ describe("Codex coding profile", () => {
     expect(next.actions.back?.single).toEqual({ type: "normal_backspace" });
     expect(next.actions.back?.double).toEqual({ type: "disabled" });
     expect(next.actions.back?.long).toEqual({ type: "disabled" });
-    for (const key of ["up", "down", "left", "right", "ok", "power", "volume_up", "volume_down"] as const) {
+    for (const key of ["up", "down", "left", "right", "ok", "volume_up", "volume_down"] as const) {
       expect(next.actions[key]?.double).toEqual({ type: "disabled" });
       expect(next.actions[key]?.long).toEqual({ type: "disabled" });
     }
-    expect(next.actions.volume_up?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "page_up"] } });
-    expect(next.actions.volume_down?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "page_down"] } });
+    expect(next.actions.volume_up?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_left"] } });
+    expect(next.actions.volume_down?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
+    expect(next.actions.power?.double).toEqual({ type: "disabled" });
+    expect(next.actions.power?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "enter"] } });
     expect(CODING_PROFILE_BUTTONS).toHaveLength(12);
     expect(next.actions.volume_mute).toEqual(current.actions.volume_mute);
     expect(next.actions.home?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "n"] } });
-    expect(next.actions.home?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "comma"] } });
+    expect(next.actions.home?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "a"] } });
     expect(next.actions.menu).toEqual({
-      single: { type: "shortcut", chord: { keys: ["control", "shift", "p"] } },
-      double: { type: "shortcut", chord: { keys: ["control", "shift", "m"] } },
-      long: { type: "shortcut", chord: { keys: ["control", "alt", "a"] } },
+      single: { type: "shortcut", chord: { keys: ["control", "z"] } },
+      double: { type: "disabled" },
+      long: { type: "shortcut", chord: { keys: ["control", "y"] } },
     });
     expect(next.actions.tv).toEqual({
       single: { type: "shortcut", chord: { keys: ["control", "alt", "b"] } },
-      double: { type: "shortcut", chord: { keys: ["control", "b"] } },
-      long: { type: "shortcut", chord: { keys: ["control", "z"] } },
+      double: { type: "shortcut", chord: { keys: ["control", "shift", "s"] } },
+      long: { type: "shortcut", chord: { keys: ["control", "j"] } },
     });
     expect(next.applications).toEqual(current.applications);
     expect(JSON.stringify(current)).toBe(original);

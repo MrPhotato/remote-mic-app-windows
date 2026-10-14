@@ -184,7 +184,8 @@ describe("about page update panel", () => {
     expect(report).toContain('"schemaVersion": 1');
     expect(report).not.toContain("remoteName");
     expect(report).not.toContain("selectedEndpointName");
-    expect(report).not.toContain("lastError");
+    expect(report).not.toContain('"lastError":');
+    expect(JSON.parse(report).diagnosticLog).toMatchObject({ ready: false, lastErrorCode: null });
     expect(wrapper.text()).toContain("诊断摘要已生成");
 
     await buttons[1].trigger("click");

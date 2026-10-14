@@ -20,32 +20,31 @@ describe("Codex Windows shortcut catalog", () => {
 
   it("preserves Windows-specific navigation and lookup combinations", () => {
     const keys = (id: string) => CODEX_SHORTCUTS.find((item) => item.id === id)!.keys;
-    expect(keys("previous-chat")).toEqual(["control", "page_up"]);
-    expect(keys("next-chat")).toEqual(["control", "page_down"]);
+    expect(keys("previous-chat")).toEqual(["control", "shift", "bracket_left"]);
+    expect(keys("next-chat")).toEqual(["control", "shift", "bracket_right"]);
     expect(keys("needs-attention")).toEqual(["control", "alt", "a"]);
     expect(keys("find-previous")).toEqual(["shift", "f3"]);
     expect(keys("environment-action")).toEqual(["left_windows", "shift", "d"]);
     expect(keys("keyboard-shortcuts")).toEqual(["control", "slash"]);
-    expect(keys("recent-1")).toEqual(["control", "alt", "digit1"]);
-    expect(keys("recent-6")).toEqual(["control", "alt", "digit6"]);
-    expect(keys("chat-1")).toEqual(["control", "digit1"]);
-    expect(keys("chat-9")).toEqual(["control", "digit9"]);
+    expect(keys("queue-message")).toEqual(["control", "enter"]);
+    expect(keys("sidebar")).toEqual(["control", "shift", "s"]);
+    expect(CODEX_SHORTCUTS.filter((item) => item.keys.some((key) => /^digit[1-9]$/.test(key)))).toEqual([]);
     expect(CODEX_SHORTCUTS_SOURCE).toBe("https://learn.chatgpt.com/docs/reference/commands");
   });
 
   it("keeps hold-to-dictate out of tap actions and labels contextual approvals", () => {
     expect(CODEX_SHORTCUTS.some((item) => item.keys.join("+") === "control+shift+d")).toBe(false);
     expect(CODEX_SHORTCUTS.find((item) => item.id === "approve")!.note).toContain("审批框");
-    expect(CODEX_SHORTCUTS.find((item) => item.id === "approve")!.note).toContain("发送消息");
+    expect(CODEX_SHORTCUTS.find((item) => item.id === "approve")!.note).toContain("发送");
     expect(CODEX_SHORTCUTS.find((item) => item.id === "decline")!.note).toContain("审批框");
   });
 
   it("returns independent mapping values without mutating the catalog", () => {
     const shortcut = CODEX_SHORTCUTS.find((item) => item.id === "next-chat")!;
     const action = codexShortcutAction(shortcut);
-    expect(action).toEqual({ type: "shortcut", chord: { keys: ["control", "page_down"] } });
+    expect(action).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
     if (action.type !== "shortcut") throw new Error("Expected a shortcut action");
     action.chord.keys.push("shift");
-    expect(shortcut.keys).toEqual(["control", "page_down"]);
+    expect(shortcut.keys).toEqual(["control", "shift", "bracket_right"]);
   });
 });

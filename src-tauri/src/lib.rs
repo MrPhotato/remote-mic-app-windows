@@ -4,8 +4,8 @@ use sayall_windows::send_input::{
     ButtonAction, ButtonMappings, ButtonTrigger, KeyChord, SendInputSnapshot,
 };
 use sayall_windows::{
-    AudioEndpoint, AudioSnapshot, ConnectionSnapshot, PairedRemote, PlatformSnapshot,
-    WindowsPlatform,
+    AudioEndpoint, AudioSnapshot, ConnectionSnapshot, MicrophoneEndpoint, PairedRemote,
+    PlatformSnapshot, WindowsPlatform,
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -223,11 +223,41 @@ async fn list_audio_endpoints(
 }
 
 #[tauri::command]
+async fn list_microphones(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<MicrophoneEndpoint>, String> {
+    let platform = Arc::clone(&state.platform);
+    tauri::async_runtime::spawn_blocking(move || platform.list_microphones())
+        .await
+        .map_err(|_| "读取麦克风列表失败".to_owned())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn retry_audio_endpoint(state: tauri::State<'_, AppState>) -> Result<AudioSnapshot, String> {
+    let platform = Arc::clone(&state.platform);
+    let settings = state.settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        platform
+            .retry_audio_endpoint()
+            .map_err(|error| error.to_string())?;
+        settings
+            .sync_audio_endpoint(|| platform.audio_snapshot())
+            .map_err(|_| "语音线路已启用，但设置未保存；下次启动可能需要重新选择".to_owned())
+    })
+    .await
+    .map_err(|_| "重新连接麦克风失败".to_owned())?
+}
+
+#[tauri::command]
 async fn get_audio_snapshot(state: tauri::State<'_, AppState>) -> Result<AudioSnapshot, String> {
     let platform = Arc::clone(&state.platform);
-    tauri::async_runtime::spawn_blocking(move || platform.audio_snapshot())
-        .await
-        .map_err(|error| format!("读取音频状态失败：{error}"))
+    let settings = state.settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        settings.audio_snapshot_with_persistence(|| platform.audio_snapshot())
+    })
+    .await
+    .map_err(|error| format!("读取音频状态失败：{error}"))
 }
 
 #[tauri::command]
@@ -238,17 +268,12 @@ async fn select_audio_endpoint(
     let platform = Arc::clone(&state.platform);
     let settings = state.settings.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let snapshot = platform
+        platform
             .select_audio_endpoint(endpoint_id)
             .map_err(|error| error.to_string())?;
-        let (Some(id), Some(name)) = (
-            snapshot.selected_endpoint_id.clone(),
-            snapshot.selected_endpoint_name.clone(),
-        ) else {
-            return Err("WASAPI 已初始化，但未返回所选端点身份".to_owned());
-        };
-        settings.save_audio_endpoint(id, name)?;
-        Ok(snapshot)
+        settings
+            .sync_audio_endpoint(|| platform.audio_snapshot())
+            .map_err(|_| "语音线路已启用，但设置未保存；下次启动可能需要重新选择".to_owned())
     })
     .await
     .map_err(|error| format!("选择音频端点任务失败：{error}"))?
@@ -1040,6 +1065,14 @@ fn shutdown_platform_for_exit(app: &tauri::AppHandle) {
     }
     let started = std::time::Instant::now();
     let platform = app.state::<AppState>().platform.clone();
+    if app
+        .state::<AppState>()
+        .settings
+        .sync_audio_endpoint(|| platform.audio_snapshot())
+        .is_err()
+    {
+        sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=failed error_domain=settings error_code=write_failed reason=exit_sync retryable=true".to_owned());
+    }
     match platform.shutdown_for_exit(GRACEFUL_EXIT_TIMEOUT) {
         Ok(()) => sayall_windows::gatt_note(format!(
             "app_exit platform_shutdown phase=completed terminal_result=passed reason=session_cleanup_acked elapsed_ms={}",
@@ -1283,11 +1316,6 @@ pub fn run() {
                     saved_settings.launch_at_login
                 ));
             }
-            // Radio::RequestAccessAsync 可能显示系统授权，微软要求从可交互的 UI
-            // 上下文调用。setup 线程在创建 BLE 后台线程前预热并缓存 Radio，
-            // 使蓝牙栈资源耗尽时仍能自动关开无线电，而不是再依赖失败的枚举。
-            #[cfg(all(windows, not(feature = "runtime-simulation")))]
-            sayall_windows::prepare_bluetooth_radio_recovery();
             let platform = create_platform();
             let button_mappings = match settings.load_button_mappings() {
                 Ok(mappings) => {
@@ -1299,10 +1327,14 @@ pub fn run() {
                 }
                 Err(error) => {
                     sayall_windows::gatt_note(
-                        "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=failed error_domain=settings error_code=parse_or_read_failed reason=defaults_applied retryable=true".to_owned(),
+                        "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=failed error_domain=settings error_code=parse_or_read_failed reason=mapping_disabled retryable=true".to_owned(),
                     );
                     eprintln!("{error}");
-                    ButtonMappings::default()
+                    ButtonMappings {
+                        enabled: false,
+                        actions: Default::default(),
+                        applications: Vec::new(),
+                    }
                 }
             };
             // 启动即热加载已保存映射（引擎与门控吞键配置同步就绪）。
@@ -1318,6 +1350,9 @@ pub fn run() {
                         "audio_endpoint action=restore phase=ipc_completed terminal_result=failed error_domain=platform error_code=restore_request_failed reason=platform_rejected retryable=true".to_owned(),
                     );
                     eprintln!("恢复已保存的音频端点失败：{error}");
+                }
+                if settings.sync_audio_endpoint(|| platform.audio_snapshot()).is_err() {
+                    sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=failed error_domain=settings error_code=write_failed reason=startup_sync retryable=true".to_owned());
                 }
             }
 
@@ -1420,6 +1455,8 @@ pub fn run() {
         connect_remote,
         disconnect_remote,
         list_audio_endpoints,
+        list_microphones,
+        retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
         get_raw_input_snapshot,
@@ -1466,6 +1503,8 @@ pub fn run() {
         connect_remote,
         disconnect_remote,
         list_audio_endpoints,
+        list_microphones,
+        retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
         get_raw_input_snapshot,

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { buildCodingProfile } from "./coding-profile";
 
 export const VB_CABLE_DOWNLOAD_URL = "https://vb-audio.com/Cable/";
 
@@ -32,6 +33,15 @@ export interface AudioEndpoint {
   id: string;
   name: string;
   isVirtualCableCandidate: boolean;
+}
+
+export interface MicrophoneEndpoint {
+  id: string;
+  name: string;
+  isVirtualCableCandidate: boolean;
+  isDefault: boolean;
+  isDefaultCommunications: boolean;
+  renderEndpointIds: string[];
 }
 
 export interface AudioSnapshot {
@@ -196,6 +206,16 @@ export interface DiagnosticReport {
   appVersion: string;
   platform: string;
   verificationStatus: string;
+  diagnosticLog: {
+    configured: boolean;
+    ready: boolean;
+    droppedRecords: number;
+    openFailures: number;
+    writeFailures: number;
+    flushFailures: number;
+    recoveries: number;
+    lastErrorCode: string | null;
+  };
   capabilities: {
     windowsApiAvailable: boolean;
     bleScanAvailable: boolean;
@@ -206,6 +226,7 @@ export interface DiagnosticReport {
   };
   connection: {
     phase: ConnectionPhase;
+    remoteModel: RemoteModel;
     capabilitiesConfirmed: boolean;
     sampleRate: number | null;
     frameSize: number | null;
@@ -360,6 +381,10 @@ export async function getDiagnosticReport(): Promise<DiagnosticReport> {
       appVersion: browserSnapshot.appVersion,
       platform: browserSnapshot.platform.platform,
       verificationStatus: browserSnapshot.platform.verificationStatus,
+      diagnosticLog: {
+        configured: false, ready: false, droppedRecords: 0, openFailures: 0,
+        writeFailures: 0, flushFailures: 0, recoveries: 0, lastErrorCode: null,
+      },
       capabilities: {
         windowsApiAvailable: false,
         bleScanAvailable: false,
@@ -370,6 +395,7 @@ export async function getDiagnosticReport(): Promise<DiagnosticReport> {
       },
       connection: {
         phase: browserSnapshot.platform.connection.phase,
+        remoteModel: browserSnapshot.platform.connection.remoteModel,
         capabilitiesConfirmed: false,
         sampleRate: null,
         frameSize: null,
@@ -469,6 +495,20 @@ export async function listAudioEndpoints(): Promise<AudioEndpoint[]> {
   return invoke<AudioEndpoint[]>("list_audio_endpoints");
 }
 
+export async function listMicrophones(): Promise<MicrophoneEndpoint[]> {
+  if (!isTauriRuntime()) {
+    throw new Error("当前是浏览器预览，无法读取麦克风");
+  }
+  return invoke<MicrophoneEndpoint[]>("list_microphones");
+}
+
+export async function retryAudioEndpoint(): Promise<AudioSnapshot> {
+  if (!isTauriRuntime()) {
+    throw new Error("当前是浏览器预览，无法恢复语音设备");
+  }
+  return invoke<AudioSnapshot>("retry_audio_endpoint");
+}
+
 export async function getAudioSnapshot(): Promise<AudioSnapshot> {
   if (!isTauriRuntime()) {
     return browserSnapshot.platform.audio;
@@ -514,7 +554,7 @@ export async function stopRawInput(): Promise<RawInputSnapshot> {
 
 export async function getButtonMappings(): Promise<ButtonMappings> {
   if (!isTauriRuntime()) {
-    return { enabled: true, actions: {} };
+    return buildCodingProfile({ enabled: true, actions: {} });
   }
   return invoke<ButtonMappings>("get_button_mappings");
 }
@@ -528,7 +568,7 @@ export async function saveButtonMappings(mappings: ButtonMappings): Promise<Butt
 
 export async function resetButtonMappings(): Promise<ButtonMappings> {
   if (!isTauriRuntime()) {
-    return { enabled: true, actions: {} };
+    return buildCodingProfile({ enabled: true, actions: {} });
   }
   return invoke<ButtonMappings>("reset_button_mappings");
 }
@@ -913,7 +953,8 @@ export function shortcutCapability(
 
 const keyLabels: Record<string, string> = {
   ...voiceHotkeyKeyLabels,
-  backspace: "退格",
+  backspace: "Backspace",
+  space: "Space",
   page_up: "Page Up",
   page_down: "Page Down",
   end: "End",
@@ -967,7 +1008,7 @@ export function registerPresetAppNames(apps: Array<{ id: string; name: string }>
 
 export function actionSummary(action: ButtonAction | undefined): string {
   if (!action || action.type === "disabled") return "未设置";
-  if (action.type === "normal_backspace") return "退格（按住连续删除）";
+  if (action.type === "normal_backspace") return "Backspace";
   if (action.type === "delete_to_punctuation") return "删到上一个标点（保留标点）";
   if (action.type === "scroll") {
     const label = action.direction === "up" ? "滚轮向上" : "滚轮向下";

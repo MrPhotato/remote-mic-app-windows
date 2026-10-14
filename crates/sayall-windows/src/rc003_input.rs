@@ -1,4 +1,4 @@
-//! Optional, explicitly elevated RC003 three-button input. Voice never depends on it.
+//! Optional, explicitly elevated RC003 input and device-scoped TV capture. Voice never depends on it.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

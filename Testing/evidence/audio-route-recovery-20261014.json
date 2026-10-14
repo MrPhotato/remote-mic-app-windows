@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-14",
+  "candidateVersion": "0.2.12",
+  "status": "current_rc003_dictation_passed_transient_failure_unresolved",
+  "software": {
+    "frontendTestsPassed": 178,
+    "frontendBuild": "passed",
+    "workspaceTestsPassedBeforeFinalInventoryGuard": 324,
+    "workspaceTestsIgnored": 6,
+    "finalInventoryUnitTestsPassed": 9,
+    "formatCheck": "passed",
+    "runtimeSimulationCompile": "passed"
+  },
+  "readOnlyWindowsInventory": {
+    "result": "passed",
+    "activeMicrophones": 3,
+    "verifiedVirtualMicrophones": 1,
+    "pairedRenderInterfaces": 2,
+    "defaultCaptureDetected": true,
+    "communicationsDefaultDetected": true,
+    "savedState": "not_present",
+    "savedParentProblemCode": 10,
+    "savedParentVerified": true,
+    "replacementFound": true,
+    "replacementReason": "verified_virtual_route",
+    "streamsOpened": false
+  },
+  "installation": {
+    "helperUnchanged": true,
+    "installerExitCode": 0,
+    "automaticallyLaunched": false,
+    "systemAudioDefaultsUnchanged": false,
+    "binaryMatchesAfterBundleMarkerNormalization": true,
+    "settingsPreserved": true,
+    "version": "0.2.12",
+    "result": "passed",
+    "bleSessionCleanup": "passed",
+    "normalExitConfirmed": true,
+    "defaultCaptureUnchanged": true,
+    "defaultRoleObservation": "OPPO headphones were defaults before upgrade; after normal app exit and installation, render/communications roles used other devices. CABLE Output remained default capture. New app was not running at the after snapshot; cause of external role change is not established.",
+    "formerHeadsetPresentAfterUpgrade": false
+  },
+  "voiceEndToEnd": "passed",
+  "postLaunchValidation": {
+    "deviceModel": "RC003",
+    "startupRouteRecovery": "passed",
+    "startupRouteRecoveryAtUtc": "2026-10-14T05:33:05Z",
+    "routeReason": "verified_virtual_route",
+    "wasapiInitialized": true,
+    "replacementPersisted": true,
+    "initialUserDictationAttempt": "failed",
+    "initialFailureObservation": "Remote voice press showed a black dotted pill that remained after release; the same physical keyboard shortcut did not show that pill.",
+    "currentDictationResult": "passed",
+    "currentDictationEvidence": "User confirmed that holding the remote voice key to speak and releasing it now produces text.",
+    "logEvidence": {
+      "snapshotAtUtc": "2026-10-14T05:45:33.4016505Z",
+      "snapshotSha256": "439063c4a883b0c2f0de82101d4cfa6df51fdf97f5cb8962063c58a7986dfa73",
+      "successfulPresses": 12,
+      "successfulReleases": 12,
+      "successfulAudioFinishes": 12,
+      "lastCompletedSession": 45,
+      "lastCompletedAudioGeneration": 12,
+      "lastCompletedAtUtc": "2026-10-14T05:42:53.802Z",
+      "lastSubmittedSamples": 75840,
+      "lastQueuedSamples": 0,
+      "textOutputCorrelatedToExactSession": false
+    },
+    "recoveryObservation": "Pill disappeared and dictation recovered during read-only diagnosis without an investigator-initiated setting change, application restart or Bluetooth reconnect.",
+    "pillOwner": "unknown",
+    "transientFailureRootCause": "deferred",
+    "strictIdleFirstUseReliability": "deferred",
+    "rc001Validation": "deferred"
+  },
+  "physicalDeviceReturn": "deferred",
+  "audioLossDuringVoice": "deferred",
+  "sleepResume": "deferred",
+  "boundaries": {
+    "bluetoothChanged": false,
+    "driversChanged": false,
+    "applicationRestartedDuringInvestigation": false,
+    "published": false,
+    "systemAudioDefaultMutationCalled": false
+  },
+  "sourceRevision": "e6b4ad7f184665b47517cfb85194b3a5e09c5a28",
+  "package": {
+    "helperFilesVerified": 98,
+    "sha256": "bd67a3c7e32b0ecc64fdef1c331ced39c0c53acce2abcd328f45b5ebbad33016",
+    "helperManifestSha256": "348ff780c6f2f72cce4945afe9601c5619ac7444702e36a517419a0c85b768d4",
+    "assetName": "Remote Coding_0.2.12_x64-setup.exe",
+    "bytes": 49576821
+  }
+}

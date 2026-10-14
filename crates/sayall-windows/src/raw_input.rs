@@ -41,12 +41,13 @@ pub const ALL_BUTTONS: [RemoteButton; 13] = [
     RemoteButton::VolumeDown,
 ];
 
-/// The supplemental RC003 source can represent only these three buttons.
+/// Legacy passive helper buttons. TV has separate ownership/cancellation rules.
 pub(crate) const RC003_TAP_BUTTONS: [RemoteButton; 3] = [
     RemoteButton::Back,
     RemoteButton::VolumeUp,
     RemoteButton::VolumeDown,
 ];
+pub(crate) const RC003_TV_MASK: u8 = 8;
 
 impl RemoteButton {
     /// 在 [`ALL_BUTTONS`] 中的序号（0..12），用于门控位掩码。
@@ -307,6 +308,12 @@ pub struct ButtonStateMerger {
     keyboard: BTreeSet<RemoteButton>,
     hid: BTreeSet<RemoteButton>,
     rc003_tap: BTreeSet<RemoteButton>,
+    rc003_tv_enabled: bool,
+    rc003_tv_participated: bool,
+    // A native gesture that predates the TV lease keeps its own release.
+    tv_native_preexisting: bool,
+    // After source loss, drain uncertain native edges through a physical release.
+    tv_native_drain: bool,
 }
 
 impl ButtonStateMerger {
@@ -314,13 +321,7 @@ impl ButtonStateMerger {
         let Some(button) = event.button() else {
             return Vec::new();
         };
-        let before = self.active_buttons();
-        if event.is_pressed() {
-            self.keyboard.insert(button);
-        } else {
-            self.keyboard.remove(&button);
-        }
-        edges_between(&before, &self.active_buttons())
+        self.apply_keyboard_button_edge(button, event.is_pressed())
     }
 
     /// 应用已经归因到遥控器的键盘边沿（key_gate 吞下的原始键）。
@@ -335,6 +336,9 @@ impl ButtonStateMerger {
             self.keyboard.insert(button);
         } else {
             self.keyboard.remove(&button);
+        }
+        if button == RemoteButton::Tv && !is_pressed {
+            self.observe_native_tv_release();
         }
         edges_between(&before, &self.active_buttons())
     }
@@ -355,22 +359,94 @@ impl ButtonStateMerger {
     /// 应用一份 HID 报文的 usage 集合（绝对状态），返回语义边沿。
     pub fn update_hid_usages(&mut self, usages: BTreeSet<u16>) -> Vec<ButtonEdge> {
         let before = self.active_buttons();
+        let tv_was_pressed = self.hid.contains(&RemoteButton::Tv);
         self.hid = usages.into_iter().filter_map(button_for_usage).collect();
+        if tv_was_pressed && !self.hid.contains(&RemoteButton::Tv) {
+            self.observe_native_tv_release();
+        }
         edges_between(&before, &self.active_buttons())
+    }
+
+    pub(crate) fn begin_rc003_tv(&mut self, enabled: bool) {
+        self.tv_native_preexisting = enabled && !self.tv_native_drain && self.native_tv_pressed();
+        self.rc003_tv_enabled = enabled;
+    }
+
+    pub(crate) fn rc003_tv_enabled(&self) -> bool {
+        self.rc003_tv_enabled
+    }
+
+    pub(crate) fn rc003_tv_participated(&self) -> bool {
+        self.rc003_tv_participated
+    }
+
+    pub(crate) fn native_tv_pressed(&self) -> bool {
+        self.keyboard.contains(&RemoteButton::Tv) || self.hid.contains(&RemoteButton::Tv)
+    }
+
+    fn observe_native_tv_release(&mut self) {
+        if !self.native_tv_pressed() {
+            self.tv_native_preexisting = false;
+            self.tv_native_drain = false;
+        }
+    }
+
+    /// TV is authoritative only after the helper confirmed clearing its source report.
+    /// Native TV reports remain tracked, but cannot create a second mapped gesture.
+    /// Source loss must not cancel a TV gesture which the helper never participated in.
+    pub(crate) fn cancel_rc003_tap(&mut self) -> (bool, Vec<ButtonEdge>) {
+        let before = self.active_buttons();
+        let tv_participated = self.rc003_tv_participated;
+        if self.rc003_tv_enabled && !self.tv_native_preexisting {
+            self.tv_native_drain |=
+                self.rc003_tap.contains(&RemoteButton::Tv) || self.native_tv_pressed();
+        }
+        self.rc003_tap.clear();
+        self.rc003_tv_enabled = false;
+        self.rc003_tv_participated = false;
+        self.tv_native_preexisting = false;
+        (
+            tv_participated,
+            edges_between(&before, &self.active_buttons()),
+        )
     }
 
     /// Independently attributed helper state; invalid masks never change a source.
     pub(crate) fn update_rc003_tap(&mut self, pressed_mask: u8) -> Vec<ButtonEdge> {
-        if pressed_mask & !0x07 != 0 {
+        if pressed_mask & !0x0f != 0
+            || (pressed_mask & RC003_TV_MASK != 0 && !self.rc003_tv_enabled)
+        {
             return Vec::new();
         }
+        // The helper has observed a real neutral before this confirmed press.
+        // A pre-lease native DOWN can still await its delayed UP in another queue;
+        // retire that old semantic hold before starting the new cleared press.
+        let native_takeover = pressed_mask & RC003_TV_MASK != 0
+            && !self.rc003_tv_participated
+            && self.tv_native_preexisting;
         let before = self.active_buttons();
         self.rc003_tap = RC003_TAP_BUTTONS
             .into_iter()
             .enumerate()
             .filter_map(|(bit, button)| (pressed_mask & (1 << bit) != 0).then_some(button))
             .collect();
-        edges_between(&before, &self.active_buttons())
+        if pressed_mask & RC003_TV_MASK != 0 {
+            self.rc003_tap.insert(RemoteButton::Tv);
+            self.rc003_tv_participated = true;
+            self.tv_native_preexisting = false;
+        }
+        let mut edges = edges_between(&before, &self.active_buttons());
+        if native_takeover {
+            edges.push(ButtonEdge {
+                button: RemoteButton::Tv,
+                is_pressed: false,
+            });
+            edges.push(ButtonEdge {
+                button: RemoteButton::Tv,
+                is_pressed: true,
+            });
+        }
+        edges
     }
 
     pub fn release_all(&mut self) -> Vec<ButtonEdge> {
@@ -378,6 +454,10 @@ impl ButtonStateMerger {
         self.keyboard.clear();
         self.hid.clear();
         self.rc003_tap.clear();
+        self.rc003_tv_enabled = false;
+        self.rc003_tv_participated = false;
+        self.tv_native_preexisting = false;
+        self.tv_native_drain = false;
         active
             .into_iter()
             .map(|button| ButtonEdge {
@@ -391,6 +471,11 @@ impl ButtonStateMerger {
         self.keyboard
             .iter()
             .chain(&self.hid)
+            .filter(|button| {
+                **button != RemoteButton::Tv
+                    || (!self.tv_native_drain
+                        && (!self.rc003_tv_enabled || self.tv_native_preexisting))
+            })
             .chain(&self.rc003_tap)
             .copied()
             .collect()
@@ -658,6 +743,89 @@ mod tests {
             .is_empty());
         assert!(merger.update_keyboard(keyboard(0x26, 0x0101)).is_empty());
         assert_eq!(merger.update_hid_report(&report(&[])).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rc003_tv_lease_requires_confirmed_source_and_deduplicates_native_echoes() {
+        let mut merger = ButtonStateMerger::default();
+        let tv = |is_pressed| ButtonEdge {
+            button: RemoteButton::Tv,
+            is_pressed,
+        };
+        merger.begin_rc003_tv(true);
+        // A pre-neutral native press can reach Windows, but cannot claim a cleared mapping.
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0100)).is_empty());
+        assert!(merger
+            .update_hid_report(&report(&[0x35]))
+            .unwrap()
+            .is_empty());
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0101)).is_empty());
+        assert!(merger.update_hid_report(&report(&[])).unwrap().is_empty());
+        assert_eq!(merger.update_rc003_tap(8), vec![tv(true)]);
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0100)).is_empty());
+        assert!(merger.update_rc003_tap(8).is_empty());
+        assert_eq!(merger.update_rc003_tap(0), vec![tv(false)]);
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0101)).is_empty());
+        // Even a delayed full native echo inside this lease cannot create another click.
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0100)).is_empty());
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0101)).is_empty());
+        assert_eq!(merger.update_keyboard(keyboard(0x26, 0x0100)).len(), 1);
+    }
+
+    #[test]
+    fn rc003_tv_loss_drains_only_unfinished_holds_across_generations() {
+        let mut merger = ButtonStateMerger::default();
+        let tv = |is_pressed| ButtonEdge {
+            button: RemoteButton::Tv,
+            is_pressed,
+        };
+        merger.begin_rc003_tv(true);
+        assert_eq!(merger.update_rc003_tap(8), vec![tv(true)]);
+        assert_eq!(merger.cancel_rc003_tap(), (true, vec![tv(false)]));
+        // Unrelated HID neutral reports must not release the TV drain.
+        assert!(merger.update_hid_report(&report(&[])).unwrap().is_empty());
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0100)).is_empty());
+        merger.begin_rc003_tv(true);
+        assert_eq!(merger.update_rc003_tap(8), vec![tv(true)]);
+        assert!(merger.update_keyboard(keyboard(0xC0, 0x0101)).is_empty());
+        assert_eq!(merger.update_rc003_tap(0), vec![tv(false)]);
+        // A completed helper cycle does not consume the first native press after stop.
+        assert_eq!(merger.cancel_rc003_tap(), (true, vec![]));
+        assert_eq!(
+            merger.update_keyboard(keyboard(0xC0, 0x0100)),
+            vec![tv(true)]
+        );
+        assert_eq!(
+            merger.update_keyboard(keyboard(0xC0, 0x0101)),
+            vec![tv(false)]
+        );
+    }
+
+    #[test]
+    fn rc003_tv_unrelated_helper_lifecycle_preserves_native_gesture() {
+        for enabled in [false, true] {
+            let mut merger = ButtonStateMerger::default();
+            let tv = |is_pressed| ButtonEdge {
+                button: RemoteButton::Tv,
+                is_pressed,
+            };
+            assert_eq!(
+                merger.update_keyboard(keyboard(0xC0, 0x0100)),
+                vec![tv(true)]
+            );
+            merger.begin_rc003_tv(enabled);
+            merger.update_rc003_tap(1);
+            let (participated, edges) = merger.cancel_rc003_tap();
+            assert!(!participated);
+            assert!(edges.iter().all(|edge| edge.button == RemoteButton::Back));
+            assert_eq!(
+                merger.update_keyboard(keyboard(0xC0, 0x0101)),
+                vec![tv(false)]
+            );
+        }
+        let mut merger = ButtonStateMerger::default();
+        assert!(merger.update_rc003_tap(8).is_empty());
+        assert!(!merger.rc003_tv_participated());
     }
 
     #[test]

@@ -7,7 +7,13 @@ import threading
 import guard
 
 FRIDA_VERSION = "17.18.0"
-CAPTURE_DIAGNOSTICS = frozenset({"capture_attach_started", "capture_attached", "capture_loaded"})
+CAPTURE_DIAGNOSTICS = frozenset({"capture_attach_started", "capture_attached", "capture_loaded",
+                                 "tv_capture_ready", "tv_report_cleared", "tv_preheld_passthrough",
+                                 "tv_buffer_changed"})
+CAPTURE_FAULTS = frozenset({"report_read_failed", "lease_expired", "source_initialization_failed",
+                          "client_cleanup", "tv_report_write_failed", "tv_report_verify_failed",
+                          "tv_report_submit_failed", "tv_report_restore_failed", "tv_source_lost",
+                          "tv_report_overlap", "tv_report_invalid"})
 
 
 class CaptureError(RuntimeError):
@@ -17,12 +23,15 @@ class CaptureError(RuntimeError):
 
 
 class FridaCapture:
-    def __init__(self, device_id):
+    def __init__(self, device_id, tv_enabled):
+        if type(tv_enabled) is not bool:
+            raise CaptureError("invalid_tv_configuration")
         import frida
         if frida.__version__ != FRIDA_VERSION:
             raise CaptureError("frida_version_mismatch")
         self.frida = frida
         self.device_id = device_id
+        self.tv_enabled = tv_enabled
         self.target = self.session = self.script = None
         self.events = queue.Queue(maxsize=256)
         self.failed = threading.Event()
@@ -30,6 +39,8 @@ class FridaCapture:
         self.lock = threading.Lock()
         self.cancellable = None
         self.closed = False
+        self.cleanup_pending = False
+        self.script_load_attempted = False
 
     def _call(self, call, seconds=5, cleanup=False, failure_code=None):
         cancellation = self.frida.Cancellable()
@@ -56,11 +67,20 @@ class FridaCapture:
                     self.cancellable = None
 
     def abort(self):
-        self.aborted.set()
         with self.lock:
-            current = None if self.closed else self.cancellable
+            first_abort = not self.aborted.is_set()
+            self.aborted.set()
+            current = None if self.closed or self.cleanup_pending else self.cancellable
+            script = self.script if first_abort and not self.closed else None
         if current is not None:
             current.cancel()
+        if script is not None:
+            try:
+                # Do not block the lease receiver on a synchronous stop RPC.
+                # close() still awaits stop before unload and detach.
+                script.post({"type": "stop_capture"})
+            except Exception:
+                self._put(("fault", "capture_stop_signal_failed"))
 
     def _put(self, value):
         try:
@@ -74,14 +94,15 @@ class FridaCapture:
             return
         payload = message["payload"]
         kind = payload.get("type")
-        if kind == "mask" and type(payload.get("mask")) is int and 0 <= payload["mask"] <= 7:
+        if kind == "mask" and type(payload.get("mask")) is int and 0 <= payload["mask"] <= (15 if self.tv_enabled else 7):
             self._put(("mask", payload["mask"]))
         elif kind == "loaded":
             self._put(("diagnostic", "capture_loaded"))
+        elif kind == "diagnostic" and payload.get("reason") in CAPTURE_DIAGNOSTICS:
+            self._put(("diagnostic", payload["reason"]))
         elif kind in ("fault", "stopped"):
             code = payload.get("reason")
-            allowed = {"report_read_failed", "lease_expired", "source_initialization_failed", "client_cleanup"}
-            self._put(("fault", code if code in allowed else "script_stopped"))
+            self._put(("fault", code if code in CAPTURE_FAULTS else "script_stopped"))
         else:
             self._put(("fault", "invalid_script_message"))
 
@@ -97,10 +118,14 @@ class FridaCapture:
         root = Path(__file__).resolve().parent
         source = (root / "source_binding.js").read_text(encoding="utf-8") + "\n" + (root / "observer.js").read_text(encoding="utf-8")
         source = source.replace("__SELECTED_SOURCE_KEY__", json.dumps(self.target.binding_key()))
+        source = source.replace("__TV_CAPTURE_ENABLED__", json.dumps(self.tv_enabled))
         self.script = self._call(lambda: self.session.create_script(source),
                                  failure_code="capture_script_create_failed")
         self.script.on("message", self._on_message)
-        self._call(self.script.load, failure_code="capture_script_load_failed")
+        def load_script():
+            self.script_load_attempted = True
+            return self.script.load()
+        self._call(load_script, failure_code="capture_script_load_failed")
 
     def renew(self):
         if self.failed.is_set():
@@ -120,19 +145,52 @@ class FridaCapture:
             except queue.Empty:
                 return
 
+    def _stop_failure_cleanup_proof(self):
+        try:
+            if self.target is not None and guard.target_exited(self.target):
+                return "capture_host_exited"
+        except Exception:
+            pass
+        try:
+            exports = self._call(self.script.list_exports_sync, seconds=2, cleanup=True)
+            if (isinstance(exports, list) and all(isinstance(name, str) for name in exports)
+                    and "stop" not in exports):
+                # The fixed observer installs stop before any hook. A failed
+                # source_binding evaluation therefore has no borrowed TV report.
+                return "capture_observer_not_installed"
+        except Exception:
+            pass
+        return None
+
     def close(self):
         with self.lock:
             if self.closed:
                 return []
-            self.closed = True
+            self.aborted.set()
+            self.cleanup_pending = True
         errors = []
+        if self.script is not None and self.script_load_attempted:
+            try:
+                result = self._call(self.script.exports_sync.stop, seconds=3, cleanup=True)
+                if (not isinstance(result, dict) or set(result) != {"quiescent", "cleanup_error"} or
+                        result["quiescent"] is not True or
+                        result["cleanup_error"] not in (None, "tv_report_restore_failed",
+                                                         "capture_cleanup_failed")):
+                    raise CaptureError("script_stop_failed")
+                if result["cleanup_error"] is not None:
+                    errors.append(result["cleanup_error"])
+            except Exception:
+                # The injected observer may still own a temporarily modified
+                # report. Retain it and retry stop; never unload its onLeave.
+                proof = self._stop_failure_cleanup_proof()
+                if proof is None:
+                    return ["script_stop_failed"]
+                errors.append(proof)
         if self.script is not None:
-            for code, call in (("script_stop_failed", self.script.exports_sync.stop),
-                               ("script_unload_failed", self.script.unload)):
-                try:
-                    self._call(call, seconds=3, cleanup=True)
-                except Exception:
-                    errors.append(code)
+            try:
+                self._call(self.script.unload, seconds=3, cleanup=True)
+            except Exception:
+                errors.append("script_unload_failed")
             self.script = None
         if self.session is not None:
             try:
@@ -147,4 +205,7 @@ class FridaCapture:
                 errors.append("target_close_failed")
             self.target = None
         self.device_id = ""
+        with self.lock:
+            self.closed = True
+            self.cleanup_pending = False
         return errors

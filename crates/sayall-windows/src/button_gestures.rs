@@ -38,6 +38,20 @@ fn is_plain_undo(action: &ButtonAction) -> bool {
         )))
 }
 
+fn is_chat_navigation(action: &ButtonAction) -> bool {
+    matches!(action, ButtonAction::Shortcut { chord }
+    if chord.keys.len() == 3
+        && chord.keys.iter().any(|key| matches!(
+            key, KeyCode::Control | KeyCode::LeftControl | KeyCode::RightControl
+        ))
+        && chord.keys.iter().any(|key| matches!(
+            key, KeyCode::Shift | KeyCode::LeftShift | KeyCode::RightShift
+        ))
+        && chord.keys.iter().any(|key| matches!(
+            key, KeyCode::BracketLeft | KeyCode::BracketRight
+        )))
+}
+
 /// 双击判定窗口（第一击释放至第二击按下的最大间隔），Mac 同款。
 pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
 /// 长按阈值（按住多久触发长按），Mac 同款。
@@ -88,6 +102,10 @@ impl GestureConfig {
             && !double_enabled
             && !long_enabled
             && !defer_single_until_release
+            // Conversation switching is a discrete action. Keep legacy/custom
+            // scrolling and system-volume repetition unchanged.
+            && !(matches!(button, RemoteButton::VolumeUp | RemoteButton::VolumeDown)
+                && is_chat_navigation(&actions.single))
         {
             button.repeat_interval()
         } else {
@@ -279,6 +297,16 @@ impl GestureRecognizer {
             };
             *state = ButtonGestureState::default();
             return vec![ButtonTrigger::Single; count];
+        }
+        // A queued UP can be delivered before an overdue timer wakeup. Use the
+        // original press deadline and the supplied release timestamp; do not
+        // turn that completed hold into its short-click action (for example Esc).
+        if config.long_enabled
+            && !state.long_fired
+            && state.long_deadline.is_some_and(|deadline| deadline <= now)
+        {
+            *state = ButtonGestureState::default();
+            return vec![ButtonTrigger::Long];
         }
         state.pressed = false;
         state.long_deadline = None;
@@ -1135,6 +1163,214 @@ mod tests {
     }
 
     #[test]
+    fn default_chat_switching_fires_once_but_direction_and_deletion_still_repeat() {
+        let now = Instant::now();
+        let mut recognizer = GestureRecognizer::new();
+        recognizer.configure(&ButtonMappings::default());
+        for button in [
+            RemoteButton::VolumeUp,
+            RemoteButton::VolumeDown,
+            RemoteButton::Ok,
+            RemoteButton::Up,
+            RemoteButton::Back,
+        ] {
+            assert_eq!(recognizer.press(button, now), vec![ButtonTrigger::Single]);
+        }
+        let mut fired = recognizer.advance(now + Duration::from_secs(1));
+        fired.sort();
+        let mut expected = vec![
+            (RemoteButton::Up, ButtonTrigger::Single),
+            (RemoteButton::Back, ButtonTrigger::Single),
+        ];
+        expected.sort();
+        assert_eq!(fired, expected);
+        recognizer.release_all();
+        assert!(recognizer.advance(now + Duration::from_secs(2)).is_empty());
+    }
+
+    #[test]
+    fn default_power_hold_queues_once_without_escape_and_tap_escapes_on_release() {
+        let now = Instant::now();
+        let mut recognizer = GestureRecognizer::new();
+        recognizer.configure(&ButtonMappings::default());
+        assert!(recognizer.press(RemoteButton::Power, now).is_empty());
+        assert_eq!(
+            recognizer.release(RemoteButton::Power, now + Duration::from_millis(80)),
+            vec![ButtonTrigger::Single]
+        );
+        let held = now + Duration::from_secs(1);
+        assert!(recognizer.press(RemoteButton::Power, held).is_empty());
+        assert_eq!(
+            recognizer.advance(held + LONG_PRESS_THRESHOLD),
+            vec![(RemoteButton::Power, ButtonTrigger::Long)]
+        );
+        assert!(recognizer.advance(held + Duration::from_secs(2)).is_empty());
+        assert!(recognizer
+            .release(RemoteButton::Power, held + Duration::from_secs(3))
+            .is_empty());
+        let next = held + Duration::from_secs(4);
+        recognizer.press(RemoteButton::Power, next);
+        recognizer.release_all();
+        recognizer.configure(&ButtonMappings::default());
+        assert!(recognizer
+            .release(RemoteButton::Power, next + Duration::from_secs(1))
+            .is_empty());
+        assert!(recognizer.advance(next + Duration::from_secs(2)).is_empty());
+    }
+
+    #[test]
+    fn delayed_power_release_uses_the_recorded_deadline_without_replaying_escape() {
+        let now = Instant::now();
+        for (held, expected) in [
+            (
+                LONG_PRESS_THRESHOLD - Duration::from_nanos(1),
+                ButtonTrigger::Single,
+            ),
+            (LONG_PRESS_THRESHOLD, ButtonTrigger::Long),
+            (
+                LONG_PRESS_THRESHOLD + Duration::from_secs(1),
+                ButtonTrigger::Long,
+            ),
+        ] {
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&ButtonMappings::default());
+            assert!(recognizer.press(RemoteButton::Power, now).is_empty());
+            // The worker has not advanced the timer before receiving the UP.
+            assert_eq!(
+                recognizer.release(RemoteButton::Power, now + held),
+                vec![expected]
+            );
+            assert!(!recognizer.is_pressed(RemoteButton::Power));
+            assert!(recognizer.next_deadline().is_none());
+            assert!(recognizer
+                .release(RemoteButton::Power, now + held)
+                .is_empty());
+            assert!(recognizer.advance(now + Duration::from_secs(3)).is_empty());
+            let next = now + Duration::from_secs(4);
+            assert!(recognizer.press(RemoteButton::Power, next).is_empty());
+            assert_eq!(
+                recognizer.release(RemoteButton::Power, next + Duration::from_millis(20)),
+                vec![ButtonTrigger::Single]
+            );
+        }
+    }
+
+    #[test]
+    fn delayed_generic_long_release_wins_over_first_or_second_click_only_after_deadline() {
+        let now = Instant::now();
+        for button in [RemoteButton::Menu, RemoteButton::Tv, RemoteButton::Home] {
+            for second in [false, true] {
+                for held in [
+                    LONG_PRESS_THRESHOLD - Duration::from_nanos(1),
+                    LONG_PRESS_THRESHOLD,
+                ] {
+                    let mut recognizer = GestureRecognizer::new();
+                    recognizer.configure(&mappings_with(
+                        button,
+                        Some(KeyCode::Enter),
+                        Some(KeyCode::Space),
+                        Some(KeyCode::Tab),
+                    ));
+                    assert!(recognizer.press(button, now).is_empty());
+                    let press = if second {
+                        assert!(recognizer
+                            .release(button, now + Duration::from_millis(10))
+                            .is_empty());
+                        let next = now + Duration::from_millis(100);
+                        assert!(recognizer.press(button, next).is_empty());
+                        next
+                    } else {
+                        now
+                    };
+                    let expected = if held >= LONG_PRESS_THRESHOLD {
+                        vec![ButtonTrigger::Long]
+                    } else if second {
+                        vec![ButtonTrigger::Double]
+                    } else {
+                        vec![]
+                    };
+                    assert_eq!(recognizer.release(button, press + held), expected);
+                    let later = if held < LONG_PRESS_THRESHOLD && !second {
+                        vec![(button, ButtonTrigger::Single)]
+                    } else {
+                        vec![]
+                    };
+                    assert_eq!(
+                        recognizer.advance(press + held + DOUBLE_CLICK_WINDOW),
+                        later
+                    );
+                    assert!(recognizer.next_deadline().is_none());
+                    assert!(recognizer.advance(now + Duration::from_secs(3)).is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn delayed_long_release_does_not_repeat_a_fired_or_cancelled_hold() {
+        let now = Instant::now();
+        for button in [RemoteButton::Power, RemoteButton::Menu, RemoteButton::Tv] {
+            for cancelled in [false, true] {
+                let mut recognizer = GestureRecognizer::new();
+                recognizer.configure(&ButtonMappings::default());
+                assert!(recognizer.press(button, now).is_empty());
+                if cancelled {
+                    recognizer.release_all();
+                } else {
+                    assert_eq!(
+                        recognizer.advance(now + LONG_PRESS_THRESHOLD),
+                        vec![(button, ButtonTrigger::Long)]
+                    );
+                }
+                assert!(recognizer
+                    .release(button, now + Duration::from_secs(2))
+                    .is_empty());
+                assert!(recognizer
+                    .release(button, now + Duration::from_secs(2))
+                    .is_empty());
+                assert!(recognizer.advance(now + Duration::from_secs(3)).is_empty());
+                assert!(recognizer.next_deadline().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn custom_volume_scroll_retains_repeat_and_physical_chat_modifiers_do_not() {
+        let mut mappings = ButtonMappings::default();
+        mappings
+            .actions
+            .get_mut(&RemoteButton::VolumeUp)
+            .unwrap()
+            .single = ButtonAction::Scroll {
+            direction: crate::send_input::ScrollDirection::Up,
+            steps: 3,
+        };
+        mappings
+            .actions
+            .get_mut(&RemoteButton::VolumeDown)
+            .unwrap()
+            .single = ButtonAction::Shortcut {
+            chord: KeyChord {
+                keys: vec![
+                    KeyCode::RightControl,
+                    KeyCode::LeftShift,
+                    KeyCode::BracketRight,
+                ],
+            },
+        };
+        let now = Instant::now();
+        let mut recognizer = GestureRecognizer::new();
+        recognizer.configure(&mappings);
+        for button in [RemoteButton::VolumeUp, RemoteButton::VolumeDown] {
+            assert_eq!(recognizer.press(button, now), vec![ButtonTrigger::Single]);
+        }
+        assert_eq!(
+            recognizer.advance(now + Duration::from_secs(1)),
+            vec![(RemoteButton::VolumeUp, ButtonTrigger::Single)]
+        );
+    }
+
+    #[test]
     fn raw_single_path_fires_on_press_and_repeats_while_held() {
         let t0 = Instant::now();
         let mut recognizer = GestureRecognizer::new();
@@ -1408,7 +1644,9 @@ mod tests {
     fn unconfigured_and_disabled_buttons_are_ignored() {
         let t0 = Instant::now();
         let mut recognizer = GestureRecognizer::new();
-        recognizer.configure(&ButtonMappings::default());
+        let mut empty = ButtonMappings::default();
+        empty.actions.clear();
+        recognizer.configure(&empty);
         assert_eq!(recognizer.press(RemoteButton::Ok, t0), vec![]);
         assert_eq!(recognizer.release(RemoteButton::Ok, t0), vec![]);
         assert_eq!(recognizer.advance(t0 + Duration::from_secs(5)), vec![]);

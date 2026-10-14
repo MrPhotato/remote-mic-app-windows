@@ -135,6 +135,10 @@ describe("diagnostic report presentation", () => {
       appVersion: "0.1.0",
       platform: "windows",
       verificationStatus: "待真机验证",
+      diagnosticLog: {
+        configured: true, ready: false, droppedRecords: 2, openFailures: 1,
+        writeFailures: 0, flushFailures: 0, recoveries: 0, lastErrorCode: "open_failed",
+      },
       capabilities: {
         windowsApiAvailable: true,
         bleScanAvailable: true,
@@ -145,6 +149,7 @@ describe("diagnostic report presentation", () => {
       },
       connection: {
         phase: "disconnected",
+        remoteModel: "unknown",
         capabilitiesConfirmed: false,
         sampleRate: null,
         frameSize: null,
@@ -191,6 +196,9 @@ describe("diagnostic report presentation", () => {
     const formatted = JSON.parse(formatDiagnosticReport(report, "2026-09-01T00:00:00.000Z"));
     expect(formatted.generatedAt).toBe("2026-09-01T00:00:00.000Z");
     expect(formatted.connection.generation).toBe(2);
+    expect(formatted.connection.remoteModel).toBe("unknown");
+    expect(formatted.diagnosticLog.ready).toBe(false);
+    expect(formatted.diagnosticLog.openFailures).toBe(1);
     expect(formatted).not.toHaveProperty("remoteName");
     expect(formatted.audio).not.toHaveProperty("selectedEndpointName");
   });

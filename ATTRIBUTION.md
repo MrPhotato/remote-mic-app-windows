@@ -2,6 +2,40 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 2026-10-14 按键目录、历史与默认配置
+
+- 0.2.15 修正上述五页签方案的布局回归：沿用现有可滚动列表，统一可视高度并为分类说明保留一行，使内容数量与搜索结果不改变下方工具入口位置；仅调整布局，不新增依赖或复制外部实现。
+- 0.2.14 根据用户批准将鼠标和应用工具从分类页签中独立为固定折叠入口，沿用现有快捷键说明的原生 `details/summary` 做法，并对照 [W3C Disclosure](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/) 的展开状态及键盘交互要求；未复制外部代码。当前动作参数位于折叠区外，分类和搜索只影响功能候选，不隐藏正在编辑的参数。
+- UI 沿用本仓库已归属的原遥控器图、连线与单击/双击/长按卡片，不重新绘制或复制第三方布局。编辑区依据用户确认的五页签方案及当前应用菜单截图调整；单键保留键名，组合键显示功能名。
+- 对照 [OpenAI 官方命令表](https://learn.chatgpt.com/docs/reference/commands) 的 Windows 列：聊天切换使用 Ctrl+Shift+[ / ]、侧栏 Ctrl+Shift+S、聊天和标签区 Ctrl+Alt+B、重做 Ctrl+Y。Ctrl+Enter 的“插队/排队”名称及用途来自用户明确要求，不标为独立实测的官方行为。全部快捷键作用于当前前台应用。
+- 常用历史与置顶仅参考 [VS Code Run Recent Command](https://code.visualstudio.com/docs/terminal/shell-integration#_run-recent-command) 的可搜索历史及置顶交互；未复制实现，也不读取 VS Code 或其他应用的历史。无线麦只记录用户成功分配的功能、次数与选择时间，以及用户主动录制命名的快捷键；不统计实际遥控按压，不收集输入文字或声音。最近与次数的排序规则由本项目实现。
+- 普通手势沿用既有 Mac 参考的 300ms 双击与 550ms 长按阈值，不进行未实测的时序优化。源码确认 OK 闲置首按的原生 Enter 仍可能泄漏，而单击对冲不能补偿长按 Ctrl+Enter；故默认插队/排队放在直接归因的电源键长按，OK 维持 Enter。音量映射为聊天切换时不连发，物理冷首用仍须单独验收。
+- 计时回调迟到的释放路径按原按下截止时间补发一次长按；测试先复现 Esc/空结果，再验证原阈值内外、已触发及取消不重复。没有调整延迟常量，实体冷首用仍与软件测试分开记录。
+- 后端首次无配置文件与前端手动应用共用一个默认配置源；不通过升级覆盖已有用户文件，不改变语音、设备、管理员增强或系统默认音频设置。验收边界见 [WindowsMappingWorkflow](Testing/WindowsMappingWorkflow.md)。
+
+## 2026-10-08 RC003 TV 原生字符抑制
+
+- 用户明确授权将可选 Helper 的内部接口例外仅扩展到所选 RC003 的 TV，先做本地验证；见 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。不安装驱动，不改变系统蓝牙或普通键盘输入。
+- 参考 `GetSayAll/remote-mic-app-windows` 提交 `15a065298a6ab9c84a675bb24c0e419418704d71` 中 `hardware/RC003/helper/agent/rc003_agent.js` 的 Report 1 TV usage `0x0035` 入口清除及返回恢复，相关历史提交 `6a4aaf8`、`3e2ac06`。其 GPLv3 来源沿用本仓库许可。仅改编现有 `helpers/rc003-input/observer.js` 的 TV 路径，不移植整套全按键 Helper。
+- 不沿用上游允许共享宿主而只按报告内容归属的做法：TV 与普通键盘反引号使用相同 usage，必须保留本地 `rc003Source.matches(args)` 的逐调用设备来源校验。上游先报告边沿再尝试清除、租约丢失后恢复全局门控的行为也不采用；TV 状态须有本帧清除读回与调用结果依据，失败时取消手势，普通 OEM3 始终放行。
+- 上游全按键自动化和协议 ACK 不证明本机物理 TV 已不输出字符；真实报告来源、冷态首按、按住停止和普通键盘负对照需分别实测。此前“同一输入框以前正常”的用户证据保留，突发时间点的触发原因仍未知，不能把长期存在的泄漏路径当作已证明的突发原因。
+
+### 2026-10-14 增强自动初始化可行性复核
+
+- 本地 `controller.py` 与 `observer.js` 的首次真实松键门禁仍须保留。方向键只是产生中性报告的便捷方式，不是协议要求；当前 `source_binding.js` 仅提供设备来源校验，没有当前按键状态查询。来源缓存、上代松键或等待超时都不能证明新一代实际松键。
+- 对照 Microsoft [HidD_GetInputReport](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/hidsdi/nf-hidsdi-hidd_getinputreport)：它可用于读取当前报告，长度须来自实际集合的 `HIDP_CAPS`，不能照搬内部 9 字节帧。[获取 HID 报告说明](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/obtaining-hid-reports) 明确部分设备不支持，调用后可能无响应；描述符长度或非空句柄不能作为支持证明。本轮未向当前正常连接试发该请求。
+- 现有 GameInput 实验没有返回三键及原始报告，不能替代松键证据；旧 `ReadFile` 拒绝访问也不能据此判定 `GetInputReport` 必定失败。候选方案与待验边界见 [增强验证记录](Testing/WindowsRc003Input.md#2026-10-14-首次增强初始化复核)。未复制实现、未扩展 Helper 私有接口范围、未改变设备或蓝牙状态。
+
+### 2026-10-14 增强初始化提示弹窗
+
+- 0.2.16 按用户要求把初始化说明增强为应用内小弹窗，沿用本仓库 `RegisteredAppsDialog.vue` 的原生 `dialog.showModal()` 做法，并对照 [W3C Modal Dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) 与 [MDN showModal](https://developer.mozilla.org/en-US/docs/Web/API/HTMLDialogElement/showModal) 的标题、描述、取消和原生背景禁用行为；未复制外部代码。
+- 每个增强代次只自动提示一次；稍后操作或 Escape 只收起提示，同代切页和读取恢复不重复弹出，原位置保留说明和手动查看入口。ready、停止、错误、断连及离页时关闭提示，不自行确认松键。仅使用 WebView 内部弹窗，不调用系统前台、窗口置顶、全局按键或蓝牙操作。
+
+## 2026-10-07 RC003 空闲通信修复
+
+- 参考 Microsoft [accept](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept) 与 [recv](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-recv) 对非阻塞继承及 `WSAEWOULDBLOCK` 的规定；本机隔离 Winsock 实验确认空闲忙等，恢复阻塞后保留既有超时即可消除。
+- 对照 `GetSayAll/remote-mic-app-windows` 提交 `15a065298a6ab9c84a675bb24c0e419418704d71` 的 `rc003_bridge.rs`：新架构同样在 accept 后恢复阻塞。仅参考公开 API 用法，不移植桥接架构或代码。当前修复适配个人版原有 TCP Helper，证据与验收边界见 `Bugs/2026-10-07-rc003-ipc-idle-spin.md`。
+
 ## RC003 可选三键增强接入（2026-09-20）
 
 - 在下节独立实验成功后，用户明确要求完善软件，授权可选三键 Helper 集成；以 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md) 为当前范围。主程序普通权限、基础语音不依赖注入，只读取 RC003 返回/音量±。
@@ -361,6 +395,27 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 
 先审查本仓库 Windows 音频实现 `audio.rs` 的 `Direction::Render`、已保存端点的恢复及单一虚拟声卡自动选择，再核对 [VB-Audio 官方说明](https://vb-audio.com/Cable/)：CABLE Input 是播放端，CABLE Output 是录音端。主界面因此呈现“遥控器麦克风”和目标应用应选的 CABLE Output，将现有内部播放端选择折叠进高级设置。沿用既有设备枚举和 WASAPI 流，不新增电脑麦克风采集，不设置系统默认扬声器或目标应用麦克风。未复制外部实现。保存选择、自动选择及错误呈现的验证见 [本次记录](Testing/WindowsAudioAndKeyboardIsolation.md)。
 
+### 音频线路偶发失效调研（2026-10-14）
+
+本轮只定位并形成方案，没有复制实现或改变生产代码。现场公开 PnP / Core Audio 查询
+确认旧端点 `NOTPRESENT`、父设备 Code 10，同时另一个 VB-CABLE 实例正常。
+参考 [Code 10](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/cm-prob-failed-start)
+与 [NTSTATUS](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55)
+确认 `0x80000011` 为 `STATUS_DEVICE_BUSY`，不把该码推断成目标应用独占录音。
+
+恢复方案依据 Microsoft [WASAPI 失效恢复](https://learn.microsoft.com/en-us/windows/win32/coreaudio/recovering-from-an-invalid-device-error)
+及 [IMMNotificationClient](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immnotificationclient)：
+释放失效流，在 worker 中重建用户选择的设备；通知回调只做非阻塞投递。
+[GetState](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getstate)
+用于区分不存在、禁用和拔出，不能仅查 active 列表。
+VB 官方 [2024 参考手册](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf) 第 6–7 页说明
+同一 CABLE 有 speaker 和 16ch 两种播放入口，不能同时使用；候选数量不能直接等同线路数量。
+
+[StableId 文档](https://learn.microsoft.com/en-us/windows/win32/coreaudio/pkey-audioendpoint-stableid)
+提供 Windows 11 24H2+ 的长期身份路径，但本机探针未能解析公开属性键，未验证实际可用，
+不将其列为本次必需补救。适配器拓扑/容器只能提供关联证据，不保证任意 capture/render 配对。
+完整现场及方案见 [故障记录](Bugs/2026-10-14-audio-device-direction-and-stale-route.md)。
+
 ## Home/TV 与普通键盘隔离（2026-09-28）
 
 复核旧版全局常驻抑制和 4 秒武装逻辑，并参考仓库内现有 F13/F14/F15 别名的“设备确认后识别、全局钩子不识别”分层。核对 [Microsoft KBDLLHOOKSTRUCT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct) 公共字段，低级键盘事件没有来源设备标识；不能因遥控器在线或近期按键就把普通键盘 OEM_3/Home 归为遥控器。最小修复复用既有 Raw Input 设备路径过滤及合并器，不复制外部算法、不改变时序、不新增驱动或注入。代价是遥控器自身 Home/反引号原生动作及长按重复可能旁路进入前台；实际遥控器复验独立标记，详见 [Bug](Bugs/2026-09-28-physical-backquote-captured.md) 和 [验证](Testing/WindowsAudioAndKeyboardIsolation.md)。
@@ -372,3 +427,38 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 ## Actions 发布来源核验补充（2026-09-21）
 
 本次直接核对 GitHub REST `actions/runs/35529960366`、`pulls/1`、`git/commits/8733bbccf93136a287322c91dcf7cd0ed4fdc51d` 及 Actions checkout 日志：PR 合并后 run 的 `pull_requests` 变为空数组，而真实检出提交仍可核验。修复复用 `actions/checkout@v4` 现有日志和 Git 公共对象，不读取第三方私有配置、不复制外部实现，也不推断空关联等于成功。明确要求测试 merge 的父提交包含 PR head，且测试树等于发布树；旧绿灯不能覆盖最新失败。见 [发布关联记录](Bugs/2026-09-21-release-pr-association.md)。
+
+## 诊断输出失败恢复（2026-10-07）
+
+先复核本仓库生产日志初始化、结构化元数据和断连重试的既有职责，再以 Rust 标准库文件输出、互斥状态和单调时钟实现局部恢复，不引入第三方日志框架或复制外部实现。5 秒只约束故障后的重开频率，不修改 BLE、按键或语音时序；Windows 真实文件障碍移开后约 5101 ms 恢复写入，写入/刷新失败另由确定性测试覆盖。恢复只报告计数，不重放用户内容；安装版边界见 [Bug 记录](Bugs/2026-10-07-diagnostic-log-recovery.md)。
+
+## 型号失败补识别（2026-10-07）
+
+沿用本仓库 `battery.rs` 的后台读取及真实连接编号隔离、`reconnect.rs` 既有 2 秒/4 秒退避和 `ble.rs` 的显式资源释放边界。实际核对锁定依赖 `windows-future 0.3.2` 的 `when.rs`、`bindings.rs` 中 `IAsyncOperation.when/GetResults/Cancel/Close`；本机包来源为 [microsoft/windows-rs，提交 32c3144490c016fe496a0aed769bce60987a2e9d](https://github.com/microsoft/windows-rs/tree/32c3144490c016fe496a0aed769bce60987a2e9d/crates/libs/future/src)，MIT OR Apache-2.0。没有复制外部实现或增加依赖。
+
+型号查询移出语音工作线程，保留既有 30 秒请求预算；正常语音抢占不扣失败次数，迟到回调释放完成前不叠加下一次型号查询。若系统永不完成回调则保留单飞槽，不能宣称必定恢复。8 项型号测试及 58 项前端定向测试 passed；真实 GATT 故障恢复、语音抢占及时性与 RC001/RC003 分别验收见 [Bug 记录](Bugs/2026-10-07-model-discovery-recovery.md)。
+
+## TV 原生字符被动取证（2026-10-07）
+
+沿用上文 Microsoft `KBDLLHOOKSTRUCT` 无设备身份的边界，使用独立、始终透传的低级钩子和 Raw Input 观察器采样普通反引号、Shift＋反引号及 RC003 TV。三个分组均为 VK C0、扫描码 29、相同 DOWN/UP 标志，只有 Raw Input 来源分类能区分；两个通道各 18 条边沿，无丢弃或回调错误。证据不支持全局扫描码指纹，也不构成消字符方案；未复制外部实现，未改 TV 路径。见 [完整记录和脱敏附件](Bugs/2026-10-07-tv-native-character-source.md)。
+
+## 撤回整机蓝牙恢复（2026-10-08）
+
+用户明确禁止遥控器故障触发整机蓝牙操作。核查本仓库旧恢复调用链及既有 `ReconnectBackoff` 后，移除 Radio Off/On、PnP 重启的生产入口和模块链接，也移除启动 Radio 权限预热；保留所选遥控器的原有退避和清理。不新增第三方实现、不改变按键/语音时序、不以新的开关延续旧默认行为。原 `radio_probe` 样例改为只读，旧实验脚本仅作为历史材料保留，不运行。此前自动无线电恢复的来源记录不再构成当前产品行为依据。详见 [边界修复记录](Bugs/2026-10-08-system-bluetooth-recovery-boundary.md)。
+
+## 麦克风列表与线路恢复实现（2026-10-14）
+
+延续本仓库 WASAPI 工作线程与微软公开恢复机制，不复制外部代码。设备关联使用
+[Device Properties](https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-properties)、
+[IDeviceTopology](https://learn.microsoft.com/en-us/windows/win32/api/devicetopology/nn-devicetopology-idevicetopology)、
+[IConnector::GetDeviceIdConnectedTo](https://learn.microsoft.com/en-us/windows/win32/api/devicetopology/nf-devicetopology-iconnector-getdeviceidconnectedto)、
+[DEVPKEY_Device_Parent](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/devpkey-device-parent)
+及公开 Configuration Manager 属性。端点属性库在当前 Windows 真机未提供可用的
+PKEY_Device_InstanceId，改用公开拓扑查询适配器属性；这是只读接口查询，不启用音频流。
+
+跨实例自动恢复仅针对已核验 VB-CABLE 服务和提供者、旧 NOTPRESENT 端点的 Code 10
+故障，以及唯一正常 Capture/Render 关系。Code 22 用户禁用不构成恢复授权；名称只帮助
+保留同一虚拟设备的接口偏好，不能证明设备身份。维护退避 1/5/15 秒不在语音键路径中；
+实际同线程通知/重试与旧会话隔离由测试覆盖，不能据此宣称设备热插拔和睡眠真机通过。
+本机只读检查已验证正常虚拟录音端和双播放接口、旧 Code 10 端点的替代关系；安装版
+与遥控器端到端边界见 [验证记录](Testing/WindowsAudioRecovery.md)。

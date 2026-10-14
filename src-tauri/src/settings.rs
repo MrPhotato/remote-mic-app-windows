@@ -1,14 +1,17 @@
 use sayall_core::{AppSettings, ThemePreference, UsageStatistics};
 use sayall_windows::send_input::{ButtonMappings, KeyChord};
+use sayall_windows::{AudioPhase, AudioSnapshot};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Debug, Clone)]
 pub struct SettingsStore {
     path: PathBuf,
     access: Arc<Mutex<()>>,
+    audio_sync_failed: Arc<AtomicBool>,
 }
 
 const BUTTON_MAPPING_EXPORT_VERSION: u32 = 1;
@@ -26,6 +29,7 @@ impl SettingsStore {
         Self {
             path,
             access: Arc::new(Mutex::new(())),
+            audio_sync_failed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -43,15 +47,69 @@ impl SettingsStore {
         parse_settings(&contents)
     }
 
-    pub fn save_audio_endpoint(
+    /// Read runtime state under the settings lock so a delayed IPC response cannot
+    /// overwrite a newer successful selection. Failed recovery preserves intent.
+    pub fn sync_audio_endpoint(
         &self,
-        endpoint_id: String,
-        endpoint_name: String,
-    ) -> Result<(), String> {
-        self.update("保存音频端点设置", move |settings| {
-            settings.audio_endpoint_id = Some(endpoint_id);
-            settings.audio_endpoint_name = Some(endpoint_name);
+        snapshot: impl FnOnce() -> AudioSnapshot,
+    ) -> Result<AudioSnapshot, String> {
+        let result = self.sync_audio_endpoint_inner(snapshot);
+        let failed = result.is_err();
+        let previous = self.audio_sync_failed.swap(failed, Ordering::Relaxed);
+        if failed && !previous {
+            sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=failed error_domain=settings error_code=read_or_write_failed reason=runtime_route_preserved retryable=true".to_owned());
+        } else if !failed && previous {
+            sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=passed reason=settings_available_again".to_owned());
+        }
+        result
+    }
+
+    pub fn audio_snapshot_with_persistence(
+        &self,
+        read_snapshot: impl FnOnce() -> AudioSnapshot,
+    ) -> AudioSnapshot {
+        let mut observed = None;
+        self.sync_audio_endpoint(|| {
+            let snapshot = read_snapshot();
+            observed = Some(snapshot.clone());
+            snapshot
         })
+        .unwrap_or_else(|_| observed.expect("runtime snapshot is read before settings I/O"))
+    }
+
+    fn sync_audio_endpoint_inner(
+        &self,
+        snapshot: impl FnOnce() -> AudioSnapshot,
+    ) -> Result<AudioSnapshot, String> {
+        let _guard = lock(&self.access);
+        let snapshot = snapshot();
+        if !matches!(
+            snapshot.phase,
+            AudioPhase::Ready | AudioPhase::Streaming | AudioPhase::Draining
+        ) {
+            return Ok(snapshot);
+        }
+        let (Some(id), Some(name)) = (
+            &snapshot.selected_endpoint_id,
+            &snapshot.selected_endpoint_name,
+        ) else {
+            return Ok(snapshot);
+        };
+        let mut settings = self.load_unlocked()?;
+        if settings.audio_endpoint_id.as_ref() == Some(id)
+            && settings.audio_endpoint_name.as_ref() == Some(name)
+        {
+            return Ok(snapshot);
+        }
+        settings.audio_endpoint_id = Some(id.clone());
+        settings.audio_endpoint_name = Some(name.clone());
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("创建应用设置目录失败：{error}"))?;
+        }
+        fs::write(&self.path, serialize_settings(&settings)?)
+            .map_err(|error| format!("保存麦克风设置失败：{error}"))?;
+        sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=passed reason=ready_route_changed".to_owned());
+        Ok(snapshot)
     }
 
     pub fn save_selected_remote_id(&self, device_id: String) -> Result<(), String> {
@@ -110,14 +168,21 @@ impl SettingsStore {
         let contents = match fs::read_to_string(&path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(ButtonMappings::default())
+                sayall_windows::gatt_note(
+                    "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=passed source=first_install_defaults".to_owned(),
+                );
+                return Ok(ButtonMappings::default());
             }
             Err(error) => return Err(format!("读取按键映射失败：{error}")),
         };
-        serde_json::from_str::<ButtonMappings>(&contents)
+        let mappings = serde_json::from_str::<ButtonMappings>(&contents)
             .map_err(|error| format!("解析按键映射失败：{error}"))?
             .normalized()
-            .map_err(|error| format!("按键映射无效：{error}"))
+            .map_err(|error| format!("按键映射无效：{error}"))?;
+        sayall_windows::gatt_note(
+            "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=passed source=existing_file".to_owned(),
+        );
+        Ok(mappings)
     }
 
     pub fn save_button_mappings(&self, mappings: ButtonMappings) -> Result<ButtonMappings, String> {
@@ -295,6 +360,159 @@ mod tests {
             .join(format!("{}-{unique}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         SettingsStore::new(directory.join("settings.json"))
+    }
+
+    #[test]
+    fn first_install_uses_enabled_defaults_without_applying_the_preset() {
+        use sayall_windows::raw_input::RemoteButton;
+        use sayall_windows::send_input::{ButtonAction, KeyCode};
+
+        let store = mapping_transaction_store();
+        assert!(!store.button_mappings_path().exists());
+        let mappings = store.load_button_mappings().unwrap();
+        assert!(mappings.enabled);
+        assert_eq!(mappings, ButtonMappings::default().normalized().unwrap());
+        assert_eq!(mappings.actions.len(), 12);
+        assert_eq!(
+            mappings.actions(RemoteButton::Power).long,
+            ButtonAction::Shortcut {
+                chord: KeyChord {
+                    keys: vec![KeyCode::Control, KeyCode::Enter]
+                }
+            }
+        );
+        assert!(
+            !store.button_mappings_path().exists(),
+            "read must not write user settings"
+        );
+    }
+
+    #[test]
+    fn existing_mapping_file_never_receives_the_new_install_preset() {
+        use sayall_windows::raw_input::RemoteButton;
+        use sayall_windows::send_input::{ButtonAction, ButtonActions, KeyCode};
+
+        let store = mapping_transaction_store();
+        for enabled in [true, false] {
+            let content = serde_json::json!({
+                "enabled": enabled,
+                "actions": {
+                    "back": { "type": "disabled" },
+                    "ok": { "type": "shortcut", "chord": { "keys": ["tab"] } }
+                }
+            })
+            .to_string();
+            fs::write(store.button_mappings_path(), &content).unwrap();
+            let mappings = store.load_button_mappings().unwrap();
+            assert_eq!(mappings.enabled, enabled);
+            assert_eq!(mappings.actions.len(), 2);
+            assert_eq!(
+                mappings.actions(RemoteButton::Back),
+                ButtonActions::default()
+            );
+            assert_eq!(
+                mappings.actions(RemoteButton::Home),
+                ButtonActions::default()
+            );
+            assert_eq!(
+                mappings.actions(RemoteButton::Ok).single,
+                ButtonAction::Shortcut {
+                    chord: KeyChord {
+                        keys: vec![KeyCode::Tab]
+                    }
+                }
+            );
+            assert_eq!(
+                fs::read_to_string(store.button_mappings_path()).unwrap(),
+                content
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_existing_mapping_file_is_rejected_without_replacement() {
+        let store = mapping_transaction_store();
+        for content in [
+            "{",
+            r#"{"actions":{"ok":{"type":"shortcut","chord":{"keys":[]}}}}"#,
+        ] {
+            fs::write(store.button_mappings_path(), content).unwrap();
+            assert!(store.load_button_mappings().is_err());
+            assert_eq!(
+                fs::read_to_string(store.button_mappings_path()).unwrap(),
+                content
+            );
+        }
+    }
+
+    #[test]
+    fn audio_sync_persists_only_ready_routes_and_preserves_other_preferences() {
+        let store = mapping_transaction_store();
+        store.save_launch_at_login(true).unwrap();
+        let mut snapshot = AudioSnapshot {
+            phase: AudioPhase::Ready,
+            selected_endpoint_id: Some("old-route".to_owned()),
+            selected_endpoint_name: Some("Old cable".to_owned()),
+            ..AudioSnapshot::default()
+        };
+        store.sync_audio_endpoint(|| snapshot.clone()).unwrap();
+        snapshot.phase = AudioPhase::Failed;
+        snapshot.selected_endpoint_id = Some("failed-route".to_owned());
+        store.sync_audio_endpoint(|| snapshot.clone()).unwrap();
+        assert_eq!(
+            store.load().unwrap().audio_endpoint_id.as_deref(),
+            Some("old-route")
+        );
+        snapshot.phase = AudioPhase::Ready;
+        snapshot.selected_endpoint_id = Some("healthy-route".to_owned());
+        snapshot.selected_endpoint_name = Some("Healthy cable".to_owned());
+        store.sync_audio_endpoint(|| snapshot.clone()).unwrap();
+        let saved = store.load().unwrap();
+        assert_eq!(saved.audio_endpoint_id.as_deref(), Some("healthy-route"));
+        assert_eq!(saved.audio_endpoint_name.as_deref(), Some("Healthy cable"));
+        assert!(saved.launch_at_login);
+        // A successful repeated read must not rewrite unchanged settings.
+        let modified = fs::metadata(&store.path).unwrap().modified().unwrap();
+        store.sync_audio_endpoint(|| snapshot.clone()).unwrap();
+        assert_eq!(
+            fs::metadata(&store.path).unwrap().modified().unwrap(),
+            modified
+        );
+    }
+
+    #[test]
+    fn audio_sync_reads_runtime_after_acquiring_settings_lock() {
+        let store = mapping_transaction_store();
+        store
+            .sync_audio_endpoint(|| {
+                assert!(store.access.try_lock().is_err());
+                AudioSnapshot::default()
+            })
+            .unwrap();
+        assert!(!store.path.exists());
+    }
+
+    #[test]
+    fn audio_snapshot_keeps_ready_state_when_settings_cannot_be_written() {
+        let store = mapping_transaction_store();
+        // A directory in place of the settings file makes storage unavailable.
+        fs::create_dir(&store.path).unwrap();
+        let runtime = AudioSnapshot {
+            phase: AudioPhase::Ready,
+            selected_endpoint_id: Some("healthy-route".into()),
+            selected_endpoint_name: Some("Healthy cable".into()),
+            ..AudioSnapshot::default()
+        };
+        assert_eq!(
+            store.audio_snapshot_with_persistence(|| runtime.clone()),
+            runtime
+        );
+        assert!(store.audio_sync_failed.load(Ordering::Relaxed));
+        assert!(store.sync_audio_endpoint(|| runtime.clone()).is_err());
+        assert_eq!(
+            store.audio_snapshot_with_persistence(|| runtime.clone()),
+            runtime
+        );
     }
 
     #[derive(Clone, Copy, Debug)]

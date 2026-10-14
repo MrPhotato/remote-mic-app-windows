@@ -6,6 +6,7 @@ import threading
 import time
 
 MAX_LINE = 4096
+PROTOCOL_VERSION = 2
 LEASE_SECONDS = 5.0
 U64_MAX = (1 << 64) - 1
 
@@ -27,6 +28,7 @@ class Lease:
     generation: int
     enabled: bool
     device_id: str
+    tv_enabled: bool
 
 
 def decode_line(line):
@@ -40,16 +42,18 @@ def decode_line(line):
         raise ProtocolError("invalid_message")
     if message == {"type": "stop"}:
         return None
-    if set(message) != {"type", "generation", "enabled", "device_id"} or message["type"] != "lease":
+    if set(message) != {"type", "generation", "enabled", "device_id", "tv_enabled"} or message["type"] != "lease":
         raise ProtocolError("invalid_message")
     generation, enabled, device = message["generation"], message["enabled"], message["device_id"]
-    if type(generation) is not int or not 0 <= generation <= U64_MAX or type(enabled) is not bool:
+    tv_enabled = message["tv_enabled"]
+    if (type(generation) is not int or not 0 <= generation <= U64_MAX or
+            type(enabled) is not bool or type(tv_enabled) is not bool):
         raise ProtocolError("invalid_lease")
     if not enabled and device is None:
         device = ""
     if not isinstance(device, str) or len(device) > 1024 or "\x00" in device or (enabled and not device):
         raise ProtocolError("invalid_device_selection")
-    return Lease(generation, enabled, device)
+    return Lease(generation, enabled, device, tv_enabled)
 
 
 class LineDecoder:
@@ -87,6 +91,9 @@ class Mailbox:
                 return
             if self.lease is not None and lease.generation < self.lease.generation:
                 raise ProtocolError("stale_generation")
+            if (self.lease is not None and lease.generation == self.lease.generation and
+                    lease != self.lease):
+                raise ProtocolError("selection_changed_without_generation")
             self.lease = lease
             self.received = self.clock()
 

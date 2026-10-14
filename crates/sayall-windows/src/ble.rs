@@ -1,9 +1,10 @@
+mod model_probe;
+
 use crate::wetype_revive::{response_since, wetype_mic_observation, MicObservation, MicResponse};
 use crate::{
     audio::AudioRuntime, power::PowerNotifications, reconnect::ReconnectBackoff,
-    remote_model_from_model_number, remote_model_from_name, send_input::KeyChord,
-    send_input_windows::SendInputRuntime, ConnectionPhase, ConnectionSnapshot, PlatformError,
-    RemoteModel, UsageCounters,
+    remote_model_from_name, send_input::KeyChord, send_input_windows::SendInputRuntime,
+    ConnectionPhase, ConnectionSnapshot, PlatformError, RemoteModel, UsageCounters,
 };
 use sayall_core::{AtvvCommand, AtvvVoicePipeline, PipelineOutput, VoiceSessionState};
 use std::future::IntoFuture;
@@ -219,6 +220,11 @@ pub(crate) enum WorkerMessage {
     /// （30s）压到立即（2026-09-05 实证：遥控器沉睡 52 分钟后首按，
     /// GATT 重连耗 3 秒，期间按键全部无响应）。
     WakeReconnect,
+    ModelRead {
+        connection_generation: u64,
+        attempt: u32,
+        model: Option<RemoteModel>,
+    },
     BatteryRead {
         connection_generation: u64,
         reading: crate::battery::BatteryReading,
@@ -311,23 +317,31 @@ fn worker_loop(
     // 17:35 实测：用户失败后 0.7s 即再按）。阶梯线程在关键点核对
     // armed 时的纪元，不符即退出，让新会话自带的新一轮检测接管。
     let voice_session_epoch: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
-    // 僵死链路自动恢复预算：每个窗口最多两次，冷却后自动开启下一窗口；
-    // 成功连接、主动断开或系统恢复时重置，不能永久退化成普通重连。
-    let mut radio_recovery = crate::bluetooth_radio::RadioRecoveryBudget::default();
     // 资源探针（2026-09-16）：判定 0x80070008 成因的必要证据，见
     // resource_probe 模块头部的判读方法。
     let mut resource_probe = crate::resource_probe::ResourceProbe::default();
+    let mut model_recovery = model_probe::Recovery::new();
+    let mut model_update_needed = true;
 
     loop {
+        // Optional model discovery is dispatched only after ATVV is ready and idle.
+        if model_update_needed {
+            let snapshot = lock(&state).clone();
+            model_recovery.tick(session.as_mut(), &snapshot, connection_generation, &sender);
+        }
         let deadline = nearest_deadline(
-            nearest_deadline(capabilities_deadline, reconnect_deadline),
-            extend_deadline,
+            nearest_deadline(
+                nearest_deadline(capabilities_deadline, reconnect_deadline),
+                extend_deadline,
+            ),
+            model_recovery.deadline(),
         );
         let message = match deadline {
             Some(deadline) => {
                 match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(message) => message,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
+                        model_update_needed = true;
                         let now = Instant::now();
                         if capabilities_deadline.is_some_and(|deadline| deadline <= now) {
                             capabilities_deadline = None;
@@ -401,106 +415,6 @@ fn worker_loop(
                                             &mut reconnect_deadline,
                                             &error.to_string(),
                                         );
-                                        // 僵死链路自动恢复（2026-09-05 真机取证：
-                                        // 应用强杀后 OS 侧链路/缓存可能僵死，普通
-                                        // 重试永不恢复，公开 API 中只有关开蓝牙
-                                        // 无线电能触达修复；调研与验证见
-                                        // ATTRIBUTION.md 与 Testing\investigation）。
-                                        // 连续失败达标时执行；每窗口限制次数，耗尽后
-                                        // 冷却再开新窗口，避免永久退化成无限普通重连。
-                                        //
-                                        // 按错误码分流（2026-09-16，A/B 对照结论）：
-                                        // 僵死态（`windows_resource_exhausted` /
-                                        // `winrt_operation_aborted`）下无线电 Off/On 与
-                                        // 提权 PnP 重启**都已实测无效**——143 次 Off/On
-                                        // 「执行成功」后连接仅恢复 3 次（2.10%），与不开关
-                                        // 的对照组（0.62%）统计上无差异（[-0.01pp]，
-                                        // 双比例 z=-0.022 / p=0.982）。原因是启动预热
-                                        // 缓存的 Radio 对象让 Off/On 命中缓存而未触达
-                                        // 真实蓝牙栈。继续开关只会空转，还会在 PnP 分支
-                                        // 弹 UAC。此态只保留普通重连。
-                                        // 其余故障（遥控器不可达、GATT 状态失败、超时等）
-                                        // 仍走 Off/On——那是无线电恢复唯一还可能有效的
-                                        // 场景，兜底必须保留。
-                                        //
-                                        // 证据与复算：ATTRIBUTION.md「2026-09-16 A/B
-                                        // 对照」；脚本 scripts/analyze-radio-recovery-ab.py；
-                                        // 判读标准 Testing/WindowsBleResourceRecovery.md。
-                                        let error_code = ble_error_code(&error);
-                                        if crate::bluetooth_radio::is_stack_exhausted(error_code) {
-                                            gatt_note(format!(
-                                                "ble_recovery_decision action=skip_recovery reason=stack_exhausted_proven_ineffective error_code={error_code} consecutive_failures={} radio_cycle=skipped pnp_restart=skipped",
-                                                backoff.attempt()
-                                            ));
-                                            // 不提示「重启电脑」：那不是用户该承担的动作
-                                            // （2026-09-16 用户明确否决）。只陈述当前状态，
-                                            // 并说明应用仍在自动重试。
-                                            lock(&state).last_error = Some(
-                                                "蓝牙链路暂时不可用，正在持续重试…".to_owned(),
-                                            );
-                                            // 刻意**不**调用 `begin_cycle`：僵死态下连
-                                            // 「低频试探」也没有收益证据，留着只会继续弹
-                                            // UAC。普通重连仍按既有退避继续。
-                                        } else if let Some(recovery_cycle) = radio_recovery
-                                            .begin_cycle(backoff.attempt(), Instant::now())
-                                        {
-                                            if recovery_cycle.reopened {
-                                                gatt_note(format!(
-                                                    "ble_radio_recovery phase=window_reopened window={} cooldown_ms={}",
-                                                    recovery_cycle.window,
-                                                    crate::bluetooth_radio::RADIO_RECOVERY_RETRY_COOLDOWN.as_millis()
-                                                ));
-                                            }
-                                            gatt_note(format!(
-                                                "ble_radio_recovery phase=requested consecutive_failures={} window={} cycle={} max_cycles={}",
-                                                backoff.attempt(),
-                                                recovery_cycle.window,
-                                                recovery_cycle.cycle,
-                                                crate::bluetooth_radio::RADIO_RECOVERY_MAX_CYCLES
-                                            ));
-                                            {
-                                                let mut snapshot = lock(&state);
-                                                snapshot.last_error = Some(format!(
-                                                    "连续 {} 次重连失败，正在自动重启蓝牙无线电以清除僵死链路（恢复窗口 {}，第 {}/{} 次）…",
-                                                    backoff.attempt(),
-                                                    recovery_cycle.window,
-                                                    recovery_cycle.cycle,
-                                                    crate::bluetooth_radio::RADIO_RECOVERY_MAX_CYCLES,
-                                                ));
-                                            }
-                                            match crate::bluetooth_radio::cycle_bluetooth_radio() {
-                                                Ok(()) => {
-                                                    gatt_note(format!(
-                                                        "ble_radio_recovery phase=completed terminal_result=passed window={} cycle={} retry_delay_ms=2000",
-                                                        recovery_cycle.window,
-                                                        recovery_cycle.cycle
-                                                    ));
-                                                    lock(&state).last_error = Some(
-                                                        "蓝牙无线电已重启，正在重新连接小米语音遥控器…"
-                                                            .to_owned(),
-                                                    );
-                                                }
-                                                Err(radio_error) => {
-                                                    gatt_note(format!(
-                                                        "ble_radio_recovery phase=completed terminal_result=failed window={} cycle={} error_domain=bluetooth_radio error_code=cycle_failed retryable=true",
-                                                        recovery_cycle.window,
-                                                        recovery_cycle.cycle
-                                                    ));
-                                                    lock(&state).last_error = Some(format!(
-                                                        "蓝牙自动恢复本轮未成功：{radio_error}。应用会继续自动重连并在冷却后再次恢复，无需手动开关蓝牙。"
-                                                    ));
-                                                }
-                                            }
-                                            // 无论成功失败：重置退避节奏并快速重试，
-                                            // 避免在已恢复的链路上继续长间隔等待。
-                                            backoff.reset();
-                                            {
-                                                let mut snapshot = lock(&state);
-                                                snapshot.reconnect_attempt = 0;
-                                            }
-                                            reconnect_deadline =
-                                                Some(Instant::now() + Duration::from_secs(2));
-                                        }
                                     }
                                 }
                             }
@@ -545,6 +459,8 @@ fn worker_loop(
             },
         };
 
+        // Audio packets do not drive optional discovery or clone connection metadata.
+        model_update_needed = !matches!(&message, WorkerMessage::Audio { .. });
         match message {
             WorkerMessage::Connect { device_id, reply } => {
                 preferred_device_id = Some(device_id.clone());
@@ -552,7 +468,6 @@ fn worker_loop(
                 reconnect_deadline = None;
                 capabilities_deadline = None;
                 backoff.reset();
-                radio_recovery.reset();
                 let result = attempt_connection(
                     &device_id,
                     false,
@@ -597,7 +512,6 @@ fn worker_loop(
                 reconnect_deadline = None;
                 capabilities_deadline = None;
                 backoff.reset();
-                radio_recovery.reset();
                 let result = invalidate_connection(
                     &state,
                     &mut session,
@@ -629,7 +543,6 @@ fn worker_loop(
             WorkerMessage::Restore { device_id, reply } => {
                 preferred_device_id = Some(device_id);
                 backoff.reset();
-                radio_recovery.reset();
                 reconnect_deadline = None;
                 let snapshot = if system_suspended {
                     ConnectionSnapshot {
@@ -659,7 +572,7 @@ fn worker_loop(
                     && !system_suspended
                     && reconnect_deadline.is_some()
                 {
-                    gatt_note("wake_reconnect triggered=hidi backoff_reset=true".to_owned());
+                    gatt_note("wake_reconnect scope=remote_connection system_radio=unchanged triggered=hidi backoff_reset=true".to_owned());
                     backoff.reset();
                     reconnect_deadline = Some(Instant::now());
                     let mut snapshot = lock(&state);
@@ -767,7 +680,6 @@ fn worker_loop(
                     }
                     if phase == ConnectionPhase::Ready {
                         backoff.reset();
-                        radio_recovery.reset();
                         lock(&state).reconnect_attempt = 0;
                     }
                     if phase == ConnectionPhase::Failed {
@@ -819,6 +731,7 @@ fn worker_loop(
                         &mut active_voice_samples,
                         &bytes,
                     );
+                    model_update_needed = pipeline.state() == VoiceSessionState::Idle;
                 }
             }
             WorkerMessage::ConnectionChanged {
@@ -895,6 +808,19 @@ fn worker_loop(
                     }
                 }
             }
+            WorkerMessage::ModelRead {
+                connection_generation: message_generation,
+                attempt,
+                model,
+            } => {
+                model_recovery.complete(
+                    message_generation,
+                    attempt,
+                    model,
+                    &mut lock(&state),
+                    Instant::now(),
+                );
+            }
             WorkerMessage::BatteryRead {
                 connection_generation: message_generation,
                 reading,
@@ -918,7 +844,7 @@ fn worker_loop(
                 // 采样的记录，使"复发点 vs 系统唤醒"可从应用日志直接对齐。
                 gatt_note(crate::resource_probe::resource_probe_note(
                     "system_suspend",
-                    "action=entering_sleep",
+                    "scope=remote_connection system_radio=unchanged action=entering_sleep",
                 ));
                 system_suspended = true;
                 capabilities_deadline = None;
@@ -957,14 +883,13 @@ fn worker_loop(
                 // "0x80070008 是否由睡眠周期引入"的关键对照。
                 gatt_note(crate::resource_probe::resource_probe_note(
                     "system_resume",
-                    &format!("tracked_suspend={system_suspended}"),
+                    &format!("scope=remote_connection system_radio=unchanged tracked_suspend={system_suspended}"),
                 ));
                 if !system_suspended {
                     continue;
                 }
                 system_suspended = false;
                 backoff.reset();
-                radio_recovery.reset();
                 if preferred_device_id.is_some() {
                     reconnect_deadline = Some(Instant::now());
                     let previous = lock(&state).clone();
@@ -1055,7 +980,7 @@ fn attempt_connection(
 ) -> Result<ConnectionSnapshot, PlatformError> {
     let attempt_started = Instant::now();
     gatt_note(format!(
-        "ble_connect phase=requested reconnecting={reconnecting} attempt={reconnect_attempt}"
+        "ble_connect scope=remote_connection system_radio=unchanged phase=requested reconnecting={reconnecting} attempt={reconnect_attempt}"
     ));
     invalidate_connection(
         state,
@@ -1100,14 +1025,13 @@ fn attempt_connection(
         Ok(connected) => connected,
         Err(error) => {
             gatt_note(format!(
-                "ble_connect phase=completed terminal_result=failed reconnecting={reconnecting} attempt={reconnect_attempt} error_domain=bluetooth error_code={} retryable=true elapsed_ms={}",
+                "ble_connect scope=remote_connection system_radio=unchanged phase=completed terminal_result=failed reconnecting={reconnecting} attempt={reconnect_attempt} error_domain=bluetooth error_code={} retryable=true elapsed_ms={}",
                 ble_error_code(&error),
                 attempt_started.elapsed().as_millis()
             ));
             return Err(error);
         }
     };
-    crate::bluetooth_radio::refresh_bluetooth_radio_cache();
     let snapshot = ConnectionSnapshot {
         phase: ConnectionPhase::AwaitingCapabilities,
         remote_name: Some(connected.name.clone()),
@@ -1121,7 +1045,7 @@ fn attempt_connection(
     *session = Some(connected);
     *capabilities_deadline = Some(Instant::now() + CAPABILITIES_TIMEOUT);
     gatt_note(format!(
-        "ble_connect phase=completed terminal_result=passed reconnecting={reconnecting} attempt={reconnect_attempt} connection_generation={connection_generation} next_phase=awaiting_capabilities elapsed_ms={}",
+        "ble_connect scope=remote_connection system_radio=unchanged phase=completed terminal_result=passed reconnecting={reconnecting} attempt={reconnect_attempt} connection_generation={connection_generation} next_phase=awaiting_capabilities elapsed_ms={}",
         attempt_started.elapsed().as_millis()
     ));
     Ok(snapshot)
@@ -1166,11 +1090,11 @@ fn connect_stage<T>(
 ) -> Result<T, PlatformError> {
     let started = Instant::now();
     gatt_note(format!(
-        "ble_connect_stage phase=requested reconnecting={reconnecting} attempt={attempt} stage={stage}"
+        "ble_connect_stage scope=remote_connection system_radio=unchanged phase=requested reconnecting={reconnecting} attempt={attempt} stage={stage}"
     ));
     let result = operation();
     gatt_note(format!(
-        "ble_connect_stage phase=completed terminal_result={} reconnecting={reconnecting} attempt={attempt} stage={stage} error_domain={} error_code={} retryable={} elapsed_ms={}",
+        "ble_connect_stage scope=remote_connection system_radio=unchanged phase=completed terminal_result={} reconnecting={reconnecting} attempt={attempt} stage={stage} error_domain={} error_code={} retryable={} elapsed_ms={}",
         if result.is_ok() { "passed" } else { "failed" },
         if result.is_ok() { "none" } else { "bluetooth" },
         result.as_ref().err().map(ble_error_code).unwrap_or("none"),
@@ -1182,7 +1106,7 @@ fn connect_stage<T>(
         // `error_code`，把 0x80070008 / 0x80004004 / 其他码压成同一串，
         // 无法区分故障层——这是 2026-09-16 根因分析的首要盲区。
         gatt_note(format!(
-            "ble_connect_stage phase=failure_detail stage={stage} attempt={attempt} raw_error={}",
+            "ble_connect_stage scope=remote_connection system_radio=unchanged phase=failure_detail stage={stage} attempt={attempt} raw_error={}",
             raw_error_text(error)
         ));
     }
@@ -1247,6 +1171,10 @@ fn invalidate_connection(
         if cleanup_errors.is_empty() {
             Ok(())
         } else {
+            gatt_note(format!(
+                "ble_connection_cleanup scope=remote_connection system_radio=unchanged phase=completed terminal_result=failed error_code=cleanup_failed failed_steps={}",
+                cleanup_errors.len()
+            ));
             Err(PlatformError::BleCleanup(cleanup_errors.join("；")))
         }
     })
@@ -1274,6 +1202,10 @@ fn keep_reconnecting_after_cleanup_failure(
             &format!("{error}；旧会话清理失败，将继续重试并再次清理"),
         );
     } else {
+        gatt_note(format!(
+            "ble_reconnect scope=remote_connection system_radio=unchanged phase=not_scheduled reason_code=no_selected_remote error_code={}",
+            ble_error_code(error)
+        ));
         *reconnect_deadline = None;
         *lock(state) = failed_snapshot(error.to_string());
         apply_input_connection_phase(ConnectionPhase::Failed);
@@ -1288,7 +1220,7 @@ fn schedule_reconnect(
 ) {
     let (attempt, delay) = backoff.schedule_next();
     gatt_note(format!(
-        "ble_reconnect phase=scheduled attempt={attempt} delay_ms={} reason_code=connection_failed",
+        "ble_reconnect scope=remote_connection system_radio=unchanged phase=scheduled attempt={attempt} delay_ms={} reason_code=connection_failed",
         delay.as_millis()
     ));
     *reconnect_deadline = Some(Instant::now() + delay);
@@ -1383,6 +1315,9 @@ fn handle_control(
             let epoch = voice_session_epoch.fetch_add(1, Ordering::SeqCst) + 1;
             *active_voice_samples = 0;
             if let Some(session) = session {
+                if let Some(cancel) = &session.model_cancel {
+                    cancel.cancel_for_voice();
+                }
                 session.microphone_opened = true;
             }
             // 排定 MIC_EXTEND 续期节拍：遥控器固件只给约 5-6 秒免费音频窗口，
@@ -1665,6 +1600,7 @@ fn close_session(session: &mut Option<BleSession>) -> Result<(), PlatformError> 
 }
 
 struct BleSession {
+    model_cancel: Option<Arc<model_probe::Cancellation>>,
     battery_monitor: Option<crate::battery::BatteryMonitor>,
     name: String,
     model: RemoteModel,
@@ -1743,6 +1679,7 @@ impl PendingBleConnection {
 
     fn finish(mut self, name: String, model: RemoteModel) -> BleSession {
         BleSession {
+            model_cancel: None,
             battery_monitor: None,
             name,
             model,
@@ -1918,12 +1855,17 @@ impl BleSession {
                 .map_err(windows_error)
                 .map(|name| name.to_string())
         })?;
-        let inferred_model = remote_model_from_name(&name);
-        let model = if inferred_model == RemoteModel::Unknown {
-            read_remote_model(pending.device()).unwrap_or(RemoteModel::Unknown)
-        } else {
-            inferred_model
-        };
+        // Ambiguous names remain unknown; optional GATT identification runs only
+        // after ATVV readiness on a separate, cancellable worker.
+        let model = remote_model_from_name(&name);
+        gatt_note(format!(
+            "remote_model phase=infer source=device_name result={} connection_generation={connection_generation}",
+            match model {
+                RemoteModel::Rc001 => "rc001",
+                RemoteModel::Rc003 => "rc003",
+                RemoteModel::Unknown => "unknown",
+            }
+        ));
         {
             let mut snapshot = lock(state);
             snapshot.phase = ConnectionPhase::Discovering;
@@ -2052,6 +1994,9 @@ impl BleSession {
     }
 
     fn request_microphone_open(&mut self, version: u16, codec: u8) -> Result<(), PlatformError> {
+        if let Some(cancel) = &self.model_cancel {
+            cancel.cancel_for_voice();
+        }
         if self.microphone_opened {
             return Ok(());
         }
@@ -2080,6 +2025,9 @@ impl BleSession {
     }
 
     fn close(&mut self) -> Result<(), PlatformError> {
+        if let Some(cancel) = self.model_cancel.take() {
+            cancel.cancel();
+        }
         if self.closed {
             return Ok(());
         }
@@ -2211,6 +2159,7 @@ pub struct DiagnosticLogMetadata {
 
 static DIAGNOSTIC_LOG_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 static DIAGNOSTIC_LOG_METADATA: OnceLock<DiagnosticLogMetadata> = OnceLock::new();
+static DIAGNOSTIC_SINK: OnceLock<crate::diagnostic_sink::DiagnosticSink> = OnceLock::new();
 
 /// 在任何功能组件启动前配置生产诊断日志。环境变量仍可覆盖路径，方便受控取证；
 /// 正式应用由宿主传入 LocalAppData 下的固定路径，日志内容绝不打印该路径。
@@ -2221,13 +2170,9 @@ pub fn initialize_diagnostic_log(
     let path = std::env::var_os("SAYALL_GATT_LOG")
         .map(std::path::PathBuf::from)
         .unwrap_or(default_path);
-    let parent_ready = path
-        .parent()
-        .map(|parent| std::fs::create_dir_all(parent).is_ok())
-        .unwrap_or(false);
     let _ = DIAGNOSTIC_LOG_PATH.set(path);
     let _ = DIAGNOSTIC_LOG_METADATA.set(metadata);
-    parent_ready && gatt_sink().is_some()
+    gatt_sink().configure(DIAGNOSTIC_LOG_PATH.get().unwrap().clone())
 }
 
 /// 诊断日志实际落盘目录（供"打开日志目录"入口定位）。
@@ -2247,82 +2192,76 @@ pub fn diagnostic_log_directory() -> Option<std::path::PathBuf> {
 /// ATVV 诊断日志（宿主默认写入 LocalAppData；SAYALL_GATT_LOG 可覆盖路径）。
 /// 控制通知与 TRANSMIT 写入保留长度及有限预览用于协议取证；音频通知不在这里
 /// 逐包落盘，防止泄露语音内容并避免高频刷盘，改由音频会话终态聚合记录。
-fn gatt_sink() -> Option<&'static Mutex<std::fs::File>> {
-    static SINK: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
-    SINK.get_or_init(|| {
-        let path = DIAGNOSTIC_LOG_PATH
+fn gatt_sink() -> &'static crate::diagnostic_sink::DiagnosticSink {
+    DIAGNOSTIC_SINK.get_or_init(|| {
+        let sink = crate::diagnostic_sink::DiagnosticSink::default();
+        if let Some(path) = DIAGNOSTIC_LOG_PATH
             .get()
             .cloned()
-            .or_else(|| std::env::var_os("SAYALL_GATT_LOG").map(std::path::PathBuf::from))?;
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()
-            .map(Mutex::new)
+            .or_else(|| std::env::var_os("SAYALL_GATT_LOG").map(std::path::PathBuf::from))
+        {
+            sink.configure(path);
+        }
+        sink
     })
-    .as_ref()
+}
+
+/// Memory-only health read for the local diagnostic summary.
+pub fn diagnostic_log_health() -> crate::diagnostic_sink::DiagnosticLogHealth {
+    DIAGNOSTIC_SINK
+        .get()
+        .map(|sink| sink.health())
+        .unwrap_or_default()
+}
+
+fn diagnostic_record(note: &str) -> String {
+    let timestamp = utc_timestamp();
+    let metadata = DIAGNOSTIC_LOG_METADATA.get();
+    format!(
+        "{timestamp} pid={} ver={} build={} source_revision={} build_channel={} release_tag={} {note}",
+        std::process::id(),
+        metadata.map(|value| value.app_version.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.app_build.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.source_revision.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.build_channel.as_str()).unwrap_or("unknown"),
+        metadata.map(|value| value.release_tag.as_str()).unwrap_or("unknown"),
+    )
+}
+
+fn write_diagnostic_record(note: &str) {
+    let record = diagnostic_record(note);
+    gatt_sink().write_record(&record, |recovery| {
+        diagnostic_record(&format!(
+            "diagnostic_sink phase=recovered terminal_result=passed dropped_records={} open_failures={} write_failures={} flush_failures={}",
+            recovery.dropped_records,
+            recovery.open_failures,
+            recovery.write_failures,
+            recovery.flush_failures,
+        ))
+    });
 }
 
 fn gatt_log(kind: &str, bytes: &[u8]) {
-    use std::io::Write as _;
-    // 原始音频包既是高频数据又可能承载语音内容，生产诊断日志绝不落盘。
-    // 会话级音频统计由 audio.rs 在开始、排空、失败时聚合记录。
+    // Audio content must never be persisted; only control packets are included.
     if kind == "A" {
         return;
     }
-    if let Some(sink) = gatt_sink() {
-        if let Ok(mut file) = sink.lock() {
-            let timestamp = utc_timestamp();
-            let metadata = DIAGNOSTIC_LOG_METADATA.get();
-            let preview: String = bytes
-                .iter()
-                .take(24)
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let _ = writeln!(
-                file,
-                "{timestamp} pid={} ver={} build={} component=gatt event=packet direction={kind} byte_count={} preview=[{preview}]",
-                std::process::id(),
-                metadata
-                    .map(|value| value.app_version.as_str())
-                    .unwrap_or("unknown"),
-                metadata
-                    .map(|value| value.app_build.as_str())
-                    .unwrap_or("unknown"),
-                bytes.len()
-            );
-            let _ = file.flush();
-        }
-    }
+    let preview = bytes
+        .iter()
+        .take(24)
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    write_diagnostic_record(&format!(
+        "component=gatt event=packet direction={kind} byte_count={} preview=[{preview}]",
+        bytes.len(),
+    ));
 }
 
-/// 功能点结构化诊断标记（同 SAYALL_GATT_LOG 开关；AGENTS.md"功能点必须自带
-/// 日志"规范）：语音链路的分支决策、外部调用结果与关键耗时以 "N" 标记
-/// 行落盘，报障后一次日志拉取即可定位环节。格式与 gatt_log 对齐：
-/// `N <墙钟ms> len=  0 note=<结构化键值>`。
-/// 2026-09-05 起对 src-tauri 应用层公开（应用内更新流程等非 GATT 功能点
-/// 复用同一日志载体与格式），保持"一次日志拉取"覆盖全部功能点。
+/// Structured feature diagnostics; failed records are counted without retaining
+/// their content, and later records retry a failed sink with bounded frequency.
 pub fn gatt_note(note: String) {
-    use std::io::Write as _;
-    if let Some(sink) = gatt_sink() {
-        if let Ok(mut file) = sink.lock() {
-            let timestamp = utc_timestamp();
-            let metadata = DIAGNOSTIC_LOG_METADATA.get();
-            let _ = writeln!(
-                file,
-                "{timestamp} pid={} ver={} build={} source_revision={} build_channel={} release_tag={} {note}",
-                std::process::id(),
-                metadata.map(|value| value.app_version.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.app_build.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.source_revision.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.build_channel.as_str()).unwrap_or("unknown"),
-                metadata.map(|value| value.release_tag.as_str()).unwrap_or("unknown"),
-            );
-            let _ = file.flush();
-        }
-    }
+    write_diagnostic_record(&note);
 }
 
 fn utc_timestamp() -> String {
@@ -2675,61 +2614,6 @@ fn find_characteristic(
     characteristics.GetAt(0).map_err(windows_error)
 }
 
-fn read_remote_model(device: &BluetoothLEDevice) -> Option<RemoteModel> {
-    let result = block_on(
-        device
-            .GetGattServicesForUuidWithCacheModeAsync(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                BluetoothCacheMode::Uncached,
-            )
-            .ok()?,
-    )
-    .ok()?;
-    if result.Status().ok()? != GattCommunicationStatus::Success {
-        return None;
-    }
-    let services = result.Services().ok()?;
-    if services.Size().ok()? != 1 {
-        return None;
-    }
-    let service = services.GetAt(0).ok()?;
-    let model = read_model_number(&service);
-    let _ = service.Close();
-    model
-}
-
-fn read_model_number(service: &GattDeviceService) -> Option<RemoteModel> {
-    let result = block_on(
-        service
-            .GetCharacteristicsForUuidWithCacheModeAsync(
-                MODEL_NUMBER_UUID,
-                BluetoothCacheMode::Uncached,
-            )
-            .ok()?,
-    )
-    .ok()?;
-    if result.Status().ok()? != GattCommunicationStatus::Success {
-        return None;
-    }
-    let characteristics = result.Characteristics().ok()?;
-    if characteristics.Size().ok()? != 1 {
-        return None;
-    }
-    let characteristic = characteristics.GetAt(0).ok()?;
-    let value = block_on(
-        characteristic
-            .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)
-            .ok()?,
-    )
-    .ok()?;
-    if value.Status().ok()? != GattCommunicationStatus::Success {
-        return None;
-    }
-    let bytes = buffer_to_vec(&value.Value().ok()?).ok()?;
-    let model_number = String::from_utf8(bytes).ok()?;
-    remote_model_from_model_number(&model_number)
-}
-
 fn buffer_to_vec(buffer: &IBuffer) -> windows::core::Result<Vec<u8>> {
     let mut bytes = vec![0; buffer.Length()? as usize];
     let reader = DataReader::FromBuffer(buffer)?;
@@ -2901,31 +2785,22 @@ mod tests {
         );
     }
 
-    /// 僵死态有两个出口：`0x80070008`（资源耗尽）和 `0x80004004`（已中止操作）。
-    /// 两者必须都落到同一条分流支路上，否则只有一半的僵死事件会被识别，
-    /// Off/On 会在另一半上继续空转。
     #[test]
-    fn aborted_operation_is_classified_as_the_same_wedged_state() {
-        let aborted_cases = [
+    fn aborted_operation_keeps_a_distinct_diagnostic_code() {
+        for message in [
             "已中止操作。 (0x80004004)",
             "The operation was aborted. (0x80004004)",
             "Operation Aborted",
-        ];
-        for message in aborted_cases {
-            let code = ble_error_code(&PlatformError::WindowsApi(message.to_owned()));
-            assert_eq!(code, "winrt_operation_aborted", "输入：{message}");
-            assert!(
-                crate::bluetooth_radio::is_stack_exhausted(code),
-                "僵死码 {code} 必须命中分流"
+        ] {
+            assert_eq!(
+                ble_error_code(&PlatformError::WindowsApi(message.to_owned())),
+                "winrt_operation_aborted"
             );
         }
-
-        // 非僵死码不能被误伤——否则普通故障会失去兜底恢复。
         for message in ["Access denied", "句柄无效。", "设备未就绪"] {
-            let code = ble_error_code(&PlatformError::WindowsApi(message.to_owned()));
-            assert!(
-                !crate::bluetooth_radio::is_stack_exhausted(code),
-                "{message} 不应判定为僵死态"
+            assert_eq!(
+                ble_error_code(&PlatformError::WindowsApi(message.to_owned())),
+                "windows_api_failed"
             );
         }
     }
@@ -2959,6 +2834,34 @@ mod tests {
         let second = lock(&state).clone();
         assert_eq!(second.reconnect_attempt, 2);
         assert!(second.last_error.unwrap().contains("4 秒后"));
+    }
+
+    #[test]
+    fn sustained_failures_keep_remote_retry_at_the_existing_backoff_cap() {
+        let state = Arc::new(Mutex::new(ConnectionSnapshot::default()));
+        let mut backoff = ReconnectBackoff::new(RECONNECT_BASE_DELAY, RECONNECT_MAX_DELAY);
+        let mut deadline = None;
+        // Cross the former five-failure recovery threshold repeatedly. Failed
+        // attempts must retain normal backoff rather than reset for radio work.
+        for attempt in 1..=100 {
+            let before = Instant::now();
+            schedule_reconnect(&state, &mut backoff, &mut deadline, "模拟连接失败");
+            let after = Instant::now();
+            let expected = Duration::from_secs(match attempt {
+                1 => 2,
+                2 => 4,
+                3 => 8,
+                4 => 16,
+                _ => 30,
+            });
+            let scheduled = deadline.expect("remote retry must remain scheduled");
+            assert!(scheduled >= before + expected);
+            assert!(scheduled <= after + expected);
+            let snapshot = lock(&state);
+            assert_eq!(snapshot.phase, ConnectionPhase::Reconnecting);
+            assert_eq!(snapshot.reconnect_attempt, attempt);
+            assert!(snapshot.last_error.as_ref().unwrap().contains("次重连"));
+        }
     }
 
     #[test]

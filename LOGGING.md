@@ -35,11 +35,16 @@ windows_build=<build 或 unknown>
 
 构建时写入 `source_revision`，运行时不得读取 Git 工作区。无法可靠取得的值写 `unknown`，不能省略字段。
 
-正式应用默认写入 `%LOCALAPPDATA%\SayAll\Logs\sayall-diagnostic.log`，不再要求用户
+正式应用默认写入 `%LOCALAPPDATA%\RemoteCodingLocal\Logs\sayall-diagnostic.log`，不再要求用户
 预先设置环境变量。受控测试仍可用 `SAYALL_GATT_LOG` 覆盖写入位置；日志正文不得
 打印实际文件路径。应用启动、Tauri setup、前端入口、Vue 挂载和首次 IPC 读取必须
 在用户看到主页面前后分别留痕，确保安装后白屏可以区分为宿主、WebView、脚本、
 Vue 渲染或 IPC 阶段故障。
+
+诊断文件打开、写入或刷新失败时，至少间隔 5 秒，在下一条日志到来时重试；
+不会后台空转，也不会重放失败记录的正文。恢复首行带 `diagnostic_sink phase=recovered`
+及累计失败/丢失计数。诊断摘要的 `diagnosticLog` 提供配置、可写状态、丢失记录数、
+打开/写入/刷新失败数、恢复数和固定错误类别；查询该状态本身不打开或写入文件。
 
 ## 必需事件链
 

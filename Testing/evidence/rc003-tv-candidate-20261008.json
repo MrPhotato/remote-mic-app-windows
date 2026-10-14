@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-08",
+  "candidateVersion": "0.2.11",
+  "scope": "selected_rc003_tv_report_only",
+  "authorization": "user_approved_local_tv_extension_2026_10_08",
+  "status": "installed_awaiting_physical_validation",
+  "sourceRevision": "79b1af6d02228045fa9ddf4213e92c63811786ba",
+  "localPackage": {
+    "status": "passed",
+    "assetName": "Remote Coding_0.2.11_x64-setup.exe",
+    "bytes": 49515651,
+    "sha256": "ff250a7b65c21d376a18a76bc3e5ad1bbc2c0702bf59e68171bd0d6751ccc6db",
+    "signature": "NotSigned"
+  },
+  "installation": {
+    "status": "passed",
+    "completedUtc": "2026-10-08T04:15:54.5665149Z",
+    "normalExitConfirmed": true,
+    "installerExitCode": 0,
+    "installedVersion": "0.2.11",
+    "settingsFilesPreserved": 3,
+    "oldHelperPayloadBackedUpAndRecycled": true,
+    "installedHelperHashesAndEmbeddedManifestVerified": true,
+    "installedBinarySha256": "86123545f6a243185b2f0b2da33c55c02ee3238bd1bdbfd7d831385c64036e15",
+    "binaryComparison": "Only the single expected TAURI_BUNDLE_TYPE_VAR_UNK to TAURI_BUNDLE_TYPE_VAR_NSS substitution differs from the build binary.",
+    "applicationAutoLaunched": false
+  },
+  "softwareChecks": {
+    "productionJavascriptReportTests": { "status": "passed", "tests": 32 },
+    "pythonLifecycleTests": { "status": "passed", "tests": 56 },
+    "rustWorkspaceLibTests": { "status": "passed", "tests": 309, "ignored": 5 },
+    "frontendTests": { "status": "passed", "tests": 170, "note": "One text assertion corrected; all other tests passed in the full run and all 13 component tests passed on recheck." },
+    "frontendTypecheckAndBuild": { "status": "passed" },
+    "rustFormatting": { "status": "passed" },
+    "rustWorkspaceCheck": { "status": "passed" },
+    "windowsCrossProcessMutex": { "status": "passed", "note": "Second process rejected while held; acquired after release. No device or input APIs exercised." }
+  },
+  "helperBundle": {
+    "status": "passed",
+    "files": 98,
+    "pythonVersion": "3.12.14",
+    "fridaVersion": "17.18.0",
+    "manifestSha256": "348ff780c6f2f72cce4945afe9601c5619ac7444702e36a517419a0c85b768d4"
+  },
+  "physicalChecks": {
+    "tvNoCharacter": "deferred",
+    "ordinaryKeyboardNegativeControl": "deferred",
+    "codexMappings": "deferred",
+    "idleFirstTv": "deferred",
+    "heldAcrossEnableDisable": "deferred",
+    "voiceAndOriginalButtons": "deferred",
+    "rc001": "deferred"
+  },
+  "boundaries": {
+    "globalHomeOem3SuppressionAdded": false,
+    "sourceBindingChanged": false,
+    "newDriverInstalled": false,
+    "systemBluetoothChanged": false,
+    "appRestartedDuringSourceWork": false,
+    "published": false,
+    "suddenOnsetTriggerKnown": false
+  }
+}

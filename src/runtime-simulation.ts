@@ -7,6 +7,7 @@ import {
   getRawInputSnapshot,
   getRuntimeSnapshot,
   listAudioEndpoints,
+  listMicrophones,
   saveButtonMappings,
   scanPairedRemotes,
   stopRawInput,
@@ -93,16 +94,22 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   steps.push("RC001 连接 command 返回 16 kHz ATVV 就绪状态");
 
   assert(!document.querySelector("#advanced-audio-settings"), "音频高级设置没有默认收起");
+  const microphones = await listMicrophones();
+  assert(microphones.length === 1, "仿真麦克风数量异常");
+  await waitFor(
+    () => document.querySelector(".audio-settings-card .setting-row span")?.textContent === microphones[0].name ? true : null,
+    "真实录音端点名称",
+  );
   await clickButton("高级设置");
   await waitFor(
     () => (document.querySelector("#advanced-audio-settings")?.textContent?.includes("CABLE Input (CI Simulation)") ? true : null),
     "仿真音频端点",
   );
-  // 高级设置内，自动选择的端点通过“更换传送设备”入口调整。
+  // 麦克风选择使用 capture 端点；内部 render 线路单独显示。
   await waitFor(
     () =>
       Array.from(document.querySelectorAll<HTMLButtonElement>("button")).some((button) =>
-        button.textContent?.trim().includes("更换传送设备"),
+        button.textContent?.trim().includes("更换麦克风"),
       )
         ? true
         : null,
@@ -113,6 +120,11 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   const audio = await getAudioSnapshot();
   assert(audio.phase === "ready", "仿真音频端点没有进入 WASAPI 就绪");
   assert(audio.selectedEndpointId === endpoints[0].id, "仿真 CABLE Input 没有被自动选择");
+  assert(microphones[0].renderEndpointIds.includes(audio.selectedEndpointId), "仿真录音端点与传声线路不匹配");
+  await clickButton("更换麦克风");
+  const microphoneList = document.querySelector("#audio-endpoint-list")?.textContent ?? "";
+  assert(microphoneList.includes(microphones[0].name), "麦克风列表没有显示录音端点");
+  assert(!microphoneList.includes(endpoints[0].name), "麦克风列表混入了播放端点");
   await clickButton("收起高级设置");
   await waitFor(() => (!document.querySelector("#advanced-audio-settings") ? true : null), "音频高级设置收起");
   steps.push("连接页面自动选择唯一仿真 CABLE Input，高级设置可展开和收起");
