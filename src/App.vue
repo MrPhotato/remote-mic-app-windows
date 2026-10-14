@@ -39,6 +39,8 @@ const activeComponent = computed(() => ({
   about: AboutPage,
 })[activePage.value]);
 
+const voiceLive = computed(() => runtime.value?.platform.connection.voiceState === "streaming");
+
 onMounted(async () => {
   const refreshRuntime = async () => {
     try {
@@ -91,10 +93,15 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <div class="ambient" :class="{ live: voiceLive }" aria-hidden="true">
+    <span class="ambient-light indigo"></span>
+    <span class="ambient-light mint"></span>
+    <span class="ambient-light violet"></span>
+  </div>
   <div class="app-shell">
     <Sidebar :active-page="activePage" @select="activePage = $event" />
     <main class="content">
-      <div v-if="loadError" class="error-banner">无法读取运行状态：{{ loadError }}</div>
+      <div v-if="loadError" class="error-banner" role="alert">暂时读不到运行状态，正在重试：{{ loadError }}</div>
       <component :is="activeComponent" :runtime="runtime" @navigate="activePage = $event" />
     </main>
   </div>

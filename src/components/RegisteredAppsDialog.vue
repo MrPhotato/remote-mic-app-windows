@@ -53,8 +53,8 @@ onMounted(() => {
       <span>{{ filtered.length }} 个应用 · 已选 {{ selectedApps.length }}</span>
     </div>
     <div class="picker-list" :aria-busy="scanning">
-      <p v-if="scanning" role="status">正在扫描…</p>
-      <p v-else-if="!filtered.length && !error">未找到匹配的应用</p>
+      <p v-if="scanning" role="status">正在扫描本机已安装的应用…</p>
+      <p v-else-if="!filtered.length && !error">没有找到匹配的应用。换个关键词，或重新扫描。</p>
       <template v-else>
         <label v-for="app in filtered" :key="app.path" class="picker-app" :title="app.path">
           <input type="checkbox" :aria-label="app.name" :checked="known.has(app.path.toLowerCase()) || selected.has(app.path)" :disabled="saving || known.has(app.path.toLowerCase())" @change="toggle(app.path, ($event.target as HTMLInputElement).checked)" />
@@ -71,19 +71,58 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.registered-apps-dialog { width: min(620px, calc(100vw - 40px)); max-height: calc(100vh - 40px); box-sizing: border-box; padding: 20px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-canvas); color: var(--text-primary); overflow: auto; }
-.registered-apps-dialog::backdrop { background: #0008; }
+.registered-apps-dialog {
+  width: min(620px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  box-sizing: border-box;
+  padding: 22px;
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge);
+  border-radius: var(--radius-overlay);
+  background: var(--glass-overlay);
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 30px 80px -24px var(--shadow-float);
+  color: var(--text-primary);
+  overflow: auto;
+}
+.registered-apps-dialog::backdrop { background: rgba(8, 10, 18, 0.42); backdrop-filter: blur(4px); }
 .picker-header, .picker-toolbar, .picker-select-row, .picker-footer { display: flex; align-items: center; gap: 12px; }
 .picker-header { justify-content: space-between; margin-bottom: 14px; }
-.picker-header h3 { font-size: 18px; margin: 0; }
-.picker-close { width: 32px; height: 32px; padding: 0; font-size: 22px; }
-.picker-toolbar input { flex: 1; min-width: 0; padding: 8px; border: 1px solid #888; border-radius: 4px; color: inherit; background: transparent; font: inherit; }
-.picker-select-row { justify-content: space-between; flex-wrap: wrap; margin: 14px 0; font-size: 13px; }
+.picker-header h3 { font-size: 19px; font-weight: 650; letter-spacing: -0.2px; margin: 0; }
+.picker-close { width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 20px; line-height: 1; }
+.picker-toolbar input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge-soft);
+  border-radius: var(--radius-control);
+  color: inherit;
+  background: var(--glass-control);
+  font: inherit;
+  font-size: 13.5px;
+}
+.picker-toolbar input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-surface); outline: none; }
+.picker-select-row { justify-content: space-between; flex-wrap: wrap; margin: 14px 0 10px; font-size: 13px; color: var(--text-secondary); }
 .picker-select-row label, .picker-app { display: flex; align-items: center; gap: 10px; }
-.picker-list { height: min(360px, 48vh); overflow-y: auto; border-block: 1px solid #8885; }
-.picker-app { min-height: 38px; padding: 6px 8px; box-sizing: border-box; border-bottom: 1px solid #8883; }
+.picker-list {
+  height: min(360px, 48vh);
+  overflow-y: auto;
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+}
+.picker-app { min-height: 40px; padding: 7px 12px; box-sizing: border-box; border-bottom: 1px solid var(--border); cursor: pointer; }
+.picker-app:last-child { border-bottom: 0; }
+.picker-app:hover { background: var(--surface-hover); }
 .picker-app span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
-.picker-app small { flex-shrink: 0; opacity: .65; }
+.picker-app small { flex-shrink: 0; color: var(--muted); }
+.picker-list > p { margin: 14px; color: var(--muted); font-size: 13.5px; }
 .picker-footer { justify-content: flex-end; margin-top: 16px; }
-input[type="checkbox"] { flex-shrink: 0; width: 16px; height: 16px; }
+input[type="checkbox"] { flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent); }
+@media (forced-colors: active) {
+  .registered-apps-dialog { background: Canvas; backdrop-filter: none; }
+}
 </style>

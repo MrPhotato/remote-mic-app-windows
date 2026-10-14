@@ -130,9 +130,8 @@ onMounted(load);
     <header class="page-header">
       <div>
         <h1>Codex 遥控</h1>
-        <p class="intro muted">按住说话，改字发送，切换任务，再查看代码改动。</p>
+        <p class="intro muted">按住说话，确认后发送，切换任务——不碰键盘也能推进 Codex。</p>
       </div>
-      <span class="badge pending">Windows</span>
     </header>
 
     <p v-if="!nativeRuntime" class="preview-note">浏览器预览：仅展示界面，无法连接遥控器或保存按键。</p>
@@ -141,7 +140,7 @@ onMounted(load);
       <article class="card readiness-card">
         <div class="card-title-row"><h2>遥控器</h2><span class="badge" :class="connected ? 'success' : 'pending'">{{ connection ? connectionPhaseLabel(connection.phase) : '正在读取' }}</span></div>
         <p>{{ connection ? remoteModelLabel(connection.remoteModel) : '连接后显示型号' }}<span v-if="connection?.remoteModel !== 'unknown' && connection" class="model-code"> · {{ connection.remoteModel.toUpperCase() }}</span></p>
-        <button class="secondary-button" type="button" @click="emit('navigate', 'connection')">连接设置</button>
+        <button class="secondary-button" type="button" @click="emit('navigate', 'connection')">{{ connected ? '连接设置' : '去连接' }}</button>
       </article>
       <article class="card readiness-card">
         <div class="card-title-row"><h2>麦克风</h2><span class="badge" :class="audioConfigured ? 'success' : 'pending'">{{ audioConfigured ? '音频已配置' : '待配置' }}</span></div>
@@ -157,19 +156,21 @@ onMounted(load);
         <div><h2>日常默认方案</h2><p class="muted">新安装默认使用此方案，升级保留已有配置。重新应用会启用映射，并替换下列 12 个键的配置。</p></div>
         <button class="secondary-button" type="button" @click="emit('navigate', 'buttons')">自定义按键</button>
       </div>
-      <table class="mapping-table">
-        <thead><tr><th scope="col">遥控器按键</th><th scope="col">单按</th><th scope="col">双按</th><th scope="col">长按</th></tr></thead>
-        <tbody>
-          <tr v-for="button in CODING_PROFILE_BUTTONS" :key="button">
-            <th scope="row">{{ buttonLabel(button) }}</th>
-            <td><span class="preset-action">{{ presetLabel(button, 'single') }}</span><span class="current-action muted">当前：{{ current ? actionSummary(current.actions[button]?.single) : '正在读取…' }}</span></td>
-            <td>{{ presetLabel(button, 'double') }}</td>
-            <td>{{ presetLabel(button, 'long') }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="mapping-table-frame">
+        <table class="mapping-table">
+          <thead><tr><th scope="col">遥控器按键</th><th scope="col">单按</th><th scope="col">双按</th><th scope="col">长按</th></tr></thead>
+          <tbody>
+            <tr v-for="button in CODING_PROFILE_BUTTONS" :key="button">
+              <th scope="row">{{ buttonLabel(button) }}</th>
+              <td><span class="preset-action">{{ presetLabel(button, 'single') }}</span><span class="current-action muted">当前：{{ current ? actionSummary(current.actions[button]?.single) : '正在读取…' }}</span></td>
+              <td :class="{ unset: presetLabel(button, 'double') === '未设置' }">{{ presetLabel(button, 'double') }}</td>
+              <td :class="{ unset: presetLabel(button, 'long') === '未设置' }">{{ presetLabel(button, 'long') }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p class="preserved-note muted">主页和 TV 的单按需等待约 0.3 秒；菜单和电源的单按在松开时触发。返回键按一下退格，按住连续删除，松开停止。方向键支持按住连续操作，音量键每次按下只切换一个聊天；RC003 的返回及音量键需先启用按键增强。</p>
-      <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter，在输入框中可能发送内容，在审批提示中可能批准操作。电源键短按为 Esc，长按为插队/排队（Ctrl + Enter）。</p>
+      <p class="input-note"><strong>先按主页打开 Codex。</strong>快捷键只作用于当前前台窗口。确定键发送 Enter：在输入框里会发出内容，在审批提示里会批准操作。电源键短按为 Esc，长按为插队/排队（Ctrl + Enter）。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>
         <button class="primary-button" data-testid="apply-profile" type="button" :disabled="!canApply" @click="changeProfile(false)">{{ busy ? '正在保存…' : '应用日常默认方案' }}</button>
@@ -190,8 +191,12 @@ onMounted(load);
 
     <article class="card voice-guide">
       <h2>说话录入，确认后发送</h2>
-      <p>在「连接与语音」中选择「Codex 听写 · Ctrl + Shift + D」或微信输入法，并让目标应用使用 CABLE Output 麦克风。切到 Codex 输入框，按住遥控器语音键说话，松开结束。</p>
-      <p class="muted">使用遥控器麦克风需要安装 VB-CABLE。松开语音键后检查文字，再按确定发送。</p>
+      <ol class="voice-steps">
+        <li>在「连接与语音」中选择「Codex 听写 · Ctrl + Shift + D」或微信输入法，并让目标应用使用 CABLE Output 麦克风。</li>
+        <li>切到 Codex 输入框，按住遥控器语音键说话，松开结束。</li>
+        <li>松开语音键后检查文字，再按确定发送。</li>
+      </ol>
+      <p class="muted">使用遥控器麦克风需要安装 VB-CABLE。</p>
     </article>
   </section>
 </template>
@@ -200,27 +205,69 @@ onMounted(load);
 .coding-page { max-width: 1040px; margin: 0 auto; }
 .intro { font-size: 14px; margin: 9px 0 4px; }
 .readiness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
-.readiness-card { padding: 18px; }
-.readiness-card p { font-size: 14px; margin: 13px 0; }
-.model-code { color: var(--text-secondary); font-size: 12px; }
+.readiness-card { padding: 16px 18px; }
+.readiness-card p { font-size: 14px; margin: 12px 0; }
+.model-code { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .preset-card { padding: 20px; }
 .preset-card .card-title-row p { margin: 7px 0 16px; font-size: 13px; }
+/* 表格放进一块内嵌玻璃：表头与行线都在玻璃内部，圆角不会被直角表格切掉 */
+.mapping-table-frame {
+  overflow: hidden;
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  box-shadow: inset 0 1px 0 var(--glass-edge-soft);
+}
 .mapping-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
-.mapping-table th, .mapping-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; overflow-wrap: anywhere; }
+.mapping-table th, .mapping-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); text-align: left; overflow-wrap: anywhere; }
+.mapping-table tbody tr:last-child th, .mapping-table tbody tr:last-child td { border-bottom: 0; }
 .mapping-table thead { color: var(--text-secondary); background: var(--surface-subtle); }
-.mapping-table th:first-child { width: 13%; }
-.mapping-table tbody th { font-weight: 600; }
+.mapping-table thead th { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; }
+.mapping-table th:first-child { width: 14%; }
+.mapping-table tbody th { font-weight: 650; }
+.mapping-table tbody tr { transition: background-color 0.15s; }
+.mapping-table tbody tr:hover { background: var(--surface-hover); }
 .mapping-table td { color: var(--accent-text); }
-.preset-action { font-weight: 600; }
-.current-action { display: block; margin-top: 5px; font-size: 11px; }
-.preserved-note { font-size: 12px; margin: 13px 0; }
-.input-note, .preview-note { padding: 11px 13px; background: var(--warning-surface-soft); color: var(--warning-strong); border-radius: 8px; font-size: 13px; line-height: 1.55; }
+.mapping-table td.unset { color: var(--muted); }
+.preset-action { font-weight: 650; }
+.current-action { display: block; margin-top: 5px; font-size: 11.5px; }
+.preserved-note { font-size: 12.5px; line-height: 1.6; margin: 14px 0; }
+.input-note, .preview-note {
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--warning-surface-soft);
+  color: var(--warning-strong);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.input-note strong { font-weight: 650; margin-right: 4px; }
 .preset-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
-.preset-actions > span { font-size: 12px; }
-.preset-actions .primary-button { min-height: 36px; }
+.preset-actions > span { font-size: 12.5px; }
+.preset-actions .primary-button { min-height: 38px; padding: 7px 18px; }
 .restore-area { margin-top: 12px; font-size: 13px; }
 .restore-area .button-row { justify-content: flex-start; }
 .save-success { color: var(--success-text); font-size: 13px; margin-bottom: 0; }
 .voice-guide { margin-top: 16px; padding: 18px 20px; }
 .voice-guide p { font-size: 13px; margin: 10px 0 0; }
+/* 真实的先后顺序，才用编号 */
+.voice-steps { margin: 12px 0 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 8px; }
+.voice-steps li { position: relative; padding-left: 32px; font-size: 13.5px; line-height: 1.55; counter-increment: step; }
+.voice-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-border);
+  border-radius: 50%;
+  color: var(--accent-text);
+  background: var(--accent-surface);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
 </style>
