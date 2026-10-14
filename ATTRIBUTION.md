@@ -26,6 +26,11 @@
 - 对照 Microsoft [HidD_GetInputReport](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/hidsdi/nf-hidsdi-hidd_getinputreport)：它可用于读取当前报告，长度须来自实际集合的 `HIDP_CAPS`，不能照搬内部 9 字节帧。[获取 HID 报告说明](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/obtaining-hid-reports) 明确部分设备不支持，调用后可能无响应；描述符长度或非空句柄不能作为支持证明。本轮未向当前正常连接试发该请求。
 - 现有 GameInput 实验没有返回三键及原始报告，不能替代松键证据；旧 `ReadFile` 拒绝访问也不能据此判定 `GetInputReport` 必定失败。候选方案与待验边界见 [增强验证记录](Testing/WindowsRc003Input.md#2026-10-14-首次增强初始化复核)。未复制实现、未扩展 Helper 私有接口范围、未改变设备或蓝牙状态。
 
+### 2026-10-14 增强初始化提示弹窗
+
+- 0.2.16 按用户要求把初始化说明增强为应用内小弹窗，沿用本仓库 `RegisteredAppsDialog.vue` 的原生 `dialog.showModal()` 做法，并对照 [W3C Modal Dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) 与 [MDN showModal](https://developer.mozilla.org/en-US/docs/Web/API/HTMLDialogElement/showModal) 的标题、描述、取消和原生背景禁用行为；未复制外部代码。
+- 每个增强代次只自动提示一次；稍后操作或 Escape 只收起提示，同代切页和读取恢复不重复弹出，原位置保留说明和手动查看入口。ready、停止、错误、断连及离页时关闭提示，不自行确认松键。仅使用 WebView 内部弹窗，不调用系统前台、窗口置顶、全局按键或蓝牙操作。
+
 ## 2026-10-07 RC003 空闲通信修复
 
 - 参考 Microsoft [accept](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept) 与 [recv](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-recv) 对非阻塞继承及 `WSAEWOULDBLOCK` 的规定；本机隔离 Winsock 实验确认空闲忙等，恢复阻塞后保留既有超时即可消除。
