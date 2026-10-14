@@ -20,6 +20,12 @@
 - 不沿用上游允许共享宿主而只按报告内容归属的做法：TV 与普通键盘反引号使用相同 usage，必须保留本地 `rc003Source.matches(args)` 的逐调用设备来源校验。上游先报告边沿再尝试清除、租约丢失后恢复全局门控的行为也不采用；TV 状态须有本帧清除读回与调用结果依据，失败时取消手势，普通 OEM3 始终放行。
 - 上游全按键自动化和协议 ACK 不证明本机物理 TV 已不输出字符；真实报告来源、冷态首按、按住停止和普通键盘负对照需分别实测。此前“同一输入框以前正常”的用户证据保留，突发时间点的触发原因仍未知，不能把长期存在的泄漏路径当作已证明的突发原因。
 
+### 2026-10-14 增强自动初始化可行性复核
+
+- 本地 `controller.py` 与 `observer.js` 的首次真实松键门禁仍须保留。方向键只是产生中性报告的便捷方式，不是协议要求；当前 `source_binding.js` 仅提供设备来源校验，没有当前按键状态查询。来源缓存、上代松键或等待超时都不能证明新一代实际松键。
+- 对照 Microsoft [HidD_GetInputReport](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/hidsdi/nf-hidsdi-hidd_getinputreport)：它可用于读取当前报告，长度须来自实际集合的 `HIDP_CAPS`，不能照搬内部 9 字节帧。[获取 HID 报告说明](https://learn.microsoft.com/en-us/windows-hardware/drivers/hid/obtaining-hid-reports) 明确部分设备不支持，调用后可能无响应；描述符长度或非空句柄不能作为支持证明。本轮未向当前正常连接试发该请求。
+- 现有 GameInput 实验没有返回三键及原始报告，不能替代松键证据；旧 `ReadFile` 拒绝访问也不能据此判定 `GetInputReport` 必定失败。候选方案与待验边界见 [增强验证记录](Testing/WindowsRc003Input.md#2026-10-14-首次增强初始化复核)。未复制实现、未扩展 Helper 私有接口范围、未改变设备或蓝牙状态。
+
 ## 2026-10-07 RC003 空闲通信修复
 
 - 参考 Microsoft [accept](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept) 与 [recv](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-recv) 对非阻塞继承及 `WSAEWOULDBLOCK` 的规定；本机隔离 Winsock 实验确认空闲忙等，恢复阻塞后保留既有超时即可消除。
