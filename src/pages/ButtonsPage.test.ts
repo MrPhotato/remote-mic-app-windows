@@ -87,7 +87,7 @@ import {
   stopShortcutCapture,
   testButtonMapping,
 } from "../lib/bridge";
-import type { ButtonMappings, RuntimeSnapshot } from "../lib/bridge";
+import type { ButtonAction, ButtonMappings, RuntimeSnapshot } from "../lib/bridge";
 import { ACTION_LIBRARY_STORAGE_KEY, readActionLibrary } from "../lib/action-library";
 
 const runtime: RuntimeSnapshot = {
@@ -366,6 +366,115 @@ describe("buttons mapping page", () => {
     wrapper.unmount();
   });
 
+  it("keeps collapsed mouse and app tools available through every tab and search without saving", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    for (const tab of ["common", "chat", "edit", "view", "system"]) {
+      await wrapper.get(`#action-tab-${tab}`).trigger("click");
+      await wrapper.get('input[aria-label="搜索全部功能"]').setValue("没有匹配的功能");
+      for (const [selector, title] of [[".mouse-tools", "鼠标控制"], [".app-tools", "打开应用"]]) {
+        const tools = wrapper.get(selector!);
+        expect(tools.element.tagName).toBe("DETAILS");
+        expect(tools.get("summary").text()).toContain(title);
+        expect((tools.element as HTMLDetailsElement).open).toBe(false);
+      }
+    }
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    expect(localStorage.getItem(ACTION_LIBRARY_STORAGE_KEY)).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("preserves independent tool expansion when the functional tab or search changes", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await expandTools(wrapper, ".mouse-tools");
+    const mouse = wrapper.get(".mouse-tools").element as HTMLDetailsElement;
+    const apps = wrapper.get(".app-tools").element as HTMLDetailsElement;
+    for (const tab of ["chat", "edit", "view", "system", "common"]) {
+      await wrapper.get(`#action-tab-${tab}`).trigger("click");
+      await wrapper.get('input[aria-label="搜索全部功能"]').setValue("插队");
+      expect(wrapper.get(".mouse-tools").element).toBe(mouse);
+      expect(wrapper.get(".app-tools").element).toBe(apps);
+      expect(mouse.open).toBe(true);
+      expect(apps.open).toBe(false);
+    }
+    await wrapper.get(".mouse-tools summary").trigger("click");
+    await expandTools(wrapper, ".app-tools");
+    await wrapper.get("#action-tab-view").trigger("click");
+    expect(mouse.open).toBe(false);
+    expect(apps.open).toBe(true);
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it.each([
+    { action: { type: "scroll", direction: "down", steps: 3 } as ButtonAction, label: "每次滚动格数", amount: "steps" },
+    { action: { type: "mouse_move", direction: "right", distance: 30 } as ButtonAction, label: "每次移动像素", amount: "distance" },
+  ])("keeps $label editable outside tool disclosures and independent of tabs or search", async ({ action, label, amount }) => {
+    vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: true, actions: {
+      power: { single: action, double: { type: "disabled" }, long: { type: "disabled" } },
+    } });
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    for (const [index, tab] of ["common", "chat", "edit", "view", "system"].entries()) {
+      await wrapper.get(`#action-tab-${tab}`).trigger("click");
+      await wrapper.get('input[aria-label="搜索全部功能"]').setValue("插队");
+      const input = wrapper.get(`input[aria-label="${label}"]`);
+      expect(input.element.closest("details")).toBeNull();
+      expect((wrapper.get(".mouse-tools").element as HTMLDetailsElement).open).toBe(false);
+      await input.setValue(String(5 + index));
+      await flushPromises();
+      expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.power?.single).toEqual({ ...action, [amount]: 5 + index });
+    }
+    await expandTools(wrapper, ".mouse-tools");
+    await wrapper.get(".mouse-tools summary").trigger("click");
+    expect(wrapper.findAll(`input[aria-label="${label}"]`)).toHaveLength(1);
+    expect(saveButtonMappings).toHaveBeenCalledTimes(5);
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("searches the app library independently from the functional list", async () => {
+    vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: true, actions: {}, applications: [
+      { name: "Example Writer", path: "shell:AppsFolder\\ExampleWriter!App" },
+      { name: "Example Reader", path: "shell:AppsFolder\\ExampleReader!App" },
+    ] });
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await wrapper.get('input[aria-label="搜索全部功能"]').setValue("插队");
+    await expandTools(wrapper, ".app-tools");
+    const appSearch = wrapper.get('input[aria-label="搜索应用"]');
+    await appSearch.setValue("Writer");
+    const appNames = () => wrapper.findAll(".app-tools .saved-app-grid button").map(button => button.text());
+    expect(appNames()).toEqual(["Example Writer"]);
+    expect(wrapper.get('[data-action-id="queue-message"]').text()).toContain("插队/排队");
+    await wrapper.get("#action-tab-view").trigger("click");
+    expect((appSearch.element as HTMLInputElement).value).toBe("Writer");
+    expect(appNames()).toEqual(["Example Writer"]);
+    await wrapper.get('input[aria-label="搜索全部功能"]').setValue("Reader");
+    expect(wrapper.findAll(".action-option-select strong").map(label => label.text())).toContain("打开 Example Reader");
+    const readerOption = wrapper.findAll(".action-option").find(option => option.get("strong").text() === "打开 Example Reader")!;
+    const readerActionId = readerOption.get(".action-option-select").attributes("data-action-id");
+    expect(readerOption.find(".action-pin").exists()).toBe(false);
+    expect(appNames()).toEqual(["Example Writer"]);
+    expect((appSearch.element as HTMLInputElement).value).toBe("Writer");
+    await appSearch.setValue("");
+    expect(appNames()).toEqual(["Example Writer", "Example Reader"]);
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    expect(localStorage.getItem(ACTION_LIBRARY_STORAGE_KEY)).toBeNull();
+    await readerOption.get(".action-option-select").trigger("click");
+    await flushPromises();
+    const rememberedReader = wrapper.findAll(".action-option").find(option => option.get(".action-option-select").attributes("data-action-id") === readerActionId)!;
+    expect(rememberedReader.find(".action-pin").exists()).toBe(true);
+    expect(saveButtonMappings).toHaveBeenCalledOnce();
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it("saves a Codex option only to the selected gesture without executing it", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "电源", 1);
@@ -386,7 +495,7 @@ describe("buttons mapping page", () => {
       .findAll(".mapping-card")
       .find((item) => item.find(".mapping-card-title strong").text() === "电源")!;
     await powerCard.findAll(".mapping-cell")[0]!.trigger("click");
-    await wrapper.get("#action-tab-system").trigger("click");
+    await expandTools(wrapper, ".app-tools");
     await wrapper
       .findAll("button")
       .find((button) => button.text() === "扫描本机应用")!
@@ -552,7 +661,7 @@ describe("buttons mapping page", () => {
       await flushPromises();
     };
 
-    await wrapper.get("#action-tab-view").trigger("click");
+    await expandTools(wrapper, ".mouse-tools");
     await choose("滚轮向下");
     await wrapper.get('input[aria-label="每次滚动格数"]').setValue("5");
     await flushPromises();
@@ -704,7 +813,7 @@ describe("buttons mapping page", () => {
 
   async function chipState(wrapper: VueWrapper, label: string): Promise<boolean> {
     if (label === "＋ 添加应用") {
-      await wrapper.get("#action-tab-system").trigger("click");
+      await expandTools(wrapper, ".app-tools");
       return (wrapper.get(".add-app").element as HTMLButtonElement).disabled;
     }
     if (label === "录入自定义快捷键") return (wrapper.get(".custom-shortcut-row button").element as HTMLButtonElement).disabled;
@@ -712,6 +821,12 @@ describe("buttons mapping page", () => {
     const option = wrapper.findAll(".action-option-select").find(button => button.get("strong").text() === label);
     expect(option, "未找到功能：" + label).toBeDefined();
     return (option!.element as HTMLButtonElement).disabled;
+  }
+
+  async function expandTools(wrapper: VueWrapper, selector: ".mouse-tools" | ".app-tools"): Promise<void> {
+    const tools = wrapper.get(selector);
+    if (!(tools.element as HTMLDetailsElement).open) await tools.get("summary").trigger("click");
+    expect((tools.element as HTMLDetailsElement).open).toBe(true);
   }
 
   async function openCell(

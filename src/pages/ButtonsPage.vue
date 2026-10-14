@@ -343,8 +343,11 @@ const customApps = computed<Array<{ path: string; name: string }>>(() => {
 const appPickerOpen = ref(false);
 const appPickerError = ref<string | null>(null);
 const appFilter = ref("");
-const filteredCustomApps = computed(() => customApps.value.filter(app => app.name.toLocaleLowerCase().includes((actionSearch.value || appFilter.value).trim().toLocaleLowerCase())));
-const filteredPresetApps = computed(() => presetApps.value.filter(app => app.name.toLocaleLowerCase().includes(actionSearch.value.trim().toLocaleLowerCase())));
+const filteredCustomApps = computed(() => customApps.value.filter(app => app.name.toLocaleLowerCase().includes(appFilter.value.trim().toLocaleLowerCase())));
+const filteredPresetApps = computed(() => presetApps.value.filter(app => app.name.toLocaleLowerCase().includes(appFilter.value.trim().toLocaleLowerCase())));
+function reportToolsToggle(event: Event, tool: "mouse" | "apps"): void {
+  reportFrontendEvent({ event: "button_mapping_tools", phase: "completed", result: "passed", reason: `${tool}_${(event.currentTarget as HTMLDetailsElement).open ? "expanded" : "collapsed"}` });
+}
 watch([presetApps, () => mappings.value.applications], () => {
   registerPresetAppNames([...presetApps.value, ...(mappings.value.applications ?? []).map(app => ({ id: app.path, name: app.name }))]);
 }, { deep: true });
@@ -421,6 +424,7 @@ function applyAction(action: ButtonAction, source: "choice" | "capture" = "choic
 const selectedAction = computed(() => editingTarget.value ? actionOf(editingTarget.value.button, editingTarget.value.trigger) : null);
 const loadedLibrary = readActionLibrary();
 const actionLibrary = ref<ActionLibraryState>(loadedLibrary.state);
+const pinnableActionIds = computed(() => new Set(actionEntries(actionLibrary.value).map(entry => entry.id)));
 const libraryWarning = ref<string | null>(loadedLibrary.error);
 reportFrontendEvent({ event: "button_action_library", phase: "loaded", result: loadedLibrary.error ? "failed" : "passed", reason: loadedLibrary.error ? "storage_read_failed" : "library_loaded" });
 const activeTab = ref<(typeof ACTION_TABS)[number]["id"]>("common");
@@ -472,7 +476,19 @@ function entryAvailable(entry: ActionEntry): boolean {
 const visibleActions = computed(() => {
   const query = actionSearch.value.trim();
   if (query || activeTab.value !== "common") {
-    return searchActions(actionLibrary.value, query, activeTab.value).filter(entryAvailable);
+    const results = searchActions(actionLibrary.value, query, activeTab.value).filter(entryAvailable);
+    // The main search still finds all available apps. It only changes library
+    // results; the independent app picker keeps its own filter and controls.
+    if (query) {
+      const apps = [...presetApps.value.map(app => ({ name: app.name, target: app.id })), ...customApps.value.map(app => ({ name: app.name, target: app.path }))];
+      for (const app of apps) {
+        if (!app.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) continue;
+        const action: ButtonAction = { type: "open_app", target: app.target };
+        if (results.some(entry => actionIdentity(entry.action) === actionIdentity(action))) continue;
+        results.push({ id: findKnownAction(action)?.id ?? `custom:${actionIdentity(action)}`, label: `打开 ${app.name}`, group: "system", action });
+      }
+    }
+    return results;
   }
   const byId = new Map(actionEntries(actionLibrary.value).map(entry => [entry.id, entry]));
   return commonOrder.value.map(id => byId.get(id)).filter((entry): entry is ActionEntry => Boolean(entry)).filter(entryAvailable);
@@ -1267,6 +1283,20 @@ onUnmounted(() => {
           <p v-if="actionsOf('back').single.type === 'normal_backspace'" class="muted editor-note">普通退格：按住按 Windows 键盘重复速度连续删除；长按随单击生效，无需另配。</p>
           <p v-if="actionsOf('back').double.type === 'delete_to_punctuation'" class="muted editor-note punctuation-note">当前双击从光标向左删到上一处标点，并保留标点。仅支持可读取文本的编辑区；无法安全读取时不执行双击批量删除。</p>
         </section>
+        <section v-if="selectedAction?.type === 'scroll' || selectedAction?.type === 'mouse_move'" class="selected-action-settings" aria-label="当前鼠标动作参数">
+          <h4 class="action-section-title">{{ actionDisplayName(selectedAction, actionLibrary) }}</h4>
+          <label v-if="selectedAction.type === 'scroll'" class="mouse-amount">
+            <span>每次滚动</span>
+            <input aria-label="每次滚动格数" :disabled="editorInputBusy" type="number" min="1" max="100" step="1" :value="scrollSteps" @change="updateMouseAmount($event, 'scroll')" />
+            <span>格</span>
+          </label>
+          <label v-else class="mouse-amount">
+            <span>每次移动</span>
+            <input aria-label="每次移动像素" :disabled="editorInputBusy" type="number" min="1" max="2000" step="1" :value="moveDistance" @change="updateMouseAmount($event, 'mouse_move')" />
+            <span>像素</span>
+          </label>
+        </section>
+
         <section class="action-section action-library" aria-label="功能库">
           <div class="action-library-toolbar">
             <div class="action-tabs" role="tablist" aria-label="功能分类">
@@ -1283,7 +1313,7 @@ onUnmounted(() => {
                 <span v-if="entry.action.type === 'shortcut'" class="action-option-keys">{{ chordLabel(entry.action.chord) }}</span>
                 <small v-if="entry.note">{{ entry.note }}</small>
               </button>
-              <button class="action-pin" :disabled="editorInputBusy" :class="{ pinned: actionLibrary.pinned.includes(entry.id) }" type="button" :aria-label="(actionLibrary.pinned.includes(entry.id) ? '取消置顶：' : '置顶：') + entry.label" :aria-pressed="actionLibrary.pinned.includes(entry.id)" @click="togglePinned(entry)">{{ actionLibrary.pinned.includes(entry.id) ? '★' : '☆' }}</button>
+              <button v-if="pinnableActionIds.has(entry.id)" class="action-pin" :disabled="editorInputBusy" :class="{ pinned: actionLibrary.pinned.includes(entry.id) }" type="button" :aria-label="(actionLibrary.pinned.includes(entry.id) ? '取消置顶：' : '置顶：') + entry.label" :aria-pressed="actionLibrary.pinned.includes(entry.id)" @click="togglePinned(entry)">{{ actionLibrary.pinned.includes(entry.id) ? '★' : '☆' }}</button>
             </div>
             <p v-if="!visibleActions.length" class="muted">没有匹配项，可以在上方录制快捷键。</p>
           </div>
@@ -1297,77 +1327,74 @@ onUnmounted(() => {
         </section>
 
 
-        <section v-if="activeTab === 'view' && !actionSearch.trim()" class="action-section">
-          <h4 class="action-section-title">鼠标滚轮</h4>
-          <div class="preset-grid">
-            <button v-for="direction in (['up', 'down'] as const)" :key="direction" class="chip"
-              :class="{ selected: isActiveScroll(direction) }" type="button" :disabled="editorInputBusy" title="在鼠标当前位置滚动"
-              @click="applyAction({ type: 'scroll', direction, steps: scrollSteps })">{{ direction === "up" ? "滚轮向上" : "滚轮向下" }}</button>
-          </div>
-          <label v-if="selectedAction?.type === 'scroll'" class="mouse-amount">
-            <span>每次滚动</span>
-            <input aria-label="每次滚动格数" :disabled="editorInputBusy" type="number" min="1" max="100" step="1" :value="scrollSteps" @change="updateMouseAmount($event, 'scroll')" />
-            <span>格</span>
-          </label>
-        </section>
+        <details class="mapping-tools mouse-tools" @toggle="reportToolsToggle($event, 'mouse')">
+          <summary>鼠标控制</summary>
+          <div class="mapping-tools-body">
+            <section class="action-section">
+              <h4 class="action-section-title">鼠标滚轮</h4>
+              <div class="preset-grid">
+                <button v-for="direction in (['up', 'down'] as const)" :key="direction" class="chip"
+                  :class="{ selected: isActiveScroll(direction) }" type="button" :disabled="editorInputBusy" title="在鼠标当前位置滚动"
+                  @click="applyAction({ type: 'scroll', direction, steps: scrollSteps })">{{ direction === "up" ? "滚轮向上" : "滚轮向下" }}</button>
+              </div>
+            </section>
 
-        <section v-if="activeTab === 'view' && !actionSearch.trim()" class="action-section">
-          <h4 class="action-section-title">鼠标点击</h4>
-          <div class="preset-grid">
-            <button v-for="(label, kind) in mouseClickLabels" :key="kind" class="chip" type="button" :disabled="editorInputBusy"
-              :class="{ selected: selectedAction?.type === 'mouse_click' && selectedAction.kind === kind }"
-              title="点击鼠标当前位置" @click="applyAction({ type: 'mouse_click', kind })">{{ label }}</button>
-          </div>
-        </section>
+            <section class="action-section">
+              <h4 class="action-section-title">鼠标点击</h4>
+              <div class="preset-grid">
+                <button v-for="(label, kind) in mouseClickLabels" :key="kind" class="chip" type="button" :disabled="editorInputBusy"
+                  :class="{ selected: selectedAction?.type === 'mouse_click' && selectedAction.kind === kind }"
+                  title="点击鼠标当前位置" @click="applyAction({ type: 'mouse_click', kind })">{{ label }}</button>
+              </div>
+            </section>
 
-        <section v-if="activeTab === 'view' && !actionSearch.trim()" class="action-section">
-          <h4 class="action-section-title">鼠标移动</h4>
-          <div class="preset-grid">
-            <button v-for="(label, direction) in mouseMoveLabels" :key="direction" class="chip mouse-direction" type="button" :disabled="editorInputBusy"
-              :aria-label="label" :title="label" :class="{ selected: selectedAction?.type === 'mouse_move' && selectedAction.direction === direction }"
-              @click="applyAction({ type: 'mouse_move', direction, distance: moveDistance })">{{ moveSymbols[direction] }}</button>
+            <section class="action-section">
+              <h4 class="action-section-title">鼠标移动</h4>
+              <div class="preset-grid">
+                <button v-for="(label, direction) in mouseMoveLabels" :key="direction" class="chip mouse-direction" type="button" :disabled="editorInputBusy"
+                  :aria-label="label" :title="label" :class="{ selected: selectedAction?.type === 'mouse_move' && selectedAction.direction === direction }"
+                  @click="applyAction({ type: 'mouse_move', direction, distance: moveDistance })">{{ moveSymbols[direction] }}</button>
+              </div>
+            </section>
           </div>
-          <label v-if="selectedAction?.type === 'mouse_move'" class="mouse-amount">
-            <span>每次移动</span>
-            <input aria-label="每次移动像素" :disabled="editorInputBusy" type="number" min="1" max="2000" step="1" :value="moveDistance" @change="updateMouseAmount($event, 'mouse_move')" />
-            <span>像素</span>
-          </label>
-        </section>
+        </details>
 
-        <section v-if="(activeTab === 'system' && !actionSearch.trim()) || (actionSearch.trim() && (filteredPresetApps.length || filteredCustomApps.length))" class="action-section">
-          <h4 class="action-section-title">打开应用</h4>
-          <div class="preset-grid">
-            <button
-              v-for="app in filteredPresetApps"
-              :key="app.id"
-              class="chip"
-              :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.id }"
-              type="button"
-              title="已运行则切到该应用窗口，未运行则启动"
-              :disabled="editorInputBusy"
-              @click="applyAction({ type: 'open_app', target: app.id })"
-            >
-              {{ app.name }}
-            </button>
-            <button v-if="!actionSearch.trim()" class="chip" type="button" :disabled="editorInputBusy" @click="appPickerError = null; appPickerOpen = true">扫描本机应用</button>
-            <button
-              class="chip add-app"
-              v-if="!actionSearch.trim()"
-              type="button"
-              title="从本机选择任意程序或快捷方式"
-              :disabled="editorInputBusy"
-              @click="addCustomApp"
-            >
-              ＋ 添加应用
-            </button>
+        <details class="mapping-tools app-tools" @toggle="reportToolsToggle($event, 'apps')">
+          <summary>打开应用</summary>
+          <div class="mapping-tools-body">
+            <input v-model="appFilter" class="app-library-search" type="search" aria-label="搜索应用" placeholder="搜索应用" />
+            <div class="preset-grid">
+              <button
+                v-for="app in filteredPresetApps"
+                :key="app.id"
+                class="chip"
+                :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.id }"
+                type="button"
+                title="已运行则切到该应用窗口，未运行则启动"
+                :disabled="editorInputBusy"
+                @click="applyAction({ type: 'open_app', target: app.id })"
+              >
+                {{ app.name }}
+              </button>
+              <button class="chip" type="button" :disabled="editorInputBusy" @click="appPickerError = null; appPickerOpen = true">扫描本机应用</button>
+              <button
+                class="chip add-app"
+                type="button"
+                title="从本机选择任意程序或快捷方式"
+                :disabled="editorInputBusy"
+                @click="addCustomApp"
+              >
+                ＋ 添加应用
+              </button>
+            </div>
+            <div v-if="customApps.length" class="preset-grid saved-app-grid">
+              <button v-for="app in filteredCustomApps" :key="app.path" class="chip" type="button" :disabled="editorInputBusy"
+                :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.path }"
+                :title="app.name" @click="applyAction({ type: 'open_app', target: app.path })">{{ app.name }}</button>
+            </div>
+            <p v-if="appFilter.trim() && !filteredPresetApps.length && !filteredCustomApps.length" class="muted">没有找到应用，可以扫描本机应用或手动添加。</p>
           </div>
-          <input v-if="customApps.length > 12" v-model="appFilter" class="app-library-search" type="search" aria-label="筛选已添加应用" placeholder="筛选已添加应用" />
-          <div v-if="customApps.length" class="preset-grid saved-app-grid">
-            <button v-for="app in filteredCustomApps" :key="app.path" class="chip" type="button" :disabled="editorInputBusy"
-              :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.path }"
-              :title="app.name" @click="applyAction({ type: 'open_app', target: app.path })">{{ app.name }}</button>
-          </div>
-        </section>
+        </details>
 
 
       </div>
@@ -1425,6 +1452,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.mapping-tools { border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-control); }
+.mapping-tools summary { padding: 12px 14px; cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.mapping-tools summary:focus-visible { outline: 2px solid var(--accent-border); outline-offset: -2px; border-radius: 9px; }
+.mapping-tools-body { display: grid; gap: 14px; padding: 0 14px 14px; }
+.selected-action-settings { padding: 12px 14px; border-left: 3px solid var(--accent-border); border-radius: 6px; background: var(--accent-surface); }
+.selected-action-settings .mouse-amount { margin-top: 0; }
 .shortcut-recorder { padding: 16px; border: 1px solid var(--accent-border); border-radius: 12px; background: var(--accent-surface); }
 .shortcut-recorder .action-section-title { color: var(--text-primary); font-size: 15px; }
 .custom-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 12px; }
