@@ -1304,8 +1304,10 @@ onUnmounted(() => {
             </div>
             <input v-model="actionSearch" type="search" aria-label="搜索全部功能" placeholder="搜索功能或快捷键" />
           </div>
-          <p v-if="actionSearch.trim()" class="muted library-hint">搜索全部分类，包括你保存的自定义快捷键。</p>
-          <p v-else-if="activeTab === 'common'" class="muted library-hint">按最近和经常选择的功能排序。星标可置顶，下次选择按键时更新顺序。</p>
+          <p class="muted library-hint library-filter-hint">
+            <template v-if="actionSearch.trim()">搜索全部功能及已保存的快捷键。</template>
+            <template v-else-if="activeTab === 'common'">按使用习惯排序，星标可置顶。</template>
+          </p>
           <div id="action-options" class="action-options" role="tabpanel" :aria-labelledby="'action-tab-' + activeTab">
             <div v-for="entry in visibleActions" :key="entry.id" class="action-option" :class="{ selected: isActiveEntry(entry), secondary: entry.more }">
               <button class="action-option-select" :data-action-id="entry.id" :aria-pressed="isActiveEntry(entry)" type="button" :disabled="editorInputBusy" @click="chooseEntry(entry)">
@@ -1469,7 +1471,8 @@ onUnmounted(() => {
 .action-library-toolbar input, .custom-name-row input { min-height: 36px; box-sizing: border-box; padding: 7px 10px; color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-strong); border-radius: 7px; font: inherit; }
 .action-library-toolbar input { flex: 1; min-width: 170px; max-width: 320px; }
 .mapping-editor .library-hint { margin: 10px 0; line-height: 1.5; font-size: 12px; }
-.action-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; padding: 3px; align-content: start; scrollbar-gutter: stable; }
+.mapping-editor .library-filter-hint { min-height: 1.5em; }
+.action-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; height: 360px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 3px; align-content: start; scrollbar-gutter: stable; }
 .action-option { display: flex; min-width: 0; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-control); }
 .action-option:hover, .action-option.selected { border-color: var(--accent-border); background: var(--accent-surface); }
 .action-option-select { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; flex: 1; min-width: 0; min-height: 72px; padding: 12px; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: transparent; border: 0; cursor: pointer; }
