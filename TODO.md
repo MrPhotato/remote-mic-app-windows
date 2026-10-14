@@ -1,5 +1,9 @@
 # TODO
 
+## 2026-10-14 麦克风设备与失效线路
+
+- [ ] 分开显示实际录音端检测和内部写入端状态，避免固定 CABLE Output 文字冒充已选中；高级播放列表与麦克风选择分离，并完善保存端点失效后的恢复。当前 Windows 默认录音端为 CABLE Output，但无线麦旧端点恢复失败、语音启动被拒绝，见 [现场记录](Bugs/2026-10-14-audio-device-direction-and-stale-route.md)。
+
 ## 2026-10-08 系统蓝牙边界
 
 - [x] 移除整机蓝牙 Radio Off/On、PnP 适配器重启与启动预热入口，只保留所选遥控器连接重试；100 次失败退避、生产源码边界及 Rust workspace 302 项 passed（5 项 ignored）。见 `Bugs/2026-10-08-system-bluetooth-recovery-boundary.md`。
