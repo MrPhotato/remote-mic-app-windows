@@ -373,6 +373,27 @@ Helper 门禁为本仓库独立实现，检查完整文件清单和 PE 可读 in
 
 先审查本仓库 Windows 音频实现 `audio.rs` 的 `Direction::Render`、已保存端点的恢复及单一虚拟声卡自动选择，再核对 [VB-Audio 官方说明](https://vb-audio.com/Cable/)：CABLE Input 是播放端，CABLE Output 是录音端。主界面因此呈现“遥控器麦克风”和目标应用应选的 CABLE Output，将现有内部播放端选择折叠进高级设置。沿用既有设备枚举和 WASAPI 流，不新增电脑麦克风采集，不设置系统默认扬声器或目标应用麦克风。未复制外部实现。保存选择、自动选择及错误呈现的验证见 [本次记录](Testing/WindowsAudioAndKeyboardIsolation.md)。
 
+### 音频线路偶发失效调研（2026-10-14）
+
+本轮只定位并形成方案，没有复制实现或改变生产代码。现场公开 PnP / Core Audio 查询
+确认旧端点 `NOTPRESENT`、父设备 Code 10，同时另一个 VB-CABLE 实例正常。
+参考 [Code 10](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/cm-prob-failed-start)
+与 [NTSTATUS](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55)
+确认 `0x80000011` 为 `STATUS_DEVICE_BUSY`，不把该码推断成目标应用独占录音。
+
+恢复方案依据 Microsoft [WASAPI 失效恢复](https://learn.microsoft.com/en-us/windows/win32/coreaudio/recovering-from-an-invalid-device-error)
+及 [IMMNotificationClient](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nn-mmdeviceapi-immnotificationclient)：
+释放失效流，在 worker 中重建用户选择的设备；通知回调只做非阻塞投递。
+[GetState](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdevice-getstate)
+用于区分不存在、禁用和拔出，不能仅查 active 列表。
+VB 官方 [2024 参考手册](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf) 第 6–7 页说明
+同一 CABLE 有 speaker 和 16ch 两种播放入口，不能同时使用；候选数量不能直接等同线路数量。
+
+[StableId 文档](https://learn.microsoft.com/en-us/windows/win32/coreaudio/pkey-audioendpoint-stableid)
+提供 Windows 11 24H2+ 的长期身份路径，但本机探针未能解析公开属性键，未验证实际可用，
+不将其列为本次必需补救。适配器拓扑/容器只能提供关联证据，不保证任意 capture/render 配对。
+完整现场及方案见 [故障记录](Bugs/2026-10-14-audio-device-direction-and-stale-route.md)。
+
 ## Home/TV 与普通键盘隔离（2026-09-28）
 
 复核旧版全局常驻抑制和 4 秒武装逻辑，并参考仓库内现有 F13/F14/F15 别名的“设备确认后识别、全局钩子不识别”分层。核对 [Microsoft KBDLLHOOKSTRUCT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct) 公共字段，低级键盘事件没有来源设备标识；不能因遥控器在线或近期按键就把普通键盘 OEM_3/Home 归为遥控器。最小修复复用既有 Raw Input 设备路径过滤及合并器，不复制外部算法、不改变时序、不新增驱动或注入。代价是遥控器自身 Home/反引号原生动作及长按重复可能旁路进入前台；实际遥控器复验独立标记，详见 [Bug](Bugs/2026-09-28-physical-backquote-captured.md) 和 [验证](Testing/WindowsAudioAndKeyboardIsolation.md)。

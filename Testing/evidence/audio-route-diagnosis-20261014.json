@@ -1,0 +1,129 @@
+{
+  "date": "2026-10-14",
+  "appVersion": "0.2.11",
+  "sourceRevision": "79b1af6d02228045fa9ddf4213e92c63811786ba",
+  "status": "diagnosis_and_solution_plan_complete_implementation_deferred",
+  "historicalRestorePassedUtc": [
+    "2026-10-08T05:36:02.589Z",
+    "2026-10-12T01:52:22.766Z"
+  ],
+  "currentRestoreFailedUtc": "2026-10-14T01:50:36.791Z",
+  "savedAudioSelectionMatchesPreUpgrade": true,
+  "driverInstances": {
+    "failedProblemCode": 10,
+    "total": 3,
+    "failedProblemStatus": "0x80000011",
+    "savedEndpointParentFailed": true,
+    "driverVersion": "3.3.1.7",
+    "activeEndpointParentHealthy": true,
+    "failedProblemStatusName": "STATUS_DEVICE_BUSY",
+    "failedToStart": 2,
+    "healthy": 1,
+    "activeRenderAndCaptureShareOneHealthyParent": true
+  },
+  "coreAudioReadOnlyProbe": {
+    "capturedAtUtc": "2026-10-14T02:12:53.9464322Z",
+    "osVersion": "10.0.26200",
+    "osBuild": "26200",
+    "stableIdOsRequirementMet": true,
+    "readOnly": true,
+    "ok": true,
+    "probe": {
+      "stableIdCanonicalNameResolutionHresult": "0x8002802B",
+      "enumerationHresult": "0x00000000",
+      "stableIdPropertyKeyResolved": false,
+      "savedGetDeviceHresult": "0x00000000",
+      "savedEndpoint": {
+        "label": "saved_render",
+        "getStateHresult": "0x00000000",
+        "state": "not_present",
+        "stableIdQueried": false,
+        "hasStableId": null
+      },
+      "cableEndpoints": [
+        {
+          "label": "cable_render_1",
+          "getStateHresult": "0x00000000",
+          "state": "not_present",
+          "stableIdQueried": false,
+          "hasStableId": null,
+          "dataFlowHresult": "0x00000000",
+          "sameOrdinaryIdAsSaved": true,
+          "sameStableIdAsSaved": null
+        },
+        {
+          "label": "cable_render_2",
+          "getStateHresult": "0x00000000",
+          "state": "active",
+          "stableIdQueried": false,
+          "hasStableId": null,
+          "dataFlowHresult": "0x00000000",
+          "sameOrdinaryIdAsSaved": false,
+          "sameStableIdAsSaved": null
+        },
+        {
+          "label": "cable_render_3",
+          "getStateHresult": "0x00000000",
+          "state": "not_present",
+          "stableIdQueried": false,
+          "hasStableId": null,
+          "dataFlowHresult": "0x00000000",
+          "sameOrdinaryIdAsSaved": false,
+          "sameStableIdAsSaved": null
+        },
+        {
+          "label": "cable_render_4",
+          "getStateHresult": "0x00000000",
+          "state": "active",
+          "stableIdQueried": false,
+          "hasStableId": null,
+          "dataFlowHresult": "0x00000000",
+          "sameOrdinaryIdAsSaved": false,
+          "sameStableIdAsSaved": null
+        },
+        {
+          "label": "cable_capture_1",
+          "getStateHresult": "0x00000000",
+          "state": "active",
+          "stableIdQueried": false,
+          "hasStableId": null,
+          "dataFlowHresult": "0x00000000",
+          "sameOrdinaryIdAsSaved": false,
+          "sameStableIdAsSaved": null
+        },
+        {
+          "label": "cable_capture_2",
+          "getStateHresult": "0x00000000",
+          "state": "not_present",
+          "stableIdQueried": false,
+          "hasStableId": null,
+          "dataFlowHresult": "0x00000000",
+          "sameOrdinaryIdAsSaved": false,
+          "sameStableIdAsSaved": null
+        }
+      ]
+    }
+  },
+  "windowsDefaultCapture": "active_vb_cable",
+  "windowsCommunicationsCapture": "internal_microphone_array",
+  "appRestoreRetriesImplemented": false,
+  "refreshListReopensAudio": false,
+  "systemMaintenanceEvidence": {
+    "result": "SUCCESS",
+    "operation": "Enable Device Install",
+    "process": "TiWorker.exe",
+    "causeOfCode10Proven": false,
+    "localDateTime": "2026-10-13 10:34:24 and 10:34:26 UTC+8"
+  },
+  "rawLogSha256": "3bc23001ee502dade63249d47f04fc1b654015fd1a59c08e4109dd9b53e11b71",
+  "boundaries": {
+    "configurationChanged": false,
+    "defaultDevicesChanged": false,
+    "audioStreamOpened": false,
+    "driverChanged": false,
+    "appRestarted": false,
+    "productionCodeChanged": false,
+    "endToEndRecovery": "deferred",
+    "bluetoothChanged": false
+  }
+}
