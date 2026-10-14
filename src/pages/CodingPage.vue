@@ -170,7 +170,7 @@ onMounted(load);
         </table>
       </div>
       <p class="preserved-note muted">主页和 TV 的单按需等待约 0.3 秒；菜单和电源的单按在松开时触发。返回键按一下退格，按住连续删除，松开停止。方向键支持按住连续操作，音量键每次按下只切换一个聊天；RC003 的返回及音量键需先启用按键增强。</p>
-      <p class="input-note"><strong>先按主页打开 Codex。</strong>快捷键只作用于当前前台窗口。确定键发送 Enter：在输入框里会发出内容，在审批提示里会批准操作。电源键短按为 Esc，长按为插队/排队（Ctrl + Enter）。</p>
+      <p class="input-note"><strong>先按主页打开 Codex。</strong>快捷键只作用于当前前台窗口。确定键发送 Enter：在输入框里可能发送内容，在审批提示里可能批准操作。电源键短按为 Esc，长按为插队/排队（Ctrl + Enter）。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>
         <button class="primary-button" data-testid="apply-profile" type="button" :disabled="!canApply" @click="changeProfile(false)">{{ busy ? '正在保存…' : '应用日常默认方案' }}</button>

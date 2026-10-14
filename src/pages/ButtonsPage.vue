@@ -1539,7 +1539,6 @@ onUnmounted(() => {
   border-color: var(--accent-border);
   background: var(--surface-hover);
   box-shadow: 0 0 0 3px var(--accent-surface);
-  outline: none;
 }
 .action-library-toolbar input { flex: 1; min-width: 170px; max-width: 320px; }
 .mapping-editor .library-hint { margin: 10px 0; line-height: 1.5; font-size: 12.5px; }
@@ -1604,7 +1603,7 @@ onUnmounted(() => {
   border: 1px solid var(--glass-rim);
   border-radius: var(--radius-chip);
 }
-.mouse-amount input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-surface); outline: none; }
+.mouse-amount input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-surface); }
 .mouse-direction { width: 40px; height: 31px; padding: 0; font-size: 17px; }
 /* 滚动容器顶部会裁掉向上溢出（transform 不产生可滚动区域）：
    chip:hover 上浮 1px + 阴影会在容器顶边被切，故用内边距留出

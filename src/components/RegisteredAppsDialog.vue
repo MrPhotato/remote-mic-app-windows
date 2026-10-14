@@ -104,7 +104,7 @@ onMounted(() => {
   font: inherit;
   font-size: 13.5px;
 }
-.picker-toolbar input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-surface); outline: none; }
+.picker-toolbar input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-surface); }
 .picker-select-row { justify-content: space-between; flex-wrap: wrap; margin: 14px 0 10px; font-size: 13px; color: var(--text-secondary); }
 .picker-select-row label, .picker-app { display: flex; align-items: center; gap: 10px; }
 .picker-list {
