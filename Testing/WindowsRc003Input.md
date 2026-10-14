@@ -11,12 +11,15 @@
 - `passed`：18 个前端文件、219 项回归；增强组件 27 项（其中 14 项新增执行用例）。覆盖显示条件、重复轮询、稍后/Escape、手动重开、跨页、读取失败恢复、新代、状态失效、迟到请求、卸载及弹窗失败后的内联降级。最终补充换型号主动关闭后，27 项定向复跑通过。
 - `passed`：实际 Vue 组件及 Edge 原生 dialog，fixture 提供状态，验证原生 modal、初始焦点、背景不可交互、Escape 后焦点恢复、同代跨页不重弹、手动重开、ready 自动关闭及新代/断连处理；浅色/深色与 480/1029/1600 像素宽共 6 组均在视口内，无页面异常。未通过全局按键或系统焦点接口控制桌面。此项不代表 Helper 或遥控器实测。
 - `passed`：前端生产构建、Rust 格式检查。仅改前端和版本元数据，沿用此前底层验证。
+- `passed`：0.2.16 完整本地 NSIS 包，源码 `85d82e7d77c22294fd2f85a94b3d116e5b9c387b`，49,613,848 字节，SHA-256 `a83818c8a03e903b327f874abe6f3259ee40a2430a22890c696bdd841ca124ac`；GUI 子系统、版本、安装约束、98 个 Helper 文件及内嵌清单验证通过。无 Authenticode 签名，仅本地测试，未上传或发布。
+- `passed`：0.2.15 通过自身退出流程关闭后升级，安装器退出码 0，读回版本 0.2.16；三份配置和 11 个 WebView 本地存储文件保持一致，增强清单未变且 98 项哈希通过。未强杀、未自动启动新版、未操作蓝牙。
 - `deferred`：本地安装后的真实增强等待弹窗及实体方向键触发自动消失。尚未宣称 RC001/RC003 新一轮硬件验收通过。
 
 本机日志和截图位于忽略目录 `target/local-launch/neutral-prompt-0216/`；组件测试命令
 `npm.cmd test -- src/components/Rc003InputControl.test.ts --maxWorkers=1 --minWorkers=1`，
 全量前端 `npm.cmd test -- --maxWorkers=2 --minWorkers=1`，类型及构建 `npm.cmd run build`，
 格式 `cargo fmt --all -- --check`。原生浏览器验证使用该目录的 `check-ui.cjs`，不改生产设备状态。
+本地打包使用 `scripts/build-local.ps1 -Installer -SkipTests -SkipHelperBuild`；包检查为锁定单个候选的 `verify-windows-bundle.ps1` 包装脚本及 `scripts/verify-rc003-helper-bundle.ps1`。本轮代码与验证文档仅提交到本地功能分支，未推送。
 
 ## 2026-10-14 首次增强初始化复核
 
