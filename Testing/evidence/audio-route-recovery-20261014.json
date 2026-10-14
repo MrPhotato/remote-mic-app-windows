@@ -1,7 +1,7 @@
 {
   "date": "2026-10-14",
   "candidateVersion": "0.2.12",
-  "status": "installed_awaiting_user_start_and_voice_validation",
+  "status": "current_rc003_dictation_passed_transient_failure_unresolved",
   "software": {
     "frontendTestsPassed": 178,
     "frontendBuild": "passed",
@@ -40,7 +40,37 @@
     "defaultRoleObservation": "OPPO headphones were defaults before upgrade; after normal app exit and installation, render/communications roles used other devices. CABLE Output remained default capture. New app was not running at the after snapshot; cause of external role change is not established.",
     "formerHeadsetPresentAfterUpgrade": false
   },
-  "voiceEndToEnd": "deferred",
+  "voiceEndToEnd": "passed",
+  "postLaunchValidation": {
+    "deviceModel": "RC003",
+    "startupRouteRecovery": "passed",
+    "startupRouteRecoveryAtUtc": "2026-10-14T05:33:05Z",
+    "routeReason": "verified_virtual_route",
+    "wasapiInitialized": true,
+    "replacementPersisted": true,
+    "initialUserDictationAttempt": "failed",
+    "initialFailureObservation": "Remote voice press showed a black dotted pill that remained after release; the same physical keyboard shortcut did not show that pill.",
+    "currentDictationResult": "passed",
+    "currentDictationEvidence": "User confirmed that holding the remote voice key to speak and releasing it now produces text.",
+    "logEvidence": {
+      "snapshotAtUtc": "2026-10-14T05:45:33.4016505Z",
+      "snapshotSha256": "439063c4a883b0c2f0de82101d4cfa6df51fdf97f5cb8962063c58a7986dfa73",
+      "successfulPresses": 12,
+      "successfulReleases": 12,
+      "successfulAudioFinishes": 12,
+      "lastCompletedSession": 45,
+      "lastCompletedAudioGeneration": 12,
+      "lastCompletedAtUtc": "2026-10-14T05:42:53.802Z",
+      "lastSubmittedSamples": 75840,
+      "lastQueuedSamples": 0,
+      "textOutputCorrelatedToExactSession": false
+    },
+    "recoveryObservation": "Pill disappeared and dictation recovered during read-only diagnosis without an investigator-initiated setting change, application restart or Bluetooth reconnect.",
+    "pillOwner": "unknown",
+    "transientFailureRootCause": "deferred",
+    "strictIdleFirstUseReliability": "deferred",
+    "rc001Validation": "deferred"
+  },
   "physicalDeviceReturn": "deferred",
   "audioLossDuringVoice": "deferred",
   "sleepResume": "deferred",
