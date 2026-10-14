@@ -13,7 +13,7 @@
 - `passed`：前端生产构建、Rust 格式检查。仅改前端和版本元数据，沿用此前底层验证。
 - `passed`：0.2.16 完整本地 NSIS 包，源码 `85d82e7d77c22294fd2f85a94b3d116e5b9c387b`，49,613,848 字节，SHA-256 `a83818c8a03e903b327f874abe6f3259ee40a2430a22890c696bdd841ca124ac`；GUI 子系统、版本、安装约束、98 个 Helper 文件及内嵌清单验证通过。无 Authenticode 签名，仅本地测试，未上传或发布。
 - `passed`：0.2.15 通过自身退出流程关闭后升级，安装器退出码 0，读回版本 0.2.16；三份配置和 11 个 WebView 本地存储文件保持一致，增强清单未变且 98 项哈希通过。未强杀、未自动启动新版、未操作蓝牙。
-- `deferred`：本地安装后的真实增强等待弹窗及实体方向键触发自动消失。尚未宣称 RC001/RC003 新一轮硬件验收通过。
+- `passed`（2026-10-14，用户现场确认）：用户手动开启 0.2.16 增强，回复“弹窗出现，按键后自动消失”。安装版日志于 `09:48:24.251Z` 记录提示 shown/awaiting_neutral，于 `09:48:29.240Z` 记录 phase_ready，随后 `09:48:29.241Z` 记录 hidden/state_ready。用户观察与日志一致，当前 RC003 初始化提示验收通过；不扩大为 RC001 或全部硬件边界已通过。
 
 本机日志和截图位于忽略目录 `target/local-launch/neutral-prompt-0216/`；组件测试命令
 `npm.cmd test -- src/components/Rc003InputControl.test.ts --maxWorkers=1 --minWorkers=1`，
