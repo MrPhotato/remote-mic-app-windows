@@ -190,34 +190,122 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.rc003-input-control { margin: 14px 0; padding: 15px 18px; border-color: var(--accent-border); border-left: 4px solid var(--accent); }
+.rc003-input-control {
+  margin: 14px 0;
+  padding: 15px 18px;
+  border-color: var(--accent-border);
+  border-top-color: var(--glass-edge);
+  background:
+    linear-gradient(100deg, var(--accent-surface) 0%, transparent 46%),
+    var(--card);
+}
 .enhancement-heading, .enhancement-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .enhancement-heading { justify-content: space-between; }
 .enhancement-title h2 { margin: 0; font-size: 16px; }
-.rc003-input-control p { margin: 9px 0 0; font-size: 12px; line-height: 1.6; }
+.rc003-input-control p { margin: 9px 0 0; font-size: 12.5px; line-height: 1.6; }
 .permission-note strong { color: var(--text-primary); }
-.enhancement-switch { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-control); color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.enhancement-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 8px 12px 8px 9px;
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge);
+  border-radius: var(--radius-pill);
+  background: var(--glass-control);
+  box-shadow: inset 0 1px 0 var(--glass-edge-soft);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.18s, background-color 0.18s;
+}
+.enhancement-switch:hover:not(:disabled) { border-color: var(--accent-border); background: var(--surface-hover); }
 .enhancement-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .enhancement-switch:disabled { opacity: .6; cursor: not-allowed; }
-.switch-track { display: inline-flex; align-items: center; width: 44px; height: 26px; padding: 3px; box-sizing: border-box; border: 1px solid transparent; border-radius: 999px; background: var(--toggle-off); }
+.switch-track {
+  display: inline-flex;
+  align-items: center;
+  width: 44px;
+  height: 26px;
+  padding: 3px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--toggle-off);
+  box-shadow: inset 0 1px 3px rgba(20, 25, 40, 0.25);
+  transition: background-color 0.18s;
+}
 .switch-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--toggle-thumb); box-shadow: 0 1px 3px var(--toggle-shadow); }
-.neutral-inline { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--warning); border-radius: 8px; background: var(--warning-surface); color: var(--warning-text); font-size: 14px; }
-.neutral-dialog { width: min(400px, calc(100vw - 40px)); max-height: calc(100vh - 40px); box-sizing: border-box; padding: 28px; border: 1px solid var(--accent-border); border-radius: 16px; background: var(--surface-canvas); color: var(--text-primary); box-shadow: 0 18px 64px #0005; text-align: center; overflow: auto; }
-.neutral-dialog::backdrop { background: #0008; }
+.neutral-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--warning-surface);
+  color: var(--warning-text);
+  font-size: 14px;
+}
+/* 浮层是最上一层玻璃：更厚的模糊、更大的圆角与投影 */
+.neutral-dialog {
+  width: min(400px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  box-sizing: border-box;
+  padding: 30px 28px 26px;
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge);
+  border-radius: var(--radius-overlay);
+  background: var(--glass-overlay);
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-saturate));
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 30px 80px -24px var(--shadow-float);
+  text-align: center;
+  overflow: auto;
+}
+.neutral-dialog::backdrop { background: rgba(8, 10, 18, 0.42); backdrop-filter: blur(4px); }
 .neutral-dialog h2 { margin: 18px 0 12px; font-size: 24px; }
 .rc003-input-control .neutral-dialog p { margin: 10px 0; font-size: 13px; }
 .rc003-input-control .neutral-dialog .neutral-instruction { font-size: 17px; font-weight: 600; }
 .neutral-dialog button { margin-top: 18px; min-height: 38px; }
-.neutral-direction { display: grid; grid-template-columns: repeat(3, 24px); grid-template-rows: repeat(3, 24px); place-content: center; width: 92px; height: 92px; margin: 0 auto; border: 1px solid var(--accent-border); border-radius: 50%; background: var(--accent-surface); color: var(--accent-text); font-size: 23px; line-height: 24px; }
+.neutral-direction {
+  display: grid;
+  grid-template-columns: repeat(3, 24px);
+  grid-template-rows: repeat(3, 24px);
+  place-content: center;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto;
+  border: 1px solid var(--accent-border);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--glass-edge-soft), transparent 60%), var(--accent-surface);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 10px 26px -14px color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--accent-text);
+  font-size: 23px;
+  line-height: 24px;
+}
 .neutral-direction span:first-child { grid-column: 2; }
 .neutral-direction span:nth-child(2) { grid-column: 1; }
 .neutral-direction span:nth-child(3) { font-size: 12px; }
 .neutral-direction span:last-child { grid-column: 2; }
-.enhancement-switch[aria-checked="true"] .switch-track { justify-content: flex-end; background: var(--accent); }
+.enhancement-switch[aria-checked="true"] .switch-track {
+  justify-content: flex-end;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 84%, white) 0%, var(--accent) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
 @media (forced-colors: active) {
   .switch-track { border-color: ButtonText; background: Canvas; }
   .switch-thumb { background: ButtonText; box-shadow: none; }
   .enhancement-switch[aria-checked="true"] .switch-track { background: Highlight; }
   .enhancement-switch[aria-checked="true"] .switch-thumb { background: HighlightText; }
+  .neutral-dialog { background: Canvas; backdrop-filter: none; }
 }
 </style>

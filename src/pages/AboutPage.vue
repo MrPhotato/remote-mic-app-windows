@@ -128,13 +128,14 @@ onMounted(() => {
       <img class="app-logo" src="/app-logo.png" alt="无线麦应用图标" />
       <div>
         <h2>无线麦 SayAll Windows 版</h2>
-        <p>版本 {{ runtime?.appVersion ?? "0.1.0" }}</p>
+        <p class="muted">把小米蓝牙遥控器变成 Codex 的语音与按键遥控。</p>
+        <span class="version-chip">版本 {{ runtime?.appVersion ?? "0.1.0" }}</span>
       </div>
     </article>
 
     <article class="card appearance-card">
       <h2>外观</h2>
-      <p class="muted">选择应用的显示模式。</p>
+      <p class="muted">选择浅色、深色，或跟随 Windows。</p>
       <div class="theme-selector" role="radiogroup" aria-label="显示模式">
         <label
           v-for="option in themeOptions"
@@ -159,34 +160,36 @@ onMounted(() => {
       <p v-if="themeError" class="error-text" role="alert">{{ themeError }}</p>
     </article>
 
-    <article class="card">
-      <h2>启动行为</h2>
-      <p class="muted">登录 Windows 后自动启动无线麦。</p>
-      <label class="toggle-row" title="使用当前用户的 Windows 登录启动项，不需要管理员权限。">
-        <input
-          v-if="launchAtLoginReady"
-          type="checkbox"
-          class="toggle-input"
-          name="launch-at-login"
-          :checked="launchAtLogin"
-          :disabled="launchAtLoginBusy"
-          @change="onLaunchAtLoginChange"
-        />
-        <span v-else class="toggle-placeholder" aria-hidden="true"></span>
-        登录时自动启动
-      </label>
-      <p v-if="launchAtLoginError" class="error-text" role="alert">{{ launchAtLoginError }}</p>
-    </article>
+    <div class="about-grid">
+      <article class="card">
+        <h2>启动行为</h2>
+        <p class="muted">登录 Windows 后自动启动无线麦，遥控器随开随用。</p>
+        <label class="toggle-row" title="使用当前用户的 Windows 登录启动项，不需要管理员权限。">
+          <input
+            v-if="launchAtLoginReady"
+            type="checkbox"
+            class="toggle-input"
+            name="launch-at-login"
+            :checked="launchAtLogin"
+            :disabled="launchAtLoginBusy"
+            @change="onLaunchAtLoginChange"
+          />
+          <span v-else class="toggle-placeholder" aria-hidden="true"></span>
+          登录时自动启动
+        </label>
+        <p v-if="launchAtLoginError" class="error-text" role="alert">{{ launchAtLoginError }}</p>
+      </article>
 
-    <article class="card">
-      <h2>开源许可</h2>
-      <p>基于 SayAll Windows，遵循 GPL-3.0 开源许可。</p>
-    </article>
+      <article class="card">
+        <h2>开源许可</h2>
+        <p class="muted">基于 SayAll Windows，遵循 GPL-3.0 开源许可。</p>
+      </article>
+    </div>
     <article class="card diagnostics-card">
       <div class="card-title-row">
         <div>
           <h2>诊断摘要</h2>
-          <p class="muted">遇到问题时可提供诊断摘要；摘要不含设备地址和语音内容。</p>
+          <p class="muted">遇到问题时把摘要发给开发者；摘要不含设备地址和语音内容。</p>
         </div>
         <div class="button-row">
           <button
@@ -229,9 +232,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* 启动行为与许可都是一两行的小卡，并排放置省出一屏高度 */
+.about-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+.about-grid .card > .muted { margin: 3px 0 12px; font-size: 13.5px; }
 /* 初值就绪前用同尺寸占位符顶位，避免开关出现时布局跳动；开关本体仅在
    终值就绪后创建，创建即带正确 checked，不产生关→开滑动过渡。 */
-.toggle-placeholder { width: 34px; height: 20px; flex: none; }
+.toggle-placeholder { width: 36px; height: 21px; flex: none; }
 /* 日志目录入口与上面的摘要动作分组：摘要随时可生成，日志目录是"已经出问题、
    要取证"时才走的路，靠分隔线和一行说明避免被当成同一组按钮。 */
 .log-directory-block {

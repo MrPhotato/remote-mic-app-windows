@@ -1050,7 +1050,7 @@ onUnmounted(() => {
         <div class="mapping-title-row">
           <h1>按键映射</h1>
           <label class="toggle-row" title="开启后，遥控器按键按本页配置执行动作；关闭时不执行自定义动作，增强按键仍可高亮。">
-            <span>启用自定义按键功能</span>
+            <span>自定义按键</span>
             <input v-model="enabled" type="checkbox" class="toggle-input" :disabled="editorInputBusy" />
           </label>
         </div>
@@ -1317,7 +1317,7 @@ onUnmounted(() => {
               </button>
               <button v-if="pinnableActionIds.has(entry.id)" class="action-pin" :disabled="editorInputBusy" :class="{ pinned: actionLibrary.pinned.includes(entry.id) }" type="button" :aria-label="(actionLibrary.pinned.includes(entry.id) ? '取消置顶：' : '置顶：') + entry.label" :aria-pressed="actionLibrary.pinned.includes(entry.id)" @click="togglePinned(entry)">{{ actionLibrary.pinned.includes(entry.id) ? '★' : '☆' }}</button>
             </div>
-            <p v-if="!visibleActions.length" class="muted">没有匹配项，可以在上方录制快捷键。</p>
+            <p v-if="!visibleActions.length" class="muted">没有找到匹配的功能。可以在上方录制一个快捷键。</p>
           </div>
           <p v-if="duplicateAssignment" class="muted library-hint">{{ duplicateAssignment }}</p>
           <p v-if="libraryWarning" class="error-text" role="alert">{{ libraryWarning }}</p>
@@ -1430,7 +1430,7 @@ onUnmounted(() => {
         <span>锁定当前按键</span>
         <input v-model="lockSelection" type="checkbox" class="toggle-input" />
       </label>
-      <span class="muted lock-hint">按遥控器时保持当前编辑项</span>
+      <span class="muted lock-hint">按实体遥控器时不切换正在编辑的按键</span>
       <div class="button-row">
         <button class="secondary-button" type="button" :disabled="editorInputBusy" @click="saveConfiguration">
           保存配置
@@ -1454,49 +1454,161 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.mapping-tools { border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-control); }
-.mapping-tools summary { padding: 12px 14px; cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 600; }
-.mapping-tools summary:focus-visible { outline: 2px solid var(--accent-border); outline-offset: -2px; border-radius: 9px; }
+.mapping-tools {
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge-soft);
+  border-radius: var(--radius-control);
+  background: var(--surface-subtle);
+  box-shadow: inset 0 1px 0 var(--glass-edge-soft);
+}
+.mapping-tools summary { padding: 12px 14px; cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 650; }
+.mapping-tools summary:focus-visible { outline: 2px solid var(--accent-border); outline-offset: -2px; border-radius: var(--radius-control); }
+.mapping-tools[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 .mapping-tools-body { display: grid; gap: 14px; padding: 0 14px 14px; }
-.selected-action-settings { padding: 12px 14px; border-left: 3px solid var(--accent-border); border-radius: 6px; background: var(--accent-surface); }
+.selected-action-settings {
+  padding: 12px 14px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-control);
+  background: var(--accent-surface);
+}
 .selected-action-settings .mouse-amount { margin-top: 0; }
-.shortcut-recorder { padding: 16px; border: 1px solid var(--accent-border); border-radius: 12px; background: var(--accent-surface); }
-.shortcut-recorder .action-section-title { color: var(--text-primary); font-size: 15px; }
+/* 录制快捷键是编辑面板的主动作：用一块被点亮的玻璃承载 */
+.shortcut-recorder {
+  padding: 16px;
+  border: 1px solid var(--accent-border);
+  border-top-color: var(--glass-edge);
+  border-radius: var(--radius-panel);
+  background:
+    radial-gradient(120% 140% at 0% 0%, var(--accent-surface-strong), transparent 60%),
+    var(--surface-subtle);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+.shortcut-recorder .action-section-title { color: var(--text-primary); font-size: 15px; letter-spacing: 0; }
 .custom-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 12px; }
+.custom-name-row label { font-size: 13px; font-weight: 600; }
 .custom-name-row input { flex: 1; min-width: 180px; }
 .action-library-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-.action-tabs { display: flex; max-width: 100%; overflow-x: auto; padding: 4px; gap: 3px; background: var(--surface-chip); border-radius: 9px; }
-.action-tabs button { padding: 9px 15px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; }
-.action-tabs button.selected { background: var(--accent-surface); color: var(--accent-text); font-weight: 650; }
-.action-library-toolbar input, .custom-name-row input { min-height: 36px; box-sizing: border-box; padding: 7px 10px; color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-strong); border-radius: 7px; font: inherit; }
+/* 分段控件：一条凹槽 + 一块滑入的玻璃 */
+.action-tabs {
+  display: flex;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--radius-control);
+  background: var(--track);
+  box-shadow: inset 0 1px 2px rgba(20, 25, 40, 0.08);
+}
+.action-tabs button {
+  padding: 7px 15px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-control) - 3px);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+.action-tabs button:hover { color: var(--text-primary); }
+.action-tabs button.selected {
+  border-color: var(--glass-rim);
+  border-top-color: var(--glass-edge);
+  background: var(--glass-panel-strong);
+  color: var(--accent-text);
+  font-weight: 650;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 2px 8px -3px var(--shadow-glass);
+}
+.action-library-toolbar input, .custom-name-row input, .app-library-search {
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 7px 12px;
+  color: var(--text-primary);
+  background: var(--glass-control);
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge-soft);
+  border-radius: var(--radius-control);
+  box-shadow: inset 0 1px 2px rgba(20, 25, 40, 0.06);
+  font: inherit;
+  font-size: 13.5px;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.action-library-toolbar input:focus, .custom-name-row input:focus, .app-library-search:focus {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
+  box-shadow: 0 0 0 3px var(--accent-surface);
+}
 .action-library-toolbar input { flex: 1; min-width: 170px; max-width: 320px; }
-.mapping-editor .library-hint { margin: 10px 0; line-height: 1.5; font-size: 12px; }
+.mapping-editor .library-hint { margin: 10px 0; line-height: 1.5; font-size: 12.5px; }
 .mapping-editor .library-filter-hint { min-height: 1.5em; }
 .action-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; height: 360px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 3px; align-content: start; scrollbar-gutter: stable; }
-.action-option { display: flex; min-width: 0; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-control); }
-.action-option:hover, .action-option.selected { border-color: var(--accent-border); background: var(--accent-surface); }
-.action-option-select { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; flex: 1; min-width: 0; min-height: 72px; padding: 12px; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: transparent; border: 0; cursor: pointer; }
-.action-option-select strong { overflow-wrap: anywhere; }
+.action-option {
+  display: flex;
+  min-width: 0;
+  border: 1px solid var(--glass-rim);
+  border-top-color: var(--glass-edge-soft);
+  border-radius: var(--radius-control);
+  background: var(--glass-control);
+  box-shadow: inset 0 1px 0 var(--glass-edge-soft);
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+.action-option:hover { border-color: var(--accent-border); background: var(--surface-hover); }
+.action-option.selected {
+  border-color: var(--accent-border);
+  background: var(--accent-surface);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 1px var(--accent-border);
+}
+.action-option-select { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; flex: 1; min-width: 0; min-height: 72px; padding: 12px; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: transparent; border: 0; border-radius: inherit; cursor: pointer; }
+.action-option-select strong { overflow-wrap: anywhere; font-weight: 650; }
 .action-option-select:disabled { cursor: wait; opacity: 0.65; }
-.action-option-keys { color: var(--accent-text); font-size: 12px; overflow-wrap: anywhere; }
+.action-option-keys {
+  padding: 1px 7px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  color: var(--accent-text);
+  background: var(--accent-surface);
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .action-option small { color: var(--muted); line-height: 1.45; }
-.action-pin { align-self: flex-start; min-width: 32px; min-height: 32px; padding: 5px; margin: 4px 4px 0 0; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; font-size: 18px; cursor: pointer; }
+.action-pin { align-self: flex-start; min-width: 32px; min-height: 32px; padding: 5px; margin: 4px 4px 0 0; border: 0; border-radius: var(--radius-chip); color: var(--muted); background: transparent; font: inherit; font-size: 18px; cursor: pointer; }
 .action-pin:hover, .action-pin.pinned { color: var(--accent-text); background: var(--accent-surface); }
-.shortcut-help { margin-top: 12px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.shortcut-help { margin-top: 12px; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
 .shortcut-help summary { cursor: pointer; }
 .shortcut-help a { color: var(--accent-text); }
 @media (max-width: 700px) { .action-library-toolbar input { max-width: none; flex-basis: 100%; } .action-options { grid-template-columns: 1fr; } }
-.back-hardware-badge { margin-left: auto; font-size: 10px; color: var(--warning-text); }
-.back-hardware-note { margin: 8px 0; font-size: 12px; line-height: 1.5; }
-.backspace-actions { border-left: 3px solid var(--accent-border); padding-left: 12px; }
+.back-hardware-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--warning) 36%, transparent);
+  border-radius: 999px;
+  background: var(--warning-surface-soft);
+  font-size: 10.5px;
+  color: var(--warning-text);
+}
+.back-hardware-note { margin: 8px 0; font-size: 12.5px; line-height: 1.5; }
+.backspace-actions { border-left: 2px solid var(--accent-border); padding-left: 12px; }
 .mapping-editor .backspace-actions .editor-note { margin-top: 7px; line-height: 1.5; }
 .mouse-amount { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 13px; }
-.mouse-amount input { width: 88px; max-width: 100%; padding: 5px 8px; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; }
-.mouse-direction { width: 40px; height: 30px; padding: 0; font-size: 17px; }
+.mouse-amount input {
+  width: 88px;
+  max-width: 100%;
+  padding: 5px 9px;
+  font: inherit;
+  color: inherit;
+  background: var(--glass-control);
+  border: 1px solid var(--glass-rim);
+  border-radius: var(--radius-chip);
+}
+.mouse-amount input:focus { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-surface); }
+.mouse-direction { width: 40px; height: 31px; padding: 0; font-size: 17px; }
 /* 滚动容器顶部会裁掉向上溢出（transform 不产生可滚动区域）：
    chip:hover 上浮 1px + 阴影会在容器顶边被切，故用内边距留出
    上浮空间，负外边距补偿保持原网格位置不变。 */
 .saved-app-grid { max-height: 180px; overflow-y: auto; margin: 5px -3px -3px; padding: 3px; align-content: start; }
 .saved-app-grid .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.app-library-search { display: block; width: min(300px, 100%); box-sizing: border-box; margin-top: 10px; padding: 6px 8px; font: inherit; color: inherit; background: transparent; border: 1px solid #888; border-radius: 4px; }
+.app-library-search { display: block; width: min(300px, 100%); margin-top: 2px; }
 </style>

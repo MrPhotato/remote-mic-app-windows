@@ -43,12 +43,17 @@ const ICON_PATHS: Record<NavIcon, { strokes: string[]; fills?: string[] }> = {
 
 <template>
   <aside class="sidebar">
+    <div class="sidebar-mark">
+      <img src="/app-logo.png" alt="" draggable="false" />
+      <span>SayAll</span>
+    </div>
     <nav aria-label="设置页面">
       <button
         v-for="item in navigationItems"
         :key="item.id"
         class="nav-item"
         :class="{ active: activePage === item.id }"
+        :aria-current="activePage === item.id ? 'page' : undefined"
         type="button"
         @click="emit('select', item.id)"
       >

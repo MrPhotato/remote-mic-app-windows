@@ -491,8 +491,8 @@ onUnmounted(() => {
       <article class="card">
         <div class="card-title-row">
           <div>
-            <h2>遥控器连接</h2>
-            <p class="muted">连接已配对的小米遥控器。</p>
+            <h2>遥控器</h2>
+            <p class="muted">从 Windows 已配对的设备中选择小米遥控器。</p>
           </div>
           <button
             class="primary-button"
@@ -561,7 +561,7 @@ onUnmounted(() => {
             <span>{{ voiceHotkeyDisplay }}</span>
           </div>
         </div>
-        <p class="muted voice-hotkey-row">按住遥控器语音键时按下所选快捷键，松开时释放。使用遥控器麦克风说话，由 Codex 听写或语音输入法转成文字。</p>
+        <p class="muted voice-hotkey-row">按住语音键时，无线麦会同时按住下面选择的快捷键，松开时一起松开——由 Codex 听写或语音输入法把遥控器收到的声音转成文字。</p>
         <div class="button-row voice-hotkey-presets">
           <button
             v-for="preset in voiceHotkeyPresets"
@@ -602,7 +602,7 @@ onUnmounted(() => {
         <div class="card-title-row">
           <div>
             <h2>麦克风</h2>
-            <p class="muted">使用遥控器说话，让目标应用将声音转成文字。</p>
+            <p class="muted">把遥控器收到的声音送给目标应用，由它转成文字。</p>
           </div>
         </div>
 
@@ -623,9 +623,8 @@ onUnmounted(() => {
             <span>{{ microphoneName }}</span>
           </div>
         </div>
-        <p v-if="selectedMicrophone" class="muted">请在 Codex 或语音输入法中选择此麦克风。本程序无法读取目标应用的麦克风设置。</p>
-        <p v-else class="muted">在高级设置中选择可接收遥控器语音的麦克风。</p>
-        <p class="muted">电脑扬声器保持原有设置。</p>
+        <p v-if="selectedMicrophone" class="muted">请在 Codex 或语音输入法中选择这个麦克风。本程序无法读取目标应用的麦克风设置，电脑扬声器保持原样。</p>
+        <p v-else class="muted">在高级设置中选择可接收遥控器语音的麦克风。电脑扬声器保持原样。</p>
 
         <div v-if="audioOperationError" class="info-callout warning audio-error-callout" role="alert">
           <strong>{{ audioOperationError }}</strong>
