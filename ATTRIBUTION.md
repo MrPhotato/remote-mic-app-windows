@@ -423,3 +423,20 @@ VB 官方 [2024 参考手册](https://vb-audio.com/Cable/VBCABLE_ReferenceManual
 ## 撤回整机蓝牙恢复（2026-10-08）
 
 用户明确禁止遥控器故障触发整机蓝牙操作。核查本仓库旧恢复调用链及既有 `ReconnectBackoff` 后，移除 Radio Off/On、PnP 重启的生产入口和模块链接，也移除启动 Radio 权限预热；保留所选遥控器的原有退避和清理。不新增第三方实现、不改变按键/语音时序、不以新的开关延续旧默认行为。原 `radio_probe` 样例改为只读，旧实验脚本仅作为历史材料保留，不运行。此前自动无线电恢复的来源记录不再构成当前产品行为依据。详见 [边界修复记录](Bugs/2026-10-08-system-bluetooth-recovery-boundary.md)。
+
+## 麦克风列表与线路恢复实现（2026-10-14）
+
+延续本仓库 WASAPI 工作线程与微软公开恢复机制，不复制外部代码。设备关联使用
+[Device Properties](https://learn.microsoft.com/en-us/windows/win32/coreaudio/device-properties)、
+[IDeviceTopology](https://learn.microsoft.com/en-us/windows/win32/api/devicetopology/nn-devicetopology-idevicetopology)、
+[IConnector::GetDeviceIdConnectedTo](https://learn.microsoft.com/en-us/windows/win32/api/devicetopology/nf-devicetopology-iconnector-getdeviceidconnectedto)、
+[DEVPKEY_Device_Parent](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/devpkey-device-parent)
+及公开 Configuration Manager 属性。端点属性库在当前 Windows 真机未提供可用的
+PKEY_Device_InstanceId，改用公开拓扑查询适配器属性；这是只读接口查询，不启用音频流。
+
+跨实例自动恢复仅针对已核验 VB-CABLE 服务和提供者、旧 NOTPRESENT 端点的 Code 10
+故障，以及唯一正常 Capture/Render 关系。Code 22 用户禁用不构成恢复授权；名称只帮助
+保留同一虚拟设备的接口偏好，不能证明设备身份。维护退避 1/5/15 秒不在语音键路径中；
+实际同线程通知/重试与旧会话隔离由测试覆盖，不能据此宣称设备热插拔和睡眠真机通过。
+本机只读检查已验证正常虚拟录音端和双播放接口、旧 Code 10 端点的替代关系；安装版
+与遥控器端到端边界见 [验证记录](Testing/WindowsAudioRecovery.md)。

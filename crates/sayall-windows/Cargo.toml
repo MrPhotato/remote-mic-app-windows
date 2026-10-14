@@ -21,6 +21,7 @@ sha2 = "0.10"
 futures = "0.3"
 wasapi = "0.24"
 windows-version = "0.1.7"
+windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Devices_Bluetooth",
     "Devices_Bluetooth_GenericAttributeProfile",
@@ -29,6 +30,7 @@ windows = { version = "0.62", features = [
     "Foundation",
     "Storage_Streams",
     "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_FunctionDiscovery",
     "Win32_Devices_Properties",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -36,6 +38,7 @@ windows = { version = "0.62", features = [
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Ole",
     "Win32_System_Variant",
     "Win32_Storage_FileSystem",
@@ -54,6 +57,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
         "Win32_UI_Shell_Common",
     "Win32_UI_TextServices",
     "Win32_UI_WindowsAndMessaging",

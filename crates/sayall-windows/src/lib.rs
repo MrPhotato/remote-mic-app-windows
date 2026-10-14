@@ -12,6 +12,8 @@ pub mod app_launcher;
 #[cfg(windows)]
 mod audio;
 #[cfg(windows)]
+mod audio_devices;
+#[cfg(windows)]
 pub mod battery;
 #[cfg(windows)]
 mod ble;
@@ -100,6 +102,17 @@ pub struct AudioEndpoint {
     pub id: String,
     pub name: String,
     pub is_virtual_cable_candidate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicrophoneEndpoint {
+    pub id: String,
+    pub name: String,
+    pub is_virtual_cable_candidate: bool,
+    pub is_default: bool,
+    pub is_default_communications: bool,
+    pub render_endpoint_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -655,6 +668,28 @@ impl WindowsPlatform {
             self.audio.list_endpoints()
         }
 
+        #[cfg(not(windows))]
+        {
+            Err(PlatformError::UnsupportedPlatform)
+        }
+    }
+
+    pub fn list_microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError> {
+        #[cfg(windows)]
+        {
+            self.audio.list_microphones()
+        }
+        #[cfg(not(windows))]
+        {
+            Err(PlatformError::UnsupportedPlatform)
+        }
+    }
+
+    pub fn retry_audio_endpoint(&self) -> Result<AudioSnapshot, PlatformError> {
+        #[cfg(windows)]
+        {
+            self.audio.retry_endpoint()
+        }
         #[cfg(not(windows))]
         {
             Err(PlatformError::UnsupportedPlatform)

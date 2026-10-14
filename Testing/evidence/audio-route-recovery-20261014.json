@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-14",
+  "candidateVersion": "0.2.12",
+  "status": "implementation_validated_installation_and_voice_pending",
+  "software": {
+    "frontendTestsPassed": 178,
+    "frontendBuild": "passed",
+    "workspaceTestsPassedBeforeFinalInventoryGuard": 324,
+    "workspaceTestsIgnored": 6,
+    "finalInventoryUnitTestsPassed": 9,
+    "formatCheck": "passed"
+  },
+  "readOnlyWindowsInventory": {
+    "result": "passed",
+    "activeMicrophones": 3,
+    "verifiedVirtualMicrophones": 1,
+    "pairedRenderInterfaces": 2,
+    "defaultCaptureDetected": true,
+    "communicationsDefaultDetected": true,
+    "savedState": "not_present",
+    "savedParentProblemCode": 10,
+    "savedParentVerified": true,
+    "replacementFound": true,
+    "replacementReason": "verified_virtual_route",
+    "streamsOpened": false
+  },
+  "installation": "deferred",
+  "voiceEndToEnd": "deferred",
+  "physicalDeviceReturn": "deferred",
+  "audioLossDuringVoice": "deferred",
+  "sleepResume": "deferred",
+  "boundaries": {
+    "bluetoothChanged": false,
+    "driversChanged": false,
+    "systemAudioDefaultsChanged": false,
+    "applicationRestartedDuringInvestigation": false,
+    "published": false
+  }
+}

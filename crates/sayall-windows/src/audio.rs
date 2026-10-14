@@ -1,7 +1,7 @@
-use crate::{AudioEndpoint, AudioPhase, AudioSnapshot, PlatformError};
+use crate::{AudioEndpoint, AudioPhase, AudioSnapshot, MicrophoneEndpoint, PlatformError};
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::{self, Receiver, Sender, SyncSender},
     Arc, Mutex, MutexGuard,
 };
@@ -20,6 +20,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 const SESSION_MUTE_WATCH_INTERVAL: Duration = Duration::from_millis(100);
+// Maintenance retries run only between voice sessions. After this bounded
+// sequence, a device notification or an explicit retry starts a new episode.
+const RECOVERY_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+];
 static AUDIO_ATTEMPT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub struct AudioRuntime {
@@ -33,9 +40,10 @@ impl AudioRuntime {
         let (sender, receiver) = mpsc::sync_channel(MESSAGE_QUEUE_CAPACITY);
         let state = Arc::new(Mutex::new(AudioSnapshot::default()));
         let worker_state = Arc::clone(&state);
+        let notification_sender = sender.clone();
         let worker = thread::Builder::new()
             .name("sayall-wasapi".to_owned())
-            .spawn(move || worker_loop(receiver, worker_state));
+            .spawn(move || worker_loop(receiver, notification_sender, worker_state));
 
         match worker {
             Ok(worker) => Self {
@@ -74,6 +82,18 @@ impl AudioRuntime {
 
     pub fn list_endpoints(&self) -> Result<Vec<AudioEndpoint>, PlatformError> {
         self.request(REQUEST_TIMEOUT, |reply| AudioMessage::ListEndpoints {
+            reply,
+        })
+    }
+
+    pub fn list_microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError> {
+        self.request(REQUEST_TIMEOUT, |reply| AudioMessage::ListMicrophones {
+            reply,
+        })
+    }
+
+    pub fn retry_endpoint(&self) -> Result<AudioSnapshot, PlatformError> {
+        self.request(REQUEST_TIMEOUT, |reply| AudioMessage::RetryEndpoint {
             reply,
         })
     }
@@ -158,6 +178,13 @@ enum AudioMessage {
     ListEndpoints {
         reply: Sender<Result<Vec<AudioEndpoint>, PlatformError>>,
     },
+    ListMicrophones {
+        reply: Sender<Result<Vec<MicrophoneEndpoint>, PlatformError>>,
+    },
+    RetryEndpoint {
+        reply: Sender<Result<AudioSnapshot, PlatformError>>,
+    },
+    DevicesChanged,
     SelectEndpoint {
         endpoint_id: String,
         reply: Sender<Result<AudioSnapshot, PlatformError>>,
@@ -185,7 +212,11 @@ enum AudioMessage {
     Shutdown,
 }
 
-fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>>) {
+fn worker_loop(
+    receiver: Receiver<AudioMessage>,
+    notification_sender: SyncSender<AudioMessage>,
+    state: Arc<Mutex<AudioSnapshot>>,
+) {
     crate::ble::gatt_note(
         "audio_worker phase=started backend=wasapi direction=render sample_rate=16000 channels=1 sample_format=s16".to_owned(),
     );
@@ -198,14 +229,55 @@ fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>
     }
     crate::ble::gatt_note("audio_worker phase=ready result=passed com_apartment=mta".to_owned());
     let _apartment = WasapiApartment;
+    let devices_changed = Arc::new(AtomicBool::new(false));
+    // Registration and unregistration, including COM reference release, belong
+    // to this worker. Callbacks only mark dirty and try a bounded wakeup.
+    let _notifications =
+        EndpointNotifications::register(notification_sender, Arc::clone(&devices_changed));
     let mut sink: Option<AudioSink> = None;
     let mut queue = VecDeque::<i16>::new();
     let mut pending_drain: Option<(u64, Sender<Result<AudioSnapshot, PlatformError>>)> = None;
+    let mut recovery = RecoverySchedule::default();
+    let mut pending_device_change = false;
 
     loop {
+        // Already queued voice/session messages take precedence over background
+        // device discovery and reopening. BeginSession itself never reconnects.
+        let queued_message = match receiver.try_recv() {
+            Ok(message) => Some(message),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => break,
+        };
+        pending_device_change |= devices_changed.swap(false, Ordering::AcqRel);
+        let snapshot = lock(&state).clone();
+        let can_recover =
+            recovery_allowed(snapshot.phase) && pending_drain.is_none() && queued_message.is_none();
+        if can_recover && pending_device_change {
+            pending_device_change = false;
+            if snapshot.selected_endpoint_id.is_some() {
+                validate_open_route(&mut sink, &mut queue, &state, &mut pending_drain);
+                if lock(&state).phase == AudioPhase::Failed {
+                    recovery.device_changed(Instant::now());
+                }
+            }
+        }
+        let snapshot = lock(&state).clone();
+        recovery.observe(snapshot.phase, Instant::now());
+        if can_recover && recovery.is_due(Instant::now()) {
+            let snapshot =
+                retry_configured_endpoint(&mut sink, &mut queue, &state, "automatic_recovery");
+            recovery.attempt_completed(snapshot.phase, Instant::now());
+        }
         let is_active = sink.as_ref().is_some_and(AudioSink::is_active) || pending_drain.is_some();
-        let message = if is_active {
-            match receiver.recv_timeout(POLL_INTERVAL) {
+        let wait = if is_active {
+            Some(POLL_INTERVAL)
+        } else {
+            recovery.wait_duration(Instant::now())
+        };
+        let message = if queued_message.is_some() {
+            queued_message
+        } else if let Some(wait) = wait {
+            match receiver.recv_timeout(wait) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => None,
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -219,6 +291,20 @@ fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>
 
         if let Some(message) = message {
             match message {
+                AudioMessage::DevicesChanged => {}
+                AudioMessage::ListMicrophones { reply } => {
+                    let _ = reply.send(crate::audio_devices::list_microphones());
+                }
+                AudioMessage::RetryEndpoint { reply } => {
+                    if !recovery_allowed(lock(&state).phase) || pending_drain.is_some() {
+                        let _ = reply.send(Err(PlatformError::AudioBusy));
+                        continue;
+                    }
+                    recovery = RecoverySchedule::default();
+                    let snapshot =
+                        retry_configured_endpoint(&mut sink, &mut queue, &state, "user_retry");
+                    let _ = reply.send(Ok(snapshot));
+                }
                 AudioMessage::ListEndpoints { reply } => {
                     let started = Instant::now();
                     crate::ble::gatt_note("audio_endpoint action=list phase=requested".to_owned());
@@ -272,6 +358,22 @@ fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>
                     }
                     sink = None;
                     queue.clear();
+                    recovery = RecoverySchedule::default();
+                    let expected_name = list_endpoints()
+                        .ok()
+                        .and_then(|endpoints| {
+                            endpoints
+                                .into_iter()
+                                .find(|endpoint| endpoint.id == endpoint_id)
+                        })
+                        .map(|endpoint| endpoint.name)
+                        .or_else(|| {
+                            let snapshot = lock(&state);
+                            (snapshot.selected_endpoint_id.as_deref() == Some(endpoint_id.as_str()))
+                                .then(|| snapshot.selected_endpoint_name.clone())
+                                .flatten()
+                        })
+                        .unwrap_or_default();
                     match AudioSink::open(&endpoint_id, attempt_id) {
                         Ok(opened) => {
                             let kind = endpoint_kind(&endpoint_id, &opened.name);
@@ -285,7 +387,11 @@ fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>
                             let _ = reply.send(Ok(snapshot));
                         }
                         Err(error) => {
-                            *lock(&state) = failed_snapshot(error.to_string());
+                            *lock(&state) = configured_failure_snapshot(
+                                endpoint_id,
+                                expected_name,
+                                error.to_string(),
+                            );
                             crate::ble::gatt_note(format!(
                                 "audio_endpoint attempt_id={attempt_id} action=select phase=completed terminal_result=failed error_domain=wasapi error_code=open_failed reason=endpoint_format_or_state_unavailable retryable=true elapsed_ms={}",
                                 started.elapsed().as_millis()
@@ -310,7 +416,14 @@ fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>
                     }
                     sink = None;
                     queue.clear();
-                    let snapshot = restore_endpoint(&mut sink, &state, endpoint_id, expected_name);
+                    recovery = RecoverySchedule::default();
+                    let snapshot = restore_endpoint(
+                        &mut sink,
+                        &state,
+                        endpoint_id,
+                        expected_name,
+                        "persisted_settings",
+                    );
                     let _ = reply.send(Ok(snapshot));
                 }
                 AudioMessage::BeginSession { generation, reply } => {
@@ -487,6 +600,230 @@ fn worker_loop(receiver: Receiver<AudioMessage>, state: Arc<Mutex<AudioSnapshot>
     crate::ble::gatt_note("audio_worker phase=completed terminal_result=passed".to_owned());
 }
 
+#[derive(Default)]
+struct RecoverySchedule {
+    armed: bool,
+    attempts: usize,
+    next_attempt: Option<Instant>,
+}
+
+impl RecoverySchedule {
+    fn observe(&mut self, phase: AudioPhase, now: Instant) {
+        if phase != AudioPhase::Failed {
+            *self = Self::default();
+        } else if !self.armed {
+            self.armed = true;
+            self.next_attempt = Some(now + RECOVERY_RETRY_DELAYS[0]);
+            crate::ble::gatt_note(
+                "audio_recovery phase=scheduled trigger=failed_route attempt=1 delay_ms=1000"
+                    .to_owned(),
+            );
+        }
+    }
+
+    fn device_changed(&mut self, now: Instant) {
+        self.armed = true;
+        self.attempts = 0;
+        self.next_attempt = Some(now);
+        crate::ble::gatt_note(
+            "audio_recovery phase=scheduled trigger=device_change attempt=1 delay_ms=0".to_owned(),
+        );
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        self.next_attempt.is_some_and(|next| now >= next)
+    }
+
+    fn wait_duration(&self, now: Instant) -> Option<Duration> {
+        self.next_attempt
+            .map(|next| next.saturating_duration_since(now))
+    }
+
+    fn attempt_completed(&mut self, phase: AudioPhase, now: Instant) {
+        if phase != AudioPhase::Failed {
+            *self = Self::default();
+            return;
+        }
+        self.attempts += 1;
+        self.next_attempt = RECOVERY_RETRY_DELAYS
+            .get(self.attempts)
+            .map(|delay| now + *delay);
+        if self.next_attempt.is_none() {
+            crate::ble::gatt_note(format!(
+                "audio_recovery phase=waiting reason=bounded_retries_exhausted attempts={} next_trigger=device_change_or_user_retry",
+                self.attempts
+            ));
+        } else {
+            crate::ble::gatt_note(format!(
+                "audio_recovery phase=scheduled trigger=retry attempt={} delay_ms={}",
+                self.attempts + 1,
+                RECOVERY_RETRY_DELAYS[self.attempts].as_millis()
+            ));
+        }
+    }
+}
+
+fn recovery_allowed(phase: AudioPhase) -> bool {
+    !matches!(phase, AudioPhase::Streaming | AudioPhase::Draining)
+}
+
+fn retry_configured_endpoint(
+    sink: &mut Option<AudioSink>,
+    queue: &mut VecDeque<i16>,
+    state: &Arc<Mutex<AudioSnapshot>>,
+    source: &'static str,
+) -> AudioSnapshot {
+    let snapshot = lock(state).clone();
+    if !recovery_allowed(snapshot.phase) || (snapshot.phase == AudioPhase::Ready && sink.is_some())
+    {
+        return snapshot;
+    }
+    let Some(endpoint_id) = snapshot.selected_endpoint_id else {
+        return snapshot;
+    };
+    // A replacement stream starts empty. Late frames/finish for the failed
+    // generation are rejected by phase/generation rather than replayed.
+    queue.clear();
+    *sink = None;
+    restore_endpoint(
+        sink,
+        state,
+        endpoint_id,
+        snapshot.selected_endpoint_name.unwrap_or_default(),
+        source,
+    )
+}
+
+fn validate_open_route(
+    sink: &mut Option<AudioSink>,
+    queue: &mut VecDeque<i16>,
+    state: &Arc<Mutex<AudioSnapshot>>,
+    pending_drain: &mut Option<(u64, Sender<Result<AudioSnapshot, PlatformError>>)>,
+) {
+    let snapshot = lock(state).clone();
+    if snapshot.phase != AudioPhase::Ready || sink.is_none() {
+        return;
+    }
+    match list_endpoints() {
+        Ok(endpoints) => {
+            if let Some(endpoint) = endpoints.iter().find(|endpoint| Some(&endpoint.id) == snapshot.selected_endpoint_id.as_ref()) {
+                if snapshot.selected_endpoint_name.as_ref() != Some(&endpoint.name) {
+                    lock(state).selected_endpoint_name = Some(endpoint.name.clone());
+                    crate::ble::gatt_note("audio_endpoint action=validate phase=completed result=passed same_id=true friendly_name_changed=true".to_owned());
+                }
+            } else {
+                fail_audio(sink, queue, state, PlatformError::Audio("所选音频线路当前不可用，正在等待设备恢复".to_owned()), pending_drain);
+            }
+        }
+        Err(_) => crate::ble::gatt_note("audio_endpoint action=validate phase=completed result=failed error_code=enumeration_failed ready_stream_preserved=true".to_owned()),
+    }
+}
+
+#[windows::core::implement(windows::Win32::Media::Audio::IMMNotificationClient)]
+struct EndpointNotificationCallback {
+    sender: SyncSender<AudioMessage>,
+    dirty: Arc<AtomicBool>,
+}
+
+impl EndpointNotificationCallback {
+    fn wake(&self) {
+        if !self.dirty.swap(true, Ordering::AcqRel) {
+            // A full queue already wakes the worker; the dirty flag is retained.
+            let _ = self.sender.try_send(AudioMessage::DevicesChanged);
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+impl windows::Win32::Media::Audio::IMMNotificationClient_Impl
+    for EndpointNotificationCallback_Impl
+{
+    fn OnDeviceStateChanged(
+        &self,
+        _: &windows::core::PCWSTR,
+        _: windows::Win32::Media::Audio::DEVICE_STATE,
+    ) -> windows::core::Result<()> {
+        self.wake();
+        Ok(())
+    }
+    fn OnDeviceAdded(&self, _: &windows::core::PCWSTR) -> windows::core::Result<()> {
+        self.wake();
+        Ok(())
+    }
+    fn OnDeviceRemoved(&self, _: &windows::core::PCWSTR) -> windows::core::Result<()> {
+        self.wake();
+        Ok(())
+    }
+    fn OnDefaultDeviceChanged(
+        &self,
+        _: windows::Win32::Media::Audio::EDataFlow,
+        _: windows::Win32::Media::Audio::ERole,
+        _: &windows::core::PCWSTR,
+    ) -> windows::core::Result<()> {
+        self.wake();
+        Ok(())
+    }
+    fn OnPropertyValueChanged(
+        &self,
+        _: &windows::core::PCWSTR,
+        _: &windows::Win32::Foundation::PROPERTYKEY,
+    ) -> windows::core::Result<()> {
+        // Volume changes can be caused by our own unmute step. They are not
+        // evidence that a device reappeared and must not restart failed retries.
+        Ok(())
+    }
+}
+
+struct EndpointNotifications {
+    enumerator: windows::Win32::Media::Audio::IMMDeviceEnumerator,
+    callback: windows::Win32::Media::Audio::IMMNotificationClient,
+}
+
+impl EndpointNotifications {
+    fn register(sender: SyncSender<AudioMessage>, dirty: Arc<AtomicBool>) -> Option<Self> {
+        use windows::Win32::Media::Audio::{
+            IMMDeviceEnumerator, IMMNotificationClient, MMDeviceEnumerator,
+        };
+        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+        let result = (|| -> windows::core::Result<Self> {
+            let enumerator: IMMDeviceEnumerator =
+                unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }?;
+            let callback: IMMNotificationClient =
+                EndpointNotificationCallback { sender, dirty }.into();
+            unsafe { enumerator.RegisterEndpointNotificationCallback(&callback) }?;
+            Ok(Self {
+                enumerator,
+                callback,
+            })
+        })();
+        match result {
+            Ok(registration) => {
+                crate::ble::gatt_note(
+                    "audio_device_notifications phase=registered result=passed".to_owned(),
+                );
+                Some(registration)
+            }
+            Err(_) => {
+                crate::ble::gatt_note("audio_device_notifications phase=registered result=failed fallback=bounded_retry_and_user_refresh".to_owned());
+                None
+            }
+        }
+    }
+}
+
+impl Drop for EndpointNotifications {
+    fn drop(&mut self) {
+        let result = unsafe {
+            self.enumerator
+                .UnregisterEndpointNotificationCallback(&self.callback)
+        };
+        crate::ble::gatt_note(format!(
+            "audio_device_notifications phase=unregistered result={}",
+            if result.is_ok() { "passed" } else { "failed" }
+        ));
+    }
+}
+
 fn endpoint_kind(endpoint_id: &str, name: &str) -> &'static str {
     if crate::is_virtual_cable_output_name(name) {
         return "virtual_cable";
@@ -584,11 +921,12 @@ fn restore_endpoint(
     state: &Arc<Mutex<AudioSnapshot>>,
     endpoint_id: String,
     expected_name: String,
+    source: &'static str,
 ) -> AudioSnapshot {
     let started = Instant::now();
     let attempt_id = AUDIO_ATTEMPT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     crate::ble::gatt_note(format!(
-        "audio_endpoint attempt_id={attempt_id} action=restore phase=requested source=persisted_settings"
+        "audio_endpoint attempt_id={attempt_id} action=restore phase=requested source={source}"
     ));
     let endpoints = match list_endpoints() {
         Ok(endpoints) => endpoints,
@@ -596,7 +934,7 @@ fn restore_endpoint(
             let snapshot = configured_failure_snapshot(
                 endpoint_id,
                 expected_name,
-                format!("无法验证上次选择的输出端点：{error}"),
+                format!("无法检查音频线路：{error}"),
             );
             *lock(state) = snapshot.clone();
             crate::ble::gatt_note(format!(
@@ -606,24 +944,34 @@ fn restore_endpoint(
             return snapshot;
         }
     };
-    if let Err(error) = validate_restored_endpoint(&endpoints, &endpoint_id, &expected_name) {
-        let snapshot = configured_failure_snapshot(endpoint_id, expected_name, error);
-        *lock(state) = snapshot.clone();
-        crate::ble::gatt_note(format!(
-            "audio_endpoint attempt_id={attempt_id} action=restore phase=completed terminal_result=failed error_domain=settings error_code=endpoint_identity_mismatch reason=persisted_endpoint_missing_or_changed retryable=true elapsed_ms={}",
-            started.elapsed().as_millis()
-        ));
-        return snapshot;
-    }
+    let restored = match resolve_restored_endpoint(
+        &endpoints,
+        &endpoint_id,
+        &expected_name,
+        crate::audio_devices::resolve_replacement,
+    ) {
+        Ok(restored) => restored,
+        Err(error) => {
+            let snapshot =
+                configured_failure_snapshot(endpoint_id, expected_name, error.to_string());
+            *lock(state) = snapshot.clone();
+            crate::ble::gatt_note(format!(
+                "audio_endpoint attempt_id={attempt_id} action=restore phase=completed terminal_result=failed error_domain=devices error_code=route_unavailable reason=no_verified_active_route retryable=true elapsed_ms={}",
+                started.elapsed().as_millis()
+            ));
+            return snapshot;
+        }
+    };
 
-    match AudioSink::open(&endpoint_id, attempt_id) {
+    match AudioSink::open(&restored.id, attempt_id) {
         Ok(opened) => {
-            let kind = endpoint_kind(&endpoint_id, &opened.name);
-            let snapshot = ready_snapshot(endpoint_id, opened.name.clone());
+            let kind = endpoint_kind(&restored.id, &opened.name);
+            let snapshot = ready_snapshot(restored.id, opened.name.clone());
             *sink = Some(opened);
             *lock(state) = snapshot.clone();
             crate::ble::gatt_note(format!(
-                "audio_endpoint attempt_id={attempt_id} action=restore phase=completed terminal_result=passed endpoint_kind={kind} elapsed_ms={}",
+                "audio_endpoint attempt_id={attempt_id} action=restore phase=completed terminal_result=passed endpoint_kind={kind} rebound={} friendly_name_changed={} elapsed_ms={}",
+                restored.replaced, restored.renamed,
                 started.elapsed().as_millis()
             ));
             snapshot
@@ -632,7 +980,7 @@ fn restore_endpoint(
             let snapshot = configured_failure_snapshot(
                 endpoint_id,
                 expected_name,
-                format!("恢复上次选择的输出端点失败：{error}"),
+                format!("恢复音频线路失败：{error}"),
             );
             *lock(state) = snapshot.clone();
             crate::ble::gatt_note(format!(
@@ -644,21 +992,42 @@ fn restore_endpoint(
     }
 }
 
-fn validate_restored_endpoint(
+struct RestoredEndpoint {
+    id: String,
+    replaced: bool,
+    renamed: bool,
+}
+
+fn resolve_restored_endpoint(
     endpoints: &[AudioEndpoint],
     endpoint_id: &str,
     expected_name: &str,
-) -> Result<(), String> {
-    let Some(endpoint) = endpoints.iter().find(|endpoint| endpoint.id == endpoint_id) else {
-        return Err("上次选择的输出端点当前不可用，请重新选择".to_owned());
-    };
-    if endpoint.name != expected_name {
-        return Err(format!(
-            "上次选择的输出端点名称已变为“{}”；为避免输出到错误设备，请重新选择",
-            endpoint.name
-        ));
+    replacement: impl FnOnce(&str, &str) -> Result<Option<String>, PlatformError>,
+) -> Result<RestoredEndpoint, PlatformError> {
+    if let Some(endpoint) = endpoints.iter().find(|endpoint| endpoint.id == endpoint_id) {
+        // Windows endpoint identity is authoritative; the friendly name can be
+        // changed by the user without replacing the audio device.
+        return Ok(RestoredEndpoint {
+            id: endpoint.id.clone(),
+            replaced: false,
+            renamed: endpoint.name != expected_name,
+        });
     }
-    Ok(())
+    if let Some(replacement_id) = replacement(endpoint_id, expected_name)? {
+        if let Some(endpoint) = endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == replacement_id && endpoint.is_virtual_cable_candidate)
+        {
+            return Ok(RestoredEndpoint {
+                id: endpoint.id.clone(),
+                replaced: true,
+                renamed: endpoint.name != expected_name,
+            });
+        }
+    }
+    Err(PlatformError::Audio(
+        "所选音频线路当前不可用，等待设备恢复；也可手动重试或选择其他线路".to_owned(),
+    ))
 }
 
 fn ready_snapshot(endpoint_id: String, endpoint_name: String) -> AudioSnapshot {
@@ -817,6 +1186,7 @@ fn fail_audio(
     let mut snapshot = lock(state);
     snapshot.phase = AudioPhase::Failed;
     snapshot.queued_samples = 0;
+    snapshot.generation = 0;
     snapshot.last_error = Some(error.to_string());
 }
 
@@ -1281,27 +1651,139 @@ mod tests {
     }
 
     #[test]
-    fn persisted_endpoint_requires_the_same_stable_id_and_name() {
+    fn persisted_endpoint_accepts_friendly_name_changes_without_rebinding() {
         let endpoints = vec![AudioEndpoint {
             id: "endpoint-1".to_owned(),
             name: "CABLE Input".to_owned(),
             is_virtual_cable_candidate: true,
         }];
 
+        let restored = resolve_restored_endpoint(&endpoints, "endpoint-1", "Old Name", |_, _| {
+            panic!("same identity must not redirect audio")
+        })
+        .unwrap();
+        assert_eq!(restored.id, "endpoint-1");
+        assert!(restored.renamed);
+        assert!(!restored.replaced);
+    }
+
+    #[test]
+    fn missing_route_requires_a_verified_active_virtual_replacement() {
+        let endpoints = vec![
+            AudioEndpoint {
+                id: "new-cable".to_owned(),
+                name: "CABLE In 16 Ch (2- VB-Audio Virtual Cable)".to_owned(),
+                is_virtual_cable_candidate: true,
+            },
+            AudioEndpoint {
+                id: "speakers".to_owned(),
+                name: "Speakers".to_owned(),
+                is_virtual_cable_candidate: false,
+            },
+        ];
+        let restored =
+            resolve_restored_endpoint(&endpoints, "old-cable", "CABLE In 16ch", |_, _| {
+                Ok(Some("new-cable".to_owned()))
+            })
+            .unwrap();
+        assert!(restored.replaced);
+        assert_eq!(restored.id, "new-cable");
+        for replacement in [None, Some("speakers"), Some("not-active")] {
+            assert!(resolve_restored_endpoint(
+                &endpoints,
+                "old-cable",
+                "CABLE In 16ch",
+                |_, _| Ok(replacement.map(str::to_owned))
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn recovery_retries_are_bounded_until_a_new_device_event() {
+        let now = Instant::now();
+        let mut recovery = RecoverySchedule::default();
+        recovery.observe(AudioPhase::Failed, now);
+        assert_eq!(recovery.wait_duration(now), Some(Duration::from_secs(1)));
+        for delay in [5, 15] {
+            recovery.attempt_completed(AudioPhase::Failed, now);
+            assert_eq!(
+                recovery.wait_duration(now),
+                Some(Duration::from_secs(delay))
+            );
+        }
+        recovery.attempt_completed(AudioPhase::Failed, now);
+        recovery.observe(AudioPhase::Failed, now + Duration::from_secs(100));
         assert_eq!(
-            validate_restored_endpoint(&endpoints, "endpoint-1", "CABLE Input"),
-            Ok(())
+            recovery.wait_duration(now),
+            None,
+            "a failed voice request must not restart exhausted retries"
         );
-        assert!(
-            validate_restored_endpoint(&endpoints, "missing", "CABLE Input")
-                .unwrap_err()
-                .contains("当前不可用")
+        recovery.device_changed(now);
+        assert!(recovery.is_due(now));
+        recovery.attempt_completed(AudioPhase::Ready, now);
+        assert_eq!(recovery.wait_duration(now), None);
+        assert!(!recovery.armed);
+    }
+
+    #[test]
+    fn recovery_defers_streaming_and_drain_and_never_replays_failed_pcm() {
+        assert!(!recovery_allowed(AudioPhase::Streaming));
+        assert!(!recovery_allowed(AudioPhase::Draining));
+        assert!(recovery_allowed(AudioPhase::Failed));
+        let state = streaming_state(7);
+        {
+            let mut snapshot = lock(&state);
+            snapshot.selected_endpoint_id = Some("configured".to_owned());
+            snapshot.selected_endpoint_name = Some("CABLE Input".to_owned());
+            snapshot.queued_samples = 3;
+        }
+        let mut queue = VecDeque::from([1, 2, 3]);
+        let mut sink = None;
+        let (reply, response) = mpsc::channel();
+        let mut pending = Some((7, reply));
+        fail_audio(
+            &mut sink,
+            &mut queue,
+            &state,
+            PlatformError::Audio("device invalidated".to_owned()),
+            &mut pending,
         );
-        assert!(
-            validate_restored_endpoint(&endpoints, "endpoint-1", "Old Name")
-                .unwrap_err()
-                .contains("名称已变")
+        assert!(queue.is_empty());
+        assert!(pending.is_none());
+        assert!(response.try_recv().unwrap().is_err());
+        let failed = lock(&state).clone();
+        assert_eq!(failed.generation, 0);
+        assert_eq!(failed.selected_endpoint_id.as_deref(), Some("configured"));
+        assert_eq!(
+            enqueue_samples(&mut queue, &state, 7, vec![4]),
+            Err(PlatformError::AudioSessionMismatch)
         );
+        *lock(&state) = ready_snapshot("recovered".to_owned(), "CABLE Input".to_owned());
+        assert_eq!(
+            enqueue_samples(&mut queue, &state, 7, vec![5]),
+            Err(PlatformError::AudioSessionMismatch)
+        );
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn device_callbacks_coalesce_even_when_worker_queue_is_full() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        assert!(sender.try_send(AudioMessage::DevicesChanged).is_ok());
+        let dirty = Arc::new(AtomicBool::new(false));
+        let callback = EndpointNotificationCallback {
+            sender,
+            dirty: Arc::clone(&dirty),
+        };
+        callback.wake();
+        callback.wake();
+        assert!(dirty.load(Ordering::Acquire));
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err());
+        dirty.store(false, Ordering::Release);
+        callback.wake();
+        assert!(receiver.try_recv().is_ok());
     }
 
     #[test]

@@ -34,6 +34,15 @@ export interface AudioEndpoint {
   isVirtualCableCandidate: boolean;
 }
 
+export interface MicrophoneEndpoint {
+  id: string;
+  name: string;
+  isVirtualCableCandidate: boolean;
+  isDefault: boolean;
+  isDefaultCommunications: boolean;
+  renderEndpointIds: string[];
+}
+
 export interface AudioSnapshot {
   phase: AudioPhase;
   selectedEndpointId: string | null;
@@ -483,6 +492,20 @@ export async function listAudioEndpoints(): Promise<AudioEndpoint[]> {
     throw new Error("当前是浏览器预览，无法读取音频设备");
   }
   return invoke<AudioEndpoint[]>("list_audio_endpoints");
+}
+
+export async function listMicrophones(): Promise<MicrophoneEndpoint[]> {
+  if (!isTauriRuntime()) {
+    throw new Error("当前是浏览器预览，无法读取麦克风");
+  }
+  return invoke<MicrophoneEndpoint[]>("list_microphones");
+}
+
+export async function retryAudioEndpoint(): Promise<AudioSnapshot> {
+  if (!isTauriRuntime()) {
+    throw new Error("当前是浏览器预览，无法恢复语音设备");
+  }
+  return invoke<AudioSnapshot>("retry_audio_endpoint");
 }
 
 export async function getAudioSnapshot(): Promise<AudioSnapshot> {

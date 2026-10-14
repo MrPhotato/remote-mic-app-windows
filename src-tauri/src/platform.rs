@@ -1,8 +1,8 @@
 use sayall_windows::raw_input::RawInputSnapshot;
 use sayall_windows::send_input::{ButtonAction, KeyChord, ScrollDirection, SendInputSnapshot};
 use sayall_windows::{
-    AudioEndpoint, AudioSnapshot, ConnectionSnapshot, PairedRemote, PlatformError,
-    PlatformSnapshot, UsageCounters, WindowsPlatform,
+    AudioEndpoint, AudioSnapshot, ConnectionSnapshot, MicrophoneEndpoint, PairedRemote,
+    PlatformError, PlatformSnapshot, UsageCounters, WindowsPlatform,
 };
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -29,6 +29,8 @@ pub trait PlatformRuntime: Debug + Send + Sync {
     #[cfg(windows)]
     fn restore_remote(&self, device_id: String) -> Result<ConnectionSnapshot, PlatformError>;
     fn list_audio_endpoints(&self) -> Result<Vec<AudioEndpoint>, PlatformError>;
+    fn list_microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError>;
+    fn retry_audio_endpoint(&self) -> Result<AudioSnapshot, PlatformError>;
     fn select_audio_endpoint(&self, endpoint_id: String) -> Result<AudioSnapshot, PlatformError>;
     #[cfg(windows)]
     fn restore_audio_endpoint(
@@ -127,6 +129,14 @@ impl PlatformRuntime for WindowsPlatform {
 
     fn select_audio_endpoint(&self, endpoint_id: String) -> Result<AudioSnapshot, PlatformError> {
         self.select_audio_endpoint(endpoint_id)
+    }
+
+    fn list_microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError> {
+        self.list_microphones()
+    }
+
+    fn retry_audio_endpoint(&self) -> Result<AudioSnapshot, PlatformError> {
+        self.retry_audio_endpoint()
     }
 
     #[cfg(windows)]
@@ -375,6 +385,26 @@ mod simulation {
 
         fn list_audio_endpoints(&self) -> Result<Vec<AudioEndpoint>, PlatformError> {
             Ok(Self::audio_endpoints())
+        }
+
+        fn list_microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError> {
+            Ok(vec![MicrophoneEndpoint {
+                id: "simulation-cable-capture".to_owned(),
+                name: "CABLE Output (VB-Audio Virtual Cable)".to_owned(),
+                is_virtual_cable_candidate: true,
+                is_default: true,
+                is_default_communications: false,
+                render_endpoint_ids: vec![CABLE_ENDPOINT_ID.to_owned()],
+            }])
+        }
+
+        fn retry_audio_endpoint(&self) -> Result<AudioSnapshot, PlatformError> {
+            let id = lock(&self.state)
+                .audio
+                .selected_endpoint_id
+                .clone()
+                .ok_or(PlatformError::AudioEndpointNotSelected)?;
+            self.select_audio_endpoint(id)
         }
 
         fn select_audio_endpoint(
