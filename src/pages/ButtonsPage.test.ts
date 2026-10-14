@@ -88,6 +88,7 @@ import {
   testButtonMapping,
 } from "../lib/bridge";
 import type { ButtonMappings, RuntimeSnapshot } from "../lib/bridge";
+import { ACTION_LIBRARY_STORAGE_KEY, readActionLibrary } from "../lib/action-library";
 
 const runtime: RuntimeSnapshot = {
   appVersion: "0.1.0",
@@ -163,6 +164,7 @@ async function mountPage(model: "rc001" | "rc003" | "unknown" = "rc003"): Promis
 }
 
 beforeEach(() => {
+  localStorage.clear();
   edgeHandler = null;
   gestureHandler = null;
   shortcutCaptureHandler = null;
@@ -178,17 +180,187 @@ beforeEach(() => {
 });
 
 describe("buttons mapping page", () => {
-  it("browses the separate Codex catalog without saving or sending shortcuts", async () => {
+  async function recordChord(wrapper: VueWrapper, keys: string[]): Promise<void> {
+    await wrapper.get(".custom-shortcut-row button").trigger("click");
+    for (const key of keys) shortcutCaptureHandler!({ key, isPressed: true });
+    for (const key of [...keys].reverse()) shortcutCaptureHandler!({ key, isPressed: false });
+    await flushPromises();
+  }
+
+  it("recognizes a recorded known shortcut while preserving its physical modifier keys", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 2);
+    await recordChord(wrapper, ["right_control", "enter"]);
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.power?.long).toEqual({ type: "shortcut", chord: { keys: ["right_control", "enter"] } });
+    const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
+    expect(power.findAll(".mapping-cell")[2]!.text()).toContain("插队/排队");
+    expect(wrapper.get('[data-action-id="queue-message"]').attributes("aria-pressed")).toBe("true");
+    expect(readActionLibrary().state.custom).toHaveLength(0);
+    expect(readActionLibrary().state.usage["queue-message"]?.count).toBe(1);
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("remembers an unmatched recorded shortcut, renames it and reuses it after reopening", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "电源", 0);
-    expect(wrapper.get(".codex-shortcuts").text()).toContain("Codex 快捷键");
-    expect(wrapper.get('[data-shortcut-id="previous-chat"]').text()).toContain("Ctrl + Page Up");
-    await wrapper.get('select[aria-label="Codex 快捷键分类"]').setValue("input");
-    expect(wrapper.get('[data-shortcut-id="approve"]').text()).toContain("输入框内 Enter 可能发送消息");
-    expect(wrapper.get(".codex-shortcuts-footnote").text()).toContain("连接与语音");
-    await wrapper.get('input[aria-label="搜索 Codex 快捷键"]').setValue("快捷键");
-    expect(wrapper.get('[data-shortcut-id="keyboard-shortcuts"]').text()).toContain("查看快捷键");
-    expect(wrapper.find('[data-shortcut-id="approve"]').exists()).toBe(false);
+    await recordChord(wrapper, ["right_alt", "f8"]);
+    const original = readActionLibrary().state.custom[0]!;
+    expect(original.action).toEqual({ type: "shortcut", chord: { keys: ["right_alt", "f8"] } });
+    await wrapper.get("#custom-action-name").setValue("整理笔记");
+    await wrapper.findAll("button").find(button => button.text() === "保存名称")!.trigger("click");
+    expect(readActionLibrary().state.custom[0]!.label).toBe("整理笔记");
+    const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
+    expect(power.findAll(".mapping-cell")[0]!.text()).toContain("整理笔记");
+    expect(readActionLibrary().state.usage[original.id]!.count).toBe(1);
+    wrapper.unmount();
+
+    vi.mocked(saveButtonMappings).mockClear();
+    const reopened = await mountPage();
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    await openCell(reopened, "菜单", 1);
+    await chooseAction(reopened, "整理笔记");
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.menu?.double).toEqual(original.action);
+    expect(readActionLibrary().state.custom).toHaveLength(1);
+    expect(readActionLibrary().state.usage[original.id]!.count).toBe(2);
+    reopened.unmount();
+  });
+
+  it("does not learn an action whose mapping save failed, including recorder completion", async () => {
+    vi.mocked(saveButtonMappings).mockRejectedValueOnce(new Error("保存失败，请重试"));
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await recordChord(wrapper, ["left_alt", "f8"]);
+    expect(localStorage.getItem(ACTION_LIBRARY_STORAGE_KEY)).toBeNull();
+    expect(wrapper.get(".mapping-status").text()).toContain("保存失败，请重试");
+    expect(wrapper.find("#custom-action-name").exists()).toBe(false);
+    expect(readActionLibrary().state.usage).toEqual({});
+    wrapper.unmount();
+  });
+
+  it("learns a failed recording exactly once when Save configuration later succeeds", async () => {
+    vi.mocked(saveButtonMappings).mockRejectedValueOnce(new Error("临时保存失败"));
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await recordChord(wrapper, ["left_alt", "f8"]);
+    expect(readActionLibrary().state.custom).toHaveLength(0);
+    const save = wrapper.findAll(".mapping-footer button").find(button => button.text() === "保存配置")!;
+    await save.trigger("click");
+    await flushPromises();
+    const remembered = readActionLibrary().state.custom[0]!;
+    expect(remembered.action).toEqual({ type: "shortcut", chord: { keys: ["left_alt", "f8"] } });
+    expect(readActionLibrary().state.usage[remembered.id]!.count).toBe(1);
+    expect(wrapper.find("#custom-action-name").exists()).toBe(true);
+    await save.trigger("click");
+    await flushPromises();
+    expect(readActionLibrary().state.usage[remembered.id]!.count).toBe(1);
+    wrapper.unmount();
+  });
+
+  it("does not learn a failed choice replaced by a different successful assignment", async () => {
+    vi.mocked(saveButtonMappings).mockRejectedValueOnce(new Error("临时保存失败"));
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await wrapper.get('[data-action-id="next-chat"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action-id="previous-chat"]').trigger("click");
+    await flushPromises();
+    expect(readActionLibrary().state.usage["next-chat"]).toBeUndefined();
+    expect(readActionLibrary().state.usage["previous-chat"]!.count).toBe(1);
+    wrapper.unmount();
+  });
+
+  it("waits for a cancelled pending capture to clean up before starting another", async () => {
+    let completeFirstStart!: () => void;
+    vi.mocked(startShortcutCapture).mockImplementationOnce(() => new Promise<void>(resolve => { completeFirstStart = resolve; }));
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await wrapper.get(".custom-shortcut-row button").trigger("click");
+    expect(wrapper.get('[data-action-id="next-chat"]').attributes("disabled")).toBeDefined();
+    await wrapper.get('[data-action-id="next-chat"]').trigger("click");
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    await wrapper.findAll(".mapping-editor button").find(button => button.text() === "关闭")!.trigger("click");
+    await openCell(wrapper, "菜单", 0);
+    expect(wrapper.get(".custom-shortcut-row button").attributes("disabled")).toBeDefined();
+    await wrapper.get(".custom-shortcut-row button").trigger("click");
+    expect(startShortcutCapture).toHaveBeenCalledOnce();
+    completeFirstStart();
+    await flushPromises();
+    expect(stopShortcutCapture).toHaveBeenCalledOnce();
+    await wrapper.get(".custom-shortcut-row button").trigger("click");
+    await flushPromises();
+    expect(startShortcutCapture).toHaveBeenCalledTimes(2);
+    shortcutCaptureHandler!({ key: "f8", isPressed: true });
+    shortcutCaptureHandler!({ key: "f8", isPressed: false });
+    await flushPromises();
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.menu?.single).toEqual({ type: "shortcut", chord: { keys: ["f8"] } });
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.power).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("keeps Common stable while editing and refreshes learned and pinned order on the next target", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    const ids = () => wrapper.findAll(".action-option-select").map(button => button.attributes("data-action-id"));
+    const initial = ids();
+    await wrapper.get('[data-action-id="next-chat"]').trigger("click");
+    await flushPromises();
+    expect(ids()).toEqual(initial);
+    edgeHandler!({ button: "power", isPressed: true });
+    gestureHandler!({ button: "power", trigger: "single" });
+    await flushPromises();
+    expect(readActionLibrary().state.usage["next-chat"]!.count).toBe(1);
+    await openCell(wrapper, "电源", 1);
+    expect(ids()[0]).toBe("next-chat");
+    await wrapper.get('button[aria-label="置顶：撤销"]').trigger("click");
+    expect(ids()[0]).toBe("next-chat");
+    await openCell(wrapper, "菜单", 0);
+    expect(ids()[0]).toBe("undo");
+    expect(readActionLibrary().state.pinned).toContain("undo");
+    wrapper.unmount();
+  });
+
+  it("keeps existing user mappings and single-key names without saving on mount", async () => {
+    vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: false, actions: {
+      power: { single: { type: "shortcut", chord: { keys: ["escape"] } }, double: { type: "disabled" }, long: { type: "shortcut", chord: { keys: ["control", "page_down"] } } },
+      back: { single: { type: "normal_backspace" }, double: { type: "disabled" }, long: { type: "disabled" } },
+    } });
+    const wrapper = await mountPage();
+    const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
+    expect(power.findAll(".mapping-cell")[0]!.text()).toContain("Esc");
+    expect(power.findAll(".mapping-cell")[2]!.text()).toContain("下一个聊天");
+    const back = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "返回")!;
+    expect(back.findAll(".mapping-cell")[0]!.text()).toContain("Backspace");
+    await openCell(wrapper, "电源", 2);
+    expect(wrapper.get('[data-action-id="next-chat"]').attributes("aria-pressed")).toBe("true");
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    expect(localStorage.getItem(ACTION_LIBRARY_STORAGE_KEY)).toBeNull();
+    wrapper.unmount();
+  });
+
+  it("stops shortcut capture when the editor closes", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    await wrapper.get(".custom-shortcut-row button").trigger("click");
+    await wrapper.findAll(".mapping-editor button").find(button => button.text() === "关闭")!.trigger("click");
+    await flushPromises();
+    expect(stopShortcutCapture).toHaveBeenCalledOnce();
+    shortcutCaptureHandler!({ key: "f8", isPressed: true });
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("browses tabs and searches every category without saving or executing", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 0);
+    expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(["常用", "聊天", "编辑", "视图", "系统"]);
+    expect(wrapper.get(".action-sections").element.firstElementChild).toBe(wrapper.get(".shortcut-recorder").element);
+    expect(wrapper.find('select').exists()).toBe(false);
+    expect(wrapper.get('[data-action-id="previous-chat"]').text()).toContain("Ctrl + Shift + [");
+    await wrapper.get('#action-tab-system').trigger("click");
+    await wrapper.get('input[aria-label="搜索全部功能"]').setValue("插队");
+    expect(wrapper.get('[data-action-id="queue-message"]').text()).toContain("Ctrl + Enter");
+    expect(wrapper.get(".shortcut-help").text()).toContain("连接与语音");
     expect(saveButtonMappings).not.toHaveBeenCalled();
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
@@ -197,12 +369,12 @@ describe("buttons mapping page", () => {
   it("saves a Codex option only to the selected gesture without executing it", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "电源", 1);
-    await wrapper.get('[data-shortcut-id="next-chat"]').trigger("click");
+    await wrapper.get('[data-action-id="next-chat"]').trigger("click");
     await flushPromises();
     const saved = vi.mocked(saveButtonMappings).mock.lastCall![0];
-    expect(saved.actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "page_down"] } });
+    expect(saved.actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
     expect(saved.actions.ok?.single).toEqual({ type: "shortcut", chord: { keys: ["enter"] } });
-    expect(wrapper.get('[data-shortcut-id="next-chat"]').attributes("aria-pressed")).toBe("true");
+    expect(wrapper.get('[data-action-id="next-chat"]').attributes("aria-pressed")).toBe("true");
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -214,6 +386,7 @@ describe("buttons mapping page", () => {
       .findAll(".mapping-card")
       .find((item) => item.find(".mapping-card-title strong").text() === "电源")!;
     await powerCard.findAll(".mapping-cell")[0]!.trigger("click");
+    await wrapper.get("#action-tab-system").trigger("click");
     await wrapper
       .findAll("button")
       .find((button) => button.text() === "扫描本机应用")!
@@ -334,9 +507,7 @@ describe("buttons mapping page", () => {
     const editor = wrapper.find(".mapping-editor");
     expect(editor.text()).toContain("电源 · 长按");
     // 点击 Esc 预设即自动保存（无需保存按钮）。
-    const chips = editor.findAll(".chip");
-    const escapeChip = chips.find((chip) => chip.text() === "Esc");
-    await escapeChip!.trigger("click");
+    await chooseAction(wrapper, "Esc");
     await vi.waitFor(() => {
       if (vi.mocked(saveButtonMappings).mock.calls.length === 0) {
         throw new Error("自动保存未触发");
@@ -381,6 +552,7 @@ describe("buttons mapping page", () => {
       await flushPromises();
     };
 
+    await wrapper.get("#action-tab-view").trigger("click");
     await choose("滚轮向下");
     await wrapper.get('input[aria-label="每次滚动格数"]').setValue("5");
     await flushPromises();
@@ -465,7 +637,7 @@ describe("buttons mapping page", () => {
       }
     });
     await vi.waitFor(() =>
-      expect(wrapper.text()).toContain("已录入 左 Win + L，松开全部按键后完成"),
+      expect(wrapper.text()).toContain("已录入 锁定电脑，松开全部按键后完成"),
     );
     shortcutCaptureHandler!({ key: "l", isPressed: false });
     await vi.waitFor(() => expect(stopShortcutCapture).toHaveBeenCalledOnce());
@@ -522,12 +694,24 @@ describe("buttons mapping page", () => {
   });
 
   /** 编辑器内按标签找 chip 并返回其禁用态。 */
-  function chipState(wrapper: VueWrapper, label: string): boolean {
-    const chip = wrapper
-      .findAll(".mapping-editor .chip")
-      .find((element) => element.text().includes(label));
-    expect(chip, `未找到 chip：${label}`).toBeDefined();
-    return (chip!.element as HTMLButtonElement).disabled;
+  async function chooseAction(wrapper: VueWrapper, label: string): Promise<void> {
+    await wrapper.get('input[aria-label="搜索全部功能"]').setValue(label);
+    const option = wrapper.findAll(".action-option-select").find(button => button.get("strong").text() === label);
+    expect(option, "未找到功能：" + label).toBeDefined();
+    await option!.trigger("click");
+    await flushPromises();
+  }
+
+  async function chipState(wrapper: VueWrapper, label: string): Promise<boolean> {
+    if (label === "＋ 添加应用") {
+      await wrapper.get("#action-tab-system").trigger("click");
+      return (wrapper.get(".add-app").element as HTMLButtonElement).disabled;
+    }
+    if (label === "录入自定义快捷键") return (wrapper.get(".custom-shortcut-row button").element as HTMLButtonElement).disabled;
+    await wrapper.get('input[aria-label="搜索全部功能"]').setValue(label);
+    const option = wrapper.findAll(".action-option-select").find(button => button.get("strong").text() === label);
+    expect(option, "未找到功能：" + label).toBeDefined();
+    return (option!.element as HTMLButtonElement).disabled;
   }
 
   async function openCell(
@@ -544,12 +728,12 @@ describe("buttons mapping page", () => {
   it("全开放：确定·单击所有操作可配（注入链路已真机验证）+ 单响应提示", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "确定", 0);
-    expect(chipState(wrapper, "Enter")).toBe(false);
-    expect(chipState(wrapper, "Home")).toBe(false);
-    expect(chipState(wrapper, "空格")).toBe(false);
-    expect(chipState(wrapper, "粘贴")).toBe(false);
-    expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
-    expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
+    expect(await chipState(wrapper, "Enter")).toBe(false);
+    expect(await chipState(wrapper, "Home")).toBe(false);
+    expect(await chipState(wrapper, "Space")).toBe(false);
+    expect(await chipState(wrapper, "粘贴")).toBe(false);
+    expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
+    expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
     // 武装族按键显示冷首按原生副作用提示（信息性，不门控）。
     expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
   });
@@ -557,16 +741,16 @@ describe("buttons mapping page", () => {
   it("全开放：确定·双击与 TV 所有操作可配 + 各自的单响应提示", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "确定", 1);
-    expect(chipState(wrapper, "Enter")).toBe(false);
-    expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
-    expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
+    expect(await chipState(wrapper, "Enter")).toBe(false);
+    expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
+    expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
     expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
 
     await openCell(wrapper, "TV", 0);
-    expect(chipState(wrapper, "Enter")).toBe(false);
-    expect(chipState(wrapper, "静音")).toBe(false);
-    expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
-    expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
+    expect(await chipState(wrapper, "Enter")).toBe(false);
+    expect(await chipState(wrapper, "静音")).toBe(false);
+    expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
+    expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
     expect(wrapper.find(".mapping-editor").text()).toContain("普通键盘不受此映射影响");
     expect(wrapper.find(".mapping-editor").text()).toContain("可能同时触发 Home 或输入反引号");
   });
@@ -574,9 +758,9 @@ describe("buttons mapping page", () => {
   it("左键与其余方向键同样开放自定义并显示首次按键提示", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "左", 0);
-    expect(chipState(wrapper, "←")).toBe(false);
-    expect(chipState(wrapper, "退格")).toBe(false);
-    expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
+    expect(await chipState(wrapper, "←")).toBe(false);
+    expect(await chipState(wrapper, "Backspace")).toBe(false);
+    expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
 
     // 与型号无关：RC001 上左键同样开放。
@@ -591,10 +775,10 @@ describe("buttons mapping page", () => {
   it("电源（直接归因族）全开放且无单响应提示", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "电源", 2);
-    expect(chipState(wrapper, "Esc")).toBe(false);
-    expect(chipState(wrapper, "截图")).toBe(false);
-    expect(chipState(wrapper, "录入自定义快捷键")).toBe(false);
-    expect(chipState(wrapper, "＋ 添加应用")).toBe(false);
+    expect(await chipState(wrapper, "Esc")).toBe(false);
+    expect(await chipState(wrapper, "截图")).toBe(false);
+    expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
+    expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
     expect(wrapper.find(".mapping-editor").text()).not.toContain("首次按下可能额外触发");
   });
 
@@ -643,10 +827,10 @@ describe("buttons mapping page", () => {
   it("saves a Codex shortcut from the formerly disabled volume editor without triggering it", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "音量+", 1);
-    const preset = wrapper.findAll(".codex-shortcut").find(b => b.text().includes("上一个会话或标签页"))!;
+    const preset = wrapper.get('[data-action-id="previous-chat"]');
     await preset.trigger("click");
     await flushPromises();
-    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "page_up"] } });
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_left"] } });
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -683,7 +867,7 @@ describe("buttons mapping page", () => {
     const backCard = wrapper.findAll(".mapping-card").find((card) => card.find(".mapping-card-title strong").text() === "返回")!;
     const hold = backCard.findAll(".mapping-cell")[2]!;
     expect((hold.element as HTMLButtonElement).disabled).toBe(true);
-    expect(hold.text()).toContain("持续退格");
+    expect(hold.text()).toContain("Backspace");
     expect(wrapper.text()).toContain("当前单按立即退格");
     expect(wrapper.find(".punctuation-note").exists()).toBe(false);
     expect(wrapper.get(".gesture-timing-note").text()).not.toContain("撤销");
@@ -741,7 +925,7 @@ describe("buttons mapping page", () => {
     await wrapper.get(".backspace-actions .chip").trigger("click");
     await flushPromises();
     await openCell(wrapper, "返回", 1);
-    await wrapper.findAll(".mapping-editor .chip").find(button => button.text() === "撤销")!.trigger("click");
+    await chooseAction(wrapper, "撤销");
     await flushPromises();
     expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.back).toEqual({
       single: { type: "normal_backspace" },
@@ -756,7 +940,7 @@ describe("buttons mapping page", () => {
     expect(wrapper.get(".gesture-timing-note").text()).toContain("第一击立即退格");
 
     await openCell(wrapper, "返回", 1);
-    await wrapper.findAll(".mapping-editor .chip").find(button => button.text() === "粘贴")!.trigger("click");
+    await chooseAction(wrapper, "粘贴");
     await flushPromises();
     expect(wrapper.get(".gesture-timing-note").text()).toContain("单击等待约 0.3 秒");
     expect(wrapper.get(".gesture-timing-note").text()).not.toContain("撤销");
@@ -773,7 +957,7 @@ describe("buttons mapping page", () => {
   it.each([0, 1, 2])("freely assigns and disables Undo on another button's trigger %i", async triggerIndex => {
     const wrapper = await mountPage();
     await openCell(wrapper, "电源", triggerIndex);
-    await wrapper.findAll(".mapping-editor .chip").find(button => button.text() === "撤销")!.trigger("click");
+    await chooseAction(wrapper, "撤销");
     await flushPromises();
     const trigger = (["single", "double", "long"] as const)[triggerIndex]!;
     const saved = vi.mocked(saveButtonMappings).mock.lastCall![0];
@@ -814,12 +998,12 @@ describe("buttons mapping page", () => {
 
   it("restores default Backspace and explains the default hold behavior", async () => {
     const wrapper = await mountPage();
-    await wrapper.findAll("button").find((button) => button.text() === "恢复基础配置")!.trigger("click");
+    await wrapper.findAll("button").find((button) => button.text() === "恢复默认配置")!.trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("返回键单按退格、按住连续删除，其余按键保持原样");
+    expect(wrapper.text()).toContain("返回键按住连续删除，电源键长按插队/排队");
     const backCard = wrapper.findAll(".mapping-card").find((card) => card.find(".mapping-card-title strong").text() === "返回")!;
-    expect(backCard.text()).toContain("退格（按住连续删除）");
-    expect(backCard.findAll(".mapping-cell")[2]!.text()).toContain("持续退格");
+    expect(backCard.text()).toContain("Backspace");
+    expect(backCard.findAll(".mapping-cell")[2]!.text()).toContain("Backspace");
     expect((backCard.findAll(".mapping-cell")[2]!.element as HTMLButtonElement).disabled).toBe(true);
     wrapper.unmount();
   });

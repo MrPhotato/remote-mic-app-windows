@@ -35,16 +35,16 @@ const next = computed(() => current.value ? buildCodingProfile(current.value) : 
 const backupDate = computed(() => backup.value ? new Date(backup.value.createdAt).toLocaleString() : "");
 const canApply = computed(() => nativeRuntime && current.value !== null && !loading.value && !busy.value && !backupError.value);
 const presetLabels: Partial<Record<RemoteButton, Partial<Record<ButtonTrigger, string>>>> = {
-  home: { single: "打开 Codex", double: "新任务 · Ctrl + N", long: "设置 · Ctrl + ," },
-  menu: { single: "命令菜单 · Ctrl + Shift + P", double: "选择模型 · Ctrl + Shift + M", long: "待处理项 · Ctrl + Alt + A" },
-  tv: { single: "查看改动 · Ctrl + Alt + B", double: "开关侧边栏 · Ctrl + B", long: "撤销 · Ctrl + Z" },
-  power: { single: "取消当前操作 · Esc" },
-  ok: { single: "确认/发送 · Enter" },
-  back: { single: "退格 · Backspace", double: "不额外绑定，连按继续退格", long: "按住连续退格" },
+  home: { single: "打开 Codex", double: "新聊天", long: "待处理项" },
+  menu: { single: "撤销", long: "重做" },
+  tv: { single: "切换聊天和标签页", double: "显示/隐藏侧边栏", long: "显示/隐藏底部面板" },
+  power: { single: "Esc", long: "插队/排队" },
+  ok: { single: "Enter" },
+  back: { single: "Backspace", double: "未设置", long: "按住连续删除" },
   up: { long: "按住连续向上" }, down: { long: "按住连续向下" },
   left: { long: "按住连续向左" }, right: { long: "按住连续向右" },
-  volume_up: { single: "上一任务/标签页 · Ctrl + PageUp", double: "未配置动作", long: "按住连续切换上一项" },
-  volume_down: { single: "下一任务/标签页 · Ctrl + PageDown", double: "未配置动作", long: "按住连续切换下一项" },
+  volume_up: { single: "上一个聊天", long: "每次按下切换一次" },
+  volume_down: { single: "下一个聊天", long: "每次按下切换一次" },
 };
 
 function presetLabel(button: RemoteButton, gesture: ButtonTrigger): string {
@@ -154,7 +154,7 @@ onMounted(load);
 
     <article class="card preset-card">
       <div class="card-title-row">
-        <div><h2>日常 Coding 预设</h2><p class="muted">应用后启用映射，并替换下列 12 个键的配置。常用操作单按完成，主页、菜单和 TV 提供双按与长按。</p></div>
+        <div><h2>日常默认方案</h2><p class="muted">新安装默认使用此方案，升级保留已有配置。重新应用会启用映射，并替换下列 12 个键的配置。</p></div>
         <button class="secondary-button" type="button" @click="emit('navigate', 'buttons')">自定义按键</button>
       </div>
       <table class="mapping-table">
@@ -168,8 +168,8 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
-      <p class="preserved-note muted">主页、菜单和 TV 的单按需等待约 0.3 秒。返回键按一下退格，按住连续删除，松开停止。方向键和音量键支持按住连续操作；RC003 的返回及音量键需先启用按键增强。需要调整时打开「按键映射」。</p>
-      <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter：在输入框中可能发送内容，在审批提示中可能批准操作。电源键在本方案中配置为 Esc，用于关闭弹层或取消当前操作。</p>
+      <p class="preserved-note muted">主页和 TV 的单按需等待约 0.3 秒；菜单和电源的单按在松开时触发。返回键按一下退格，按住连续删除，松开停止。方向键支持按住连续操作，音量键每次按下只切换一个聊天；RC003 的返回及音量键需先启用按键增强。</p>
+      <p class="input-note">快捷键作用于当前前台窗口，请先按主页打开 Codex。确定键发送 Enter，在输入框中可能发送内容，在审批提示中可能批准操作。电源键短按为 Esc，长按为插队/排队（Ctrl + Enter）。</p>
       <div class="preset-actions">
         <span class="muted">{{ backup ? `可恢复的最近备份：${backupDate}。首次备份也会保留。` : '每次应用前先备份当前配置，同时保留首次备份。' }}</span>
         <button class="primary-button" data-testid="apply-profile" type="button" :disabled="!canApply" @click="changeProfile(false)">{{ busy ? '正在保存…' : '应用日常默认方案' }}</button>

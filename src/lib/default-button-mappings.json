@@ -1,0 +1,65 @@
+{
+  "enabled": true,
+  "actions": {
+    "home": {
+      "single": { "type": "open_app", "target": "codex" },
+      "double": { "type": "shortcut", "chord": { "keys": ["control", "n"] } },
+      "long": { "type": "shortcut", "chord": { "keys": ["control", "alt", "a"] } }
+    },
+    "menu": {
+      "single": { "type": "shortcut", "chord": { "keys": ["control", "z"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "shortcut", "chord": { "keys": ["control", "y"] } }
+    },
+    "tv": {
+      "single": { "type": "shortcut", "chord": { "keys": ["control", "alt", "b"] } },
+      "double": { "type": "shortcut", "chord": { "keys": ["control", "shift", "s"] } },
+      "long": { "type": "shortcut", "chord": { "keys": ["control", "j"] } }
+    },
+    "power": {
+      "single": { "type": "shortcut", "chord": { "keys": ["escape"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "shortcut", "chord": { "keys": ["control", "enter"] } }
+    },
+    "up": {
+      "single": { "type": "shortcut", "chord": { "keys": ["up"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "down": {
+      "single": { "type": "shortcut", "chord": { "keys": ["down"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "left": {
+      "single": { "type": "shortcut", "chord": { "keys": ["left"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "right": {
+      "single": { "type": "shortcut", "chord": { "keys": ["right"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "ok": {
+      "single": { "type": "shortcut", "chord": { "keys": ["enter"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "back": {
+      "single": { "type": "normal_backspace" },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "volume_up": {
+      "single": { "type": "shortcut", "chord": { "keys": ["control", "shift", "bracket_left"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    },
+    "volume_down": {
+      "single": { "type": "shortcut", "chord": { "keys": ["control", "shift", "bracket_right"] } },
+      "double": { "type": "disabled" },
+      "long": { "type": "disabled" }
+    }
+  }
+}

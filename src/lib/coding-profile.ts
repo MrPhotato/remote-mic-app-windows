@@ -1,4 +1,5 @@
 import type { ButtonAction, ButtonActions, ButtonMappings, RemoteButton } from "./bridge";
+import defaultMappings from "./default-button-mappings.json";
 
 export const CODING_BACKUP_KEY = "remoteCoding.codexPresetBackup.v1";
 export const CODING_LATEST_BACKUP_KEY = "remoteCoding.codexPresetLatestBackup.v1";
@@ -22,45 +23,13 @@ function copy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function singleAction(action: ButtonAction): ButtonActions {
-  return { single: action, double: { type: "disabled" }, long: { type: "disabled" } };
-}
-
-function shortcut(...keys: string[]): ButtonAction {
-  return { type: "shortcut", chord: { keys } };
-}
-
 /** Voice has a separate setting; primary editing keys retain immediate, repeatable behavior. */
 export function buildCodingProfile(current: ButtonMappings): ButtonMappings {
   const next = copy(current);
   next.enabled = true;
-  next.actions.home = {
-    single: { type: "open_app", target: "codex" },
-    double: shortcut("control", "n"),
-    long: shortcut("control", "comma"),
-  };
-  next.actions.menu = {
-    single: shortcut("control", "shift", "p"),
-    double: shortcut("control", "shift", "m"),
-    long: shortcut("control", "alt", "a"),
-  };
-  next.actions.tv = {
-    single: shortcut("control", "alt", "b"),
-    double: shortcut("control", "b"),
-    long: shortcut("control", "z"),
-  };
-  next.actions.power = singleAction(shortcut("escape"));
-  for (const key of ["up", "down", "left", "right"] as const) {
-    next.actions[key] = singleAction(shortcut(key));
+  for (const button of CODING_PROFILE_BUTTONS) {
+    next.actions[button] = copy(defaultMappings.actions[button]) as ButtonActions;
   }
-  next.actions.ok = singleAction(shortcut("enter"));
-  next.actions.back = {
-    single: { type: "normal_backspace" },
-    double: { type: "disabled" },
-    long: { type: "disabled" },
-  };
-  next.actions.volume_up = singleAction(shortcut("control", "page_up"));
-  next.actions.volume_down = singleAction(shortcut("control", "page_down"));
   return next;
 }
 

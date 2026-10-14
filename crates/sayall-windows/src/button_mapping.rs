@@ -2478,6 +2478,7 @@ mod tests {
         let runtime = ButtonMappingRuntime::new(injector.clone(), usage.clone(), snapshot.clone());
         // A synthetic UP must not trigger the pending release-time single action.
         let mut mappings = mappings_with_single(RemoteButton::Back, KeyCode::Backspace);
+        mappings.actions.remove(&RemoteButton::Up);
         mappings.actions.get_mut(&RemoteButton::Back).unwrap().long = ButtonAction::Shortcut {
             chord: KeyChord {
                 keys: vec![KeyCode::Space],

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { buildCodingProfile } from "./coding-profile";
 
 export const VB_CABLE_DOWNLOAD_URL = "https://vb-audio.com/Cable/";
 
@@ -553,7 +554,7 @@ export async function stopRawInput(): Promise<RawInputSnapshot> {
 
 export async function getButtonMappings(): Promise<ButtonMappings> {
   if (!isTauriRuntime()) {
-    return { enabled: true, actions: {} };
+    return buildCodingProfile({ enabled: true, actions: {} });
   }
   return invoke<ButtonMappings>("get_button_mappings");
 }
@@ -567,7 +568,7 @@ export async function saveButtonMappings(mappings: ButtonMappings): Promise<Butt
 
 export async function resetButtonMappings(): Promise<ButtonMappings> {
   if (!isTauriRuntime()) {
-    return { enabled: true, actions: {} };
+    return buildCodingProfile({ enabled: true, actions: {} });
   }
   return invoke<ButtonMappings>("reset_button_mappings");
 }
@@ -952,7 +953,8 @@ export function shortcutCapability(
 
 const keyLabels: Record<string, string> = {
   ...voiceHotkeyKeyLabels,
-  backspace: "退格",
+  backspace: "Backspace",
+  space: "Space",
   page_up: "Page Up",
   page_down: "Page Down",
   end: "End",
@@ -1006,7 +1008,7 @@ export function registerPresetAppNames(apps: Array<{ id: string; name: string }>
 
 export function actionSummary(action: ButtonAction | undefined): string {
   if (!action || action.type === "disabled") return "未设置";
-  if (action.type === "normal_backspace") return "退格（按住连续删除）";
+  if (action.type === "normal_backspace") return "Backspace";
   if (action.type === "delete_to_punctuation") return "删到上一个标点（保留标点）";
   if (action.type === "scroll") {
     const label = action.direction === "up" ? "滚轮向上" : "滚轮向下";

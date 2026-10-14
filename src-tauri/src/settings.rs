@@ -168,14 +168,21 @@ impl SettingsStore {
         let contents = match fs::read_to_string(&path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(ButtonMappings::default())
+                sayall_windows::gatt_note(
+                    "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=passed source=first_install_defaults".to_owned(),
+                );
+                return Ok(ButtonMappings::default());
             }
             Err(error) => return Err(format!("读取按键映射失败：{error}")),
         };
-        serde_json::from_str::<ButtonMappings>(&contents)
+        let mappings = serde_json::from_str::<ButtonMappings>(&contents)
             .map_err(|error| format!("解析按键映射失败：{error}"))?
             .normalized()
-            .map_err(|error| format!("按键映射无效：{error}"))
+            .map_err(|error| format!("按键映射无效：{error}"))?;
+        sayall_windows::gatt_note(
+            "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=passed source=existing_file".to_owned(),
+        );
+        Ok(mappings)
     }
 
     pub fn save_button_mappings(&self, mappings: ButtonMappings) -> Result<ButtonMappings, String> {
@@ -353,6 +360,89 @@ mod tests {
             .join(format!("{}-{unique}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         SettingsStore::new(directory.join("settings.json"))
+    }
+
+    #[test]
+    fn first_install_uses_enabled_defaults_without_applying_the_preset() {
+        use sayall_windows::raw_input::RemoteButton;
+        use sayall_windows::send_input::{ButtonAction, KeyCode};
+
+        let store = mapping_transaction_store();
+        assert!(!store.button_mappings_path().exists());
+        let mappings = store.load_button_mappings().unwrap();
+        assert!(mappings.enabled);
+        assert_eq!(mappings, ButtonMappings::default().normalized().unwrap());
+        assert_eq!(mappings.actions.len(), 12);
+        assert_eq!(
+            mappings.actions(RemoteButton::Power).long,
+            ButtonAction::Shortcut {
+                chord: KeyChord {
+                    keys: vec![KeyCode::Control, KeyCode::Enter]
+                }
+            }
+        );
+        assert!(
+            !store.button_mappings_path().exists(),
+            "read must not write user settings"
+        );
+    }
+
+    #[test]
+    fn existing_mapping_file_never_receives_the_new_install_preset() {
+        use sayall_windows::raw_input::RemoteButton;
+        use sayall_windows::send_input::{ButtonAction, ButtonActions, KeyCode};
+
+        let store = mapping_transaction_store();
+        for enabled in [true, false] {
+            let content = serde_json::json!({
+                "enabled": enabled,
+                "actions": {
+                    "back": { "type": "disabled" },
+                    "ok": { "type": "shortcut", "chord": { "keys": ["tab"] } }
+                }
+            })
+            .to_string();
+            fs::write(store.button_mappings_path(), &content).unwrap();
+            let mappings = store.load_button_mappings().unwrap();
+            assert_eq!(mappings.enabled, enabled);
+            assert_eq!(mappings.actions.len(), 2);
+            assert_eq!(
+                mappings.actions(RemoteButton::Back),
+                ButtonActions::default()
+            );
+            assert_eq!(
+                mappings.actions(RemoteButton::Home),
+                ButtonActions::default()
+            );
+            assert_eq!(
+                mappings.actions(RemoteButton::Ok).single,
+                ButtonAction::Shortcut {
+                    chord: KeyChord {
+                        keys: vec![KeyCode::Tab]
+                    }
+                }
+            );
+            assert_eq!(
+                fs::read_to_string(store.button_mappings_path()).unwrap(),
+                content
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_existing_mapping_file_is_rejected_without_replacement() {
+        let store = mapping_transaction_store();
+        for content in [
+            "{",
+            r#"{"actions":{"ok":{"type":"shortcut","chord":{"keys":[]}}}}"#,
+        ] {
+            fs::write(store.button_mappings_path(), content).unwrap();
+            assert!(store.load_button_mappings().is_err());
+            assert_eq!(
+                fs::read_to_string(store.button_mappings_path()).unwrap(),
+                content
+            );
+        }
     }
 
     #[test]

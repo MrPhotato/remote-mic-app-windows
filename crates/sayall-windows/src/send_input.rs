@@ -502,17 +502,12 @@ fn default_enabled() -> bool {
 
 impl Default for ButtonMappings {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            actions: BTreeMap::from([(
-                RemoteButton::Back,
-                ButtonActions {
-                    single: ButtonAction::NormalBackspace,
-                    ..ButtonActions::default()
-                },
-            )]),
-            applications: Vec::new(),
-        }
+        // The first launch and the explicit preset share one source of truth.
+        // Existing files use the Deserialize path below, never this preset merge.
+        serde_json::from_str(include_str!(
+            "../../../src/lib/default-button-mappings.json"
+        ))
+        .expect("bundled default button mappings must be valid")
     }
 }
 
@@ -1254,8 +1249,53 @@ mod tests {
     }
 
     #[test]
-    fn missing_button_mapping_is_disabled_and_invalid_chords_fail_closed() {
+    fn fresh_install_defaults_are_enabled_valid_and_keep_enter_immediate() {
         let mappings = ButtonMappings::default();
+        assert!(mappings.enabled);
+        assert_eq!(mappings.actions.len(), 12);
+        assert_eq!(mappings.clone().normalized().unwrap(), mappings);
+        assert_eq!(
+            mappings.actions(RemoteButton::Home).single,
+            ButtonAction::OpenApp {
+                target: "codex".to_owned()
+            }
+        );
+        assert_eq!(
+            mappings.actions(RemoteButton::Ok),
+            ButtonActions {
+                single: ButtonAction::Shortcut {
+                    chord: chord(&[KeyCode::Enter])
+                },
+                ..ButtonActions::default()
+            }
+        );
+        assert_eq!(
+            mappings.actions(RemoteButton::Power).long,
+            ButtonAction::Shortcut {
+                chord: chord(&[KeyCode::Control, KeyCode::Enter])
+            }
+        );
+        assert_eq!(
+            mappings.actions(RemoteButton::VolumeUp).single,
+            ButtonAction::Shortcut {
+                chord: chord(&[KeyCode::Control, KeyCode::Shift, KeyCode::BracketLeft])
+            }
+        );
+        assert_eq!(
+            mappings.actions(RemoteButton::VolumeDown).single,
+            ButtonAction::Shortcut {
+                chord: chord(&[KeyCode::Control, KeyCode::Shift, KeyCode::BracketRight])
+            }
+        );
+        assert_eq!(
+            mappings.actions(RemoteButton::VolumeMute),
+            ButtonActions::default()
+        );
+    }
+
+    #[test]
+    fn missing_button_mapping_is_disabled_and_invalid_chords_fail_closed() {
+        let mappings: ButtonMappings = serde_json::from_str(r#"{"actions":{}}"#).unwrap();
         assert_eq!(
             mappings.action_for(RemoteButton::Up, ButtonTrigger::Single),
             ButtonAction::Disabled
@@ -1310,6 +1350,7 @@ mod tests {
     #[test]
     fn mapped_mask_requires_enabled_and_any_configured_cell() {
         let mut mappings = ButtonMappings::default();
+        mappings.actions.clear();
         mappings.actions.insert(
             RemoteButton::Back,
             ButtonActions {
@@ -1354,6 +1395,9 @@ mod tests {
     fn normalized_preserves_volume_customization_through_json() {
         // 配置能力与硬件是否上报事件分开处理，不得静默丢弃用户的音量键配置。
         let mut mappings = ButtonMappings::default();
+        mappings
+            .actions
+            .retain(|button, _| *button == RemoteButton::Back);
         let single_escape = ButtonActions {
             single: ButtonAction::Shortcut {
                 chord: chord(&[KeyCode::Escape]),

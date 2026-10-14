@@ -694,18 +694,36 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn updater_notes_land_in_diagnostic_log() {
-        let path = std::env::temp_dir().join(format!(
-            "sayall-updater-note-test-{}.log",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&path);
-        // 本测试二进制内无其他代码先初始化 gatt_sink（OnceLock 首次调用生效）。
-        // SAFETY: 测试进程内单线程操作该环境变量，其余测试不读取它。
-        unsafe { std::env::set_var("SAYALL_GATT_LOG", &path) };
-        note("check.fail stage=endpoint_override_parse error_domain=url error_code=parse_failed reason=invalid_override retryable=false".to_owned());
+        const CHILD_FLAG: &str = "SAYALL_UPDATER_NOTE_TEST_CHILD";
+        if std::env::var_os(CHILD_FLAG).is_some() {
+            note("check.fail stage=endpoint_override_parse error_domain=url error_code=parse_failed reason=invalid_override retryable=false".to_owned());
+            return;
+        }
+        // The production sink uses OnceLock. Give this test its own process so
+        // concurrently tested settings reads cannot initialize that sink first.
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target/local-launch/updater-note-tests");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("{}-{unique}.log", std::process::id()));
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "updater::tests::updater_notes_land_in_diagnostic_log",
+            ])
+            .env(CHILD_FLAG, "1")
+            .env("SAYALL_GATT_LOG", &path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated updater log test failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
-        unsafe { std::env::remove_var("SAYALL_GATT_LOG") };
-        let _ = std::fs::remove_file(&path);
         assert!(
             contents.contains("updater.check.fail stage=endpoint_override_parse")
                 && contents.contains("error_code=parse_failed")

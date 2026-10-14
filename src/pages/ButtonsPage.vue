@@ -6,15 +6,25 @@ import BatteryIndicator from "../components/BatteryIndicator.vue";
 import Rc003InputControl from "../components/Rc003InputControl.vue";
 import { reportFrontendEvent } from "../lib/frontend-diagnostics";
 import {
-  CODEX_SHORTCUT_GROUPS,
-  CODEX_SHORTCUTS,
   CODEX_SHORTCUTS_SOURCE,
-  codexShortcutAction,
-  type CodexShortcut,
-  type CodexShortcutGroup,
 } from "../lib/codex-shortcuts";
 import {
-  actionSummary,
+  ACTION_TABS,
+  actionDisplayName,
+  actionEntries,
+  actionIdentity,
+  commonActions,
+  findKnownAction,
+  readActionLibrary,
+  recordActionSelection,
+  renameCustomAction,
+  searchActions,
+  setActionPinned,
+  writeActionLibrary,
+  type ActionEntry,
+  type ActionLibraryState,
+} from "../lib/action-library";
+import {
   buttonLabel,
   buttonLabels,
   buttonTriggerLabel,
@@ -209,8 +219,10 @@ const firedFlash = ref<{ button: RemoteButton; trigger: ButtonTrigger } | null>(
 const mappingSnapshot = ref<ButtonMappingSnapshot | null>(null);
 const busy = ref(false);
 const statusMessage = ref<string | null>(null);
+const captureFeedback = ref<string | null>(null);
 const capturingShortcut = ref(false);
 const captureStarting = ref(false);
+const captureStopping = ref(false);
 const captureDisplay = ref<string[]>([]);
 const safeCaptureMode = ref(false);
 const capturePressedKeys = new Set<KeyCode>();
@@ -225,6 +237,16 @@ let flashTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let unmounted = false;
 let resourcesReady = false;
+interface PendingSelection {
+  id: number;
+  button: RemoteButton;
+  trigger: ButtonTrigger;
+  action: ButtonAction;
+}
+let selectionRequest = 0;
+const pendingSelections = new Map<string, PendingSelection>();
+const learnedSelections = new Set<number>();
+const editorInputBusy = computed(() => busy.value || capturingShortcut.value || captureStarting.value || captureStopping.value);
 
 function releasePageResources(): void {
   window.removeEventListener("keydown", handleCaptureKeydown, true);
@@ -286,7 +308,7 @@ function cellDisabled(button: RemoteButton, trigger: ButtonTrigger): boolean {
 }
 
 function cellSummary(button: RemoteButton, trigger: ButtonTrigger): string {
-  return inheritsBackspaceHold(button, trigger) ? "持续退格" : actionSummary(actionOf(button, trigger));
+  return inheritsBackspaceHold(button, trigger) ? "Backspace" : actionDisplayName(actionOf(button, trigger), actionLibrary.value);
 }
 
 /** 当前编辑格的打开应用目标（非 open_app 动作返回 null，模板类型收窄用）。 */
@@ -321,13 +343,14 @@ const customApps = computed<Array<{ path: string; name: string }>>(() => {
 const appPickerOpen = ref(false);
 const appPickerError = ref<string | null>(null);
 const appFilter = ref("");
-const filteredCustomApps = computed(() => customApps.value.filter(app => app.name.toLocaleLowerCase().includes(appFilter.value.trim().toLocaleLowerCase())));
+const filteredCustomApps = computed(() => customApps.value.filter(app => app.name.toLocaleLowerCase().includes((actionSearch.value || appFilter.value).trim().toLocaleLowerCase())));
+const filteredPresetApps = computed(() => presetApps.value.filter(app => app.name.toLocaleLowerCase().includes(actionSearch.value.trim().toLocaleLowerCase())));
 watch([presetApps, () => mappings.value.applications], () => {
   registerPresetAppNames([...presetApps.value, ...(mappings.value.applications ?? []).map(app => ({ id: app.path, name: app.name }))]);
 }, { deep: true });
 
 async function addScannedApps(apps: CustomAppPick[]): Promise<void> {
-  if (busy.value) return;
+  if (editorInputBusy.value) return;
   busy.value = true;
   appPickerError.value = null;
   try {
@@ -347,6 +370,7 @@ async function addScannedApps(apps: CustomAppPick[]): Promise<void> {
 
 /** 打开原生文件选择器添加自定义应用，并应用到当前编辑格。 */
 async function addCustomApp(): Promise<void> {
+  if (editorInputBusy.value) return;
   const pick = await pickCustomApp();
   if (!pick || !editingTarget.value) return;
   applyAction({ type: "open_app", target: pick.path });
@@ -358,12 +382,23 @@ function selectButton(button: RemoteButton): void {
 
 function openEditor(button: RemoteButton, trigger: ButtonTrigger): void {
   if (cellDisabled(button, trigger)) return;
+  if (editingTarget.value?.button !== button || editingTarget.value?.trigger !== trigger) {
+    refreshCommonOrder();
+    actionSearch.value = "";
+    captureFeedback.value = null;
+  }
   selectedButton.value = button;
   editingTarget.value = { button, trigger };
-  if (capturingShortcut.value) void finishShortcutCapture();
+  if (capturingShortcut.value || captureStarting.value) void finishShortcutCapture();
 }
 
-function applyAction(action: ButtonAction): void {
+function closeEditor(): void {
+  if (capturingShortcut.value || captureStarting.value) void finishShortcutCapture();
+  editingTarget.value = null;
+}
+
+function applyAction(action: ButtonAction, source: "choice" | "capture" = "choice"): void {
+  if (source === "choice" && editorInputBusy.value) return;
   const target = editingTarget.value;
   if (!target) return;
   const next: ButtonMappings = {
@@ -377,83 +412,89 @@ function applyAction(action: ButtonAction): void {
   }
   next.actions[target.button] = actions;
   mappings.value = next;
-  // 对齐 Mac：点击动作即自动保存生效（静默；失败时显示错误信息）。
+  pendingSelections.set(`${target.button}:${target.trigger}`, {
+    id: ++selectionRequest, ...target, action: JSON.parse(JSON.stringify(action)) as ButtonAction,
+  });
   void persist();
 }
 
-/**
- * 预设快捷键分组（对齐 Mac `ButtonActionCategory` 的 basicKeys/systemAndMedia，
- * 并按 Windows 语义适配：Home/End/PageUp/PageDown 属低频导航键、Mac 端基础
- * 按键列表亦无此四键，故移除；复制族从系统组移入基础组，对齐 Mac basicKeys）。
- */
-const PRESET_GROUPS: Array<{ label: string; items: Array<{ label: string; keys: KeyCode[] }> }> = [
-  {
-    label: "基础按键",
-    items: [
-      { label: "Enter", keys: ["enter"] },
-      { label: "Esc", keys: ["escape"] },
-      { label: "空格", keys: ["space"] },
-      { label: "Tab", keys: ["tab"] },
-      { label: "退格", keys: ["backspace"] },
-      { label: "删除", keys: ["delete"] },
-      { label: "↑", keys: ["up"] },
-      { label: "↓", keys: ["down"] },
-      { label: "←", keys: ["left"] },
-      { label: "→", keys: ["right"] },
-      // Home 为"主页键同键映射"的必需预设（能力矩阵 identity 档的唯一
-      // 合法目标；Mac 端基础键列表无此键，Windows 端因泄漏对冲需要保留）。
-      { label: "Home", keys: ["home"] },
-      { label: "复制", keys: ["control", "c"] },
-      { label: "粘贴", keys: ["control", "v"] },
-      { label: "剪切", keys: ["control", "x"] },
-      { label: "全选", keys: ["control", "a"] },
-      { label: "撤销", keys: ["control", "z"] },
-      { label: "重做", keys: ["control", "y"] },
-      { label: "查找", keys: ["control", "f"] },
-      { label: "保存", keys: ["control", "s"] },
-      { label: "发送", keys: ["control", "enter"] },
-      { label: "换行", keys: ["shift", "enter"] },
-      { label: "右键菜单", keys: ["apps"] },
-      { label: "刷新", keys: ["f5"] },
-    ],
-  },
-  {
-    label: "系统与媒体",
-    items: [
-      { label: "切换窗口", keys: ["alt", "tab"] },
-      { label: "显示桌面", keys: ["left_windows", "d"] },
-      { label: "关闭窗口", keys: ["control", "w"] },
-      { label: "锁定", keys: ["left_windows", "l"] },
-      { label: "搜索", keys: ["left_windows", "s"] },
-      { label: "截图", keys: ["left_windows", "shift", "s"] },
-      { label: "静音", keys: ["volume_mute"] },
-      { label: "音量+", keys: ["volume_up"] },
-      { label: "音量−", keys: ["volume_down"] },
-      { label: "播放/暂停", keys: ["media_play_pause"] },
-      { label: "上一首", keys: ["media_prev"] },
-      { label: "下一首", keys: ["media_next"] },
-    ],
-  },
-];
+const selectedAction = computed(() => editingTarget.value ? actionOf(editingTarget.value.button, editingTarget.value.trigger) : null);
+const loadedLibrary = readActionLibrary();
+const actionLibrary = ref<ActionLibraryState>(loadedLibrary.state);
+const libraryWarning = ref<string | null>(loadedLibrary.error);
+reportFrontendEvent({ event: "button_action_library", phase: "loaded", result: loadedLibrary.error ? "failed" : "passed", reason: loadedLibrary.error ? "storage_read_failed" : "library_loaded" });
+const activeTab = ref<(typeof ACTION_TABS)[number]["id"]>("common");
+const actionSearch = ref("");
+const commonOrder = ref<string[]>([]);
+const customName = ref("");
 
-const codexShortcutGroup = ref<CodexShortcutGroup>("navigation");
-const codexShortcutSearch = ref("");
-const visibleCodexShortcuts = computed(() => {
-  const query = codexShortcutSearch.value.trim().toLocaleLowerCase();
-  return CODEX_SHORTCUTS.filter((shortcut) => query
-    ? `${shortcut.label} ${chordLabel({ keys: shortcut.keys })} ${shortcut.note ?? ""}`.toLocaleLowerCase().includes(query)
-    : shortcut.group === codexShortcutGroup.value);
+function refreshCommonOrder(): void {
+  commonOrder.value = commonActions(actionLibrary.value).map(entry => entry.id);
+}
+refreshCommonOrder();
+
+function saveLibrary(next: ActionLibraryState, reason: string): void {
+  const result = writeActionLibrary(next);
+  actionLibrary.value = next;
+  libraryWarning.value = result.ok ? null : "常用记录未能保存；本次变更下次打开可能无法保留。";
+  reportFrontendEvent({ event: "button_action_library", phase: "completed", result: result.ok ? "passed" : "failed", reason: result.ok ? reason : "storage_failed" });
+}
+
+const selectedLibraryEntry = computed(() => {
+  const action = selectedAction.value;
+  return action ? findKnownAction(action) ?? actionEntries(actionLibrary.value).find(entry => actionIdentity(entry.action) === actionIdentity(action)) : undefined;
+});
+const selectedCustomEntry = computed(() => selectedLibraryEntry.value?.group === "custom" ? selectedLibraryEntry.value : undefined);
+watch(selectedCustomEntry, entry => { customName.value = entry?.label ?? ""; });
+
+function renameSelectedCustom(): void {
+  if (editorInputBusy.value) return;
+  const entry = selectedCustomEntry.value;
+  const label = customName.value.trim();
+  if (!entry || !label) return;
+  saveLibrary(renameCustomAction(actionLibrary.value, entry.id, label), "custom_name_saved");
+}
+
+function togglePinned(entry: ActionEntry): void {
+  if (editorInputBusy.value) return;
+  saveLibrary(setActionPinned(actionLibrary.value, entry.id, !actionLibrary.value.pinned.includes(entry.id)), "pin_updated");
+}
+
+function isActiveEntry(entry: ActionEntry): boolean {
+  return selectedLibraryEntry.value?.id === entry.id;
+}
+
+function entryAvailable(entry: ActionEntry): boolean {
+  if (entry.action.type === "normal_backspace") return editingTarget.value?.trigger === "single";
+  return true;
+}
+
+const visibleActions = computed(() => {
+  const query = actionSearch.value.trim();
+  if (query || activeTab.value !== "common") {
+    return searchActions(actionLibrary.value, query, activeTab.value).filter(entryAvailable);
+  }
+  const byId = new Map(actionEntries(actionLibrary.value).map(entry => [entry.id, entry]));
+  return commonOrder.value.map(id => byId.get(id)).filter((entry): entry is ActionEntry => Boolean(entry)).filter(entryAvailable);
+});
+const duplicateAssignment = computed(() => {
+  const target = editingTarget.value;
+  const action = selectedAction.value;
+  if (!target || !action || action.type === "disabled") return null;
+  const found: string[] = [];
+  for (const [button, actions] of Object.entries(mappings.value.actions)) {
+    for (const [trigger, candidate] of Object.entries(actions)) {
+      if (button === target.button && trigger === target.trigger) continue;
+      const sameKnownAction = findKnownAction(action)?.id && findKnownAction(candidate)?.id === findKnownAction(action)?.id;
+      if (sameKnownAction || actionIdentity(candidate) === actionIdentity(action)) found.push(`${buttonLabel(button as RemoteButton)} · ${buttonTriggerLabel(trigger as ButtonTrigger)}`);
+    }
+  }
+  return found.length ? `也已用于：${found.join("、")}` : null;
 });
 
-function applyCodexShortcut(shortcut: CodexShortcut): void {
-  if (!editingTarget.value || busy.value) return;
-  reportFrontendEvent({
-    event: "codex_shortcut_selection",
-    phase: "selected",
-    result: "unknown",
-    reason: shortcut.id,
-  });
-  applyAction(codexShortcutAction(shortcut));
+function chooseEntry(entry: ActionEntry): void {
+  if (editorInputBusy.value || !entryAvailable(entry)) return;
+  applyAction(JSON.parse(JSON.stringify(entry.action)) as ButtonAction);
 }
 
 async function openCodexReference(): Promise<void> {
@@ -466,7 +507,7 @@ async function openCodexReference(): Promise<void> {
   }
 }
 
-const selectedAction = computed(() => editingTarget.value ? actionOf(editingTarget.value.button, editingTarget.value.trigger) : null);
+
 const normalBackspaceNote = computed<string | null>(() => {
   const target = editingTarget.value;
   if (!target) return null;
@@ -510,14 +551,6 @@ function isActiveScroll(direction: "up" | "down"): boolean {
   return action.type === "scroll" && action.direction === direction;
 }
 
-function isActivePreset(keys: KeyCode[]): boolean {
-  const target = editingTarget.value;
-  if (!target) return false;
-  const action = actionOf(target.button, target.trigger);
-  if (action.type !== "shortcut") return false;
-  return action.chord.keys.join("+") === keys.join("+");
-}
-
 /**
  * Home/TV 只接收已识别遥控器的事件，普通键盘保留原生输入。
  * 无设备身份的钩子不拦截这两键，因此遥控器也可能带出原生动作。
@@ -542,12 +575,26 @@ let saveRequest = 0;
 async function persist(message?: string): Promise<void> {
   const request = ++saveRequest;
   const payload = JSON.parse(JSON.stringify(mappings.value)) as ButtonMappings;
+  const selections = [...pendingSelections.values()].filter(selection => {
+    const action = payload.actions[selection.button]?.[selection.trigger];
+    return action && actionIdentity(action) === actionIdentity(selection.action);
+  });
   busy.value = true;
   statusMessage.value = null;
   const task = saveQueue.then(async () => {
     try {
       const saved = await saveButtonMappings(payload);
       savedSnapshot.value = JSON.parse(JSON.stringify(saved)) as ButtonMappings;
+      let library = actionLibrary.value;
+      for (const selection of selections) {
+        const action = saved.actions[selection.button]?.[selection.trigger];
+        if (!action || actionIdentity(action) !== actionIdentity(selection.action) || learnedSelections.has(selection.id)) continue;
+        learnedSelections.add(selection.id);
+        if (action.type !== "disabled") library = recordActionSelection(library, selection.action);
+        const key = `${selection.button}:${selection.trigger}`;
+        if (pendingSelections.get(key)?.id === selection.id) pendingSelections.delete(key);
+      }
+      if (library !== actionLibrary.value) saveLibrary(library, "selection_saved");
       reportFrontendEvent({ event: "button_mapping_save", phase: "completed", result: "passed", reason: "mapping_persisted" });
       if (request === saveRequest) {
         mappings.value = saved;
@@ -568,9 +615,10 @@ async function restoreDefaults(): Promise<void> {
   statusMessage.value = null;
   try {
     const saved = await resetButtonMappings();
+    pendingSelections.clear();
     mappings.value = saved;
     savedSnapshot.value = JSON.parse(JSON.stringify(saved)) as ButtonMappings;
-    statusMessage.value = "已恢复基础配置：返回键单按退格、按住连续删除，其余按键保持原样。";
+    statusMessage.value = "已恢复默认配置。返回键按住连续删除，电源键长按插队/排队。";
   } catch (error) {
     statusMessage.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -601,6 +649,7 @@ async function importConfiguration(): Promise<void> {
   try {
     const imported = await importButtonMappingConfiguration();
     if (!imported) return;
+    pendingSelections.clear();
     mappings.value = imported;
     savedSnapshot.value = JSON.parse(JSON.stringify(imported)) as ButtonMappings;
     editingTarget.value = null;
@@ -696,13 +745,15 @@ function toggleCaptureModifier(key: KeyCode): void {
 }
 
 async function beginShortcutCapture(): Promise<void> {
-  if (capturingShortcut.value || captureStarting.value) return;
+  if (editorInputBusy.value || !editingTarget.value) return;
   const requestId = ++captureRequestId;
   captureStarting.value = true;
   statusMessage.value = null;
+  captureFeedback.value = null;
   try {
     await startShortcutCapture();
     if (unmounted || requestId !== captureRequestId) {
+      captureStopping.value = true;
       await stopShortcutCapture().catch(() => undefined);
       return;
     }
@@ -717,23 +768,31 @@ async function beginShortcutCapture(): Promise<void> {
       void finishShortcutCapture("录入已超时，请重新录入");
     }, 15_000);
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : String(error);
+    if (requestId === captureRequestId) statusMessage.value = error instanceof Error ? error.message : String(error);
   } finally {
-    if (requestId === captureRequestId) captureStarting.value = false;
+    captureStarting.value = false;
+    captureStopping.value = false;
   }
 }
 
 async function finishShortcutCapture(message?: string): Promise<void> {
+  if (captureStopping.value) return;
   captureRequestId += 1;
-  captureStarting.value = false;
+  const startPending = captureStarting.value;
   capturingShortcut.value = false;
   if (captureTimeout !== null) window.clearTimeout(captureTimeout);
   captureTimeout = null;
-  await stopShortcutCapture().catch(() => undefined);
+  // A cancelled pending start owns its cleanup. Keep restart blocked until that
+  // request has completed, so its late cleanup cannot stop a newer recording.
+  if (!startPending) {
+    captureStopping.value = true;
+    await stopShortcutCapture().catch(() => undefined);
+    captureStopping.value = false;
+  }
   capturePressedKeys.clear();
   capturedChord = null;
   pressedCaptureModifiers.clear();
-  if (message) statusMessage.value = message;
+  if (message) captureFeedback.value = message;
 }
 
 function handleCaptureBlur(): void {
@@ -787,8 +846,8 @@ function acceptCapturedKey(code: KeyCode, isPressed: boolean, repeat = false): v
   const keys = [...modifiers, code];
   capturedChord = keys;
   captureDisplay.value = keys;
-  applyAction({ type: "shortcut", chord: { keys } });
-  statusMessage.value = `已录入 ${chordLabel({ keys })}，松开全部按键后完成`;
+  applyAction({ type: "shortcut", chord: { keys } }, "capture");
+  captureFeedback.value = `已录入 ${findKnownAction({ type: "shortcut", chord: { keys } })?.label ?? chordLabel({ keys })}，松开全部按键后完成`;
 }
 
 function handleCaptureKeydown(event: KeyboardEvent): void {
@@ -976,7 +1035,7 @@ onUnmounted(() => {
           <h1>按键映射</h1>
           <label class="toggle-row" title="开启后，遥控器按键按本页配置执行动作；关闭时不执行自定义动作，增强按键仍可高亮。">
             <span>启用自定义按键功能</span>
-            <input v-model="enabled" type="checkbox" class="toggle-input" :disabled="busy" />
+            <input v-model="enabled" type="checkbox" class="toggle-input" :disabled="editorInputBusy" />
           </label>
         </div>
       </div>
@@ -1132,155 +1191,24 @@ onUnmounted(() => {
             class="secondary-button editor-disable-btn"
             :class="{ 'is-active': actionOf(editingTarget.button, editingTarget.trigger).type === 'disabled' }"
             type="button"
-            :disabled="busy"
+            :disabled="editorInputBusy"
             title="不执行当前格子的自定义动作；增强按键仍可高亮"
             @click="applyAction({ type: 'disabled' })"
           >
             禁用按键
           </button>
-          <button class="secondary-button" type="button" @click="editingTarget = null">关闭</button>
+          <button class="secondary-button" type="button" @click="closeEditor">关闭</button>
         </div>
       </div>
       <div class="action-sections">
-        <p v-if="capabilityNote" class="muted editor-note capability-note">{{ capabilityNote }}</p>
-        <section v-if="editingTarget.button === 'back'" class="action-section backspace-actions">
-          <h4 class="action-section-title">返回键动作</h4>
-          <div class="preset-grid">
-            <button v-if="editingTarget.trigger === 'single'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'normal_backspace' }" :disabled="busy" @click="applyAction({ type: 'normal_backspace' })">普通退格（含按住连删）</button>
-            <button v-if="editingTarget.trigger === 'double'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'delete_to_punctuation' }" :disabled="busy" @click="applyAction({ type: 'delete_to_punctuation' })">删到上一个标点（保留标点）</button>
-          </div>
-          <p v-if="actionsOf('back').single.type === 'normal_backspace'" class="muted editor-note">普通退格：按住按 Windows 键盘重复速度连续删除；长按随单击生效，无需另配。</p>
-          <p v-if="actionsOf('back').double.type === 'delete_to_punctuation'" class="muted editor-note punctuation-note">当前双击从光标向左删到上一处标点，并保留标点。仅支持可读取文本的编辑区；无法安全读取时不执行双击批量删除。</p>
-        </section>
-        <section class="action-section codex-shortcuts" aria-labelledby="codex-shortcuts-title">
-          <div class="codex-shortcuts-heading">
-            <h4 id="codex-shortcuts-title" class="action-section-title">Codex 快捷键</h4>
-            <a :href="CODEX_SHORTCUTS_SOURCE" target="_blank" rel="noopener noreferrer" @click.prevent="openCodexReference">官方快捷键表</a>
-          </div>
-          <p class="muted codex-shortcuts-intro">点击快捷键即可绑定。使用遥控器前，请先切到 Codex。</p>
-          <div class="codex-shortcuts-controls">
-            <label>
-              <span class="muted">分类</span>
-              <select v-model="codexShortcutGroup" aria-label="Codex 快捷键分类" @change="codexShortcutSearch = ''">
-                <option v-for="group in CODEX_SHORTCUT_GROUPS" :key="group.id" :value="group.id">{{ group.label }}</option>
-              </select>
-            </label>
-            <input v-model="codexShortcutSearch" type="search" aria-label="搜索 Codex 快捷键" placeholder="搜索全部快捷键" />
-          </div>
-          <div class="codex-shortcuts-grid">
-            <button
-              v-for="shortcut in visibleCodexShortcuts"
-              :key="shortcut.id"
-              class="codex-shortcut"
-              :class="{ selected: isActivePreset(shortcut.keys) }"
-              :data-shortcut-id="shortcut.id"
-              :aria-pressed="isActivePreset(shortcut.keys)"
-              type="button"
-              :disabled="busy"
-              @click="applyCodexShortcut(shortcut)"
-            >
-              <strong>{{ shortcut.label }}</strong>
-              <span class="codex-shortcut-keys">{{ chordLabel({ keys: shortcut.keys }) }}</span>
-              <small v-if="shortcut.note">{{ shortcut.note }}</small>
-            </button>
-            <p v-if="!visibleCodexShortcuts.length" class="muted">没有匹配项。</p>
-          </div>
-          <p class="muted codex-shortcuts-footnote">按住听写 Ctrl + Shift + D 请在「连接与语音」中选择「Codex 听写」，由语音键按下与松开控制。搜索历史会话没有默认快捷键；可在 Codex 设置里自定义后录入。修改过应用快捷键时，以应用内设置为准；标点键随 Windows 键盘布局变化。</p>
-        </section>
-        <section v-for="group in PRESET_GROUPS" :key="group.label" class="action-section">
-          <h4 class="action-section-title">{{ group.label }}</h4>
-          <div class="preset-grid">
-            <button
-              v-for="preset in group.items"
-              :key="preset.label"
-              class="chip"
-              :class="{ selected: isActivePreset(preset.keys) }"
-              type="button"
-              :title="chordLabel({ keys: preset.keys })"
-              @click="applyAction({ type: 'shortcut', chord: { keys: [...preset.keys] } })"
-            >
-              {{ preset.label }}
-            </button>
-          </div>
-        </section>
-
-        <section class="action-section">
-          <h4 class="action-section-title">鼠标滚轮</h4>
-          <div class="preset-grid">
-            <button v-for="direction in (['up', 'down'] as const)" :key="direction" class="chip"
-              :class="{ selected: isActiveScroll(direction) }" type="button" title="在鼠标当前位置滚动"
-              @click="applyAction({ type: 'scroll', direction, steps: scrollSteps })">{{ direction === "up" ? "滚轮向上" : "滚轮向下" }}</button>
-          </div>
-          <label v-if="selectedAction?.type === 'scroll'" class="mouse-amount">
-            <span>每次滚动</span>
-            <input aria-label="每次滚动格数" type="number" min="1" max="100" step="1" :value="scrollSteps" @change="updateMouseAmount($event, 'scroll')" />
-            <span>格</span>
-          </label>
-        </section>
-
-        <section class="action-section">
-          <h4 class="action-section-title">鼠标点击</h4>
-          <div class="preset-grid">
-            <button v-for="(label, kind) in mouseClickLabels" :key="kind" class="chip" type="button"
-              :class="{ selected: selectedAction?.type === 'mouse_click' && selectedAction.kind === kind }"
-              title="点击鼠标当前位置" @click="applyAction({ type: 'mouse_click', kind })">{{ label }}</button>
-          </div>
-        </section>
-
-        <section class="action-section">
-          <h4 class="action-section-title">鼠标移动</h4>
-          <div class="preset-grid">
-            <button v-for="(label, direction) in mouseMoveLabels" :key="direction" class="chip mouse-direction" type="button"
-              :aria-label="label" :title="label" :class="{ selected: selectedAction?.type === 'mouse_move' && selectedAction.direction === direction }"
-              @click="applyAction({ type: 'mouse_move', direction, distance: moveDistance })">{{ moveSymbols[direction] }}</button>
-          </div>
-          <label v-if="selectedAction?.type === 'mouse_move'" class="mouse-amount">
-            <span>每次移动</span>
-            <input aria-label="每次移动像素" type="number" min="1" max="2000" step="1" :value="moveDistance" @change="updateMouseAmount($event, 'mouse_move')" />
-            <span>像素</span>
-          </label>
-        </section>
-
-        <section class="action-section">
-          <h4 class="action-section-title">打开应用</h4>
-          <div class="preset-grid">
-            <button
-              v-for="app in presetApps"
-              :key="app.id"
-              class="chip"
-              :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.id }"
-              type="button"
-              title="已运行则切到该应用窗口，未运行则启动"
-              @click="applyAction({ type: 'open_app', target: app.id })"
-            >
-              {{ app.name }}
-            </button>
-            <button class="chip" type="button" @click="appPickerError = null; appPickerOpen = true">扫描本机应用</button>
-            <button
-              class="chip add-app"
-              type="button"
-              title="从本机选择任意程序或快捷方式"
-              @click="addCustomApp"
-            >
-              ＋ 添加应用
-            </button>
-          </div>
-          <input v-if="customApps.length > 12" v-model="appFilter" class="app-library-search" type="search" aria-label="筛选已添加应用" placeholder="筛选已添加应用" />
-          <div v-if="customApps.length" class="preset-grid saved-app-grid">
-            <button v-for="app in filteredCustomApps" :key="app.path" class="chip" type="button"
-              :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.path }"
-              :title="app.name" @click="applyAction({ type: 'open_app', target: app.path })">{{ app.name }}</button>
-          </div>
-        </section>
-
-        <section class="action-section">
-          <h4 class="action-section-title">自定义</h4>
+        <section class="action-section shortcut-recorder">
+          <h4 class="action-section-title">录制快捷键</h4>
           <div class="custom-shortcut-row">
             <button
               class="chip"
               :class="{ selected: capturingShortcut }"
               type="button"
-              :disabled="captureStarting"
+              :disabled="captureStarting || captureStopping || (busy && !capturingShortcut)"
               @click="capturingShortcut ? finishShortcutCapture('已取消录入') : beginShortcutCapture()"
             >
               {{ capturingShortcut ? "录入中…（按 Esc 取消）" : "录入自定义快捷键" }}
@@ -1322,13 +1250,132 @@ onUnmounted(() => {
             </div>
             <p class="capture-display">然后单独按主键（例如选择“左 Win”后，只按 L）</p>
           </template>
+          <p v-if="captureFeedback" class="muted capture-feedback" role="status">{{ captureFeedback }}</p>
+          <div v-if="selectedCustomEntry" class="custom-name-row">
+            <label for="custom-action-name">功能名称</label>
+            <input id="custom-action-name" v-model="customName" :disabled="editorInputBusy" maxlength="48" placeholder="给这个快捷键起个名字" @keydown.enter.prevent="renameSelectedCustom" />
+            <button type="button" class="secondary-button" :disabled="editorInputBusy || !customName.trim() || customName.trim() === selectedCustomEntry.label" @click="renameSelectedCustom">保存名称</button>
+          </div>
         </section>
+        <p v-if="capabilityNote" class="muted editor-note capability-note">{{ capabilityNote }}</p>
+        <section v-if="editingTarget.button === 'back'" class="action-section backspace-actions">
+          <h4 class="action-section-title">返回键动作</h4>
+          <div class="preset-grid">
+            <button v-if="editingTarget.trigger === 'single'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'normal_backspace' }" :disabled="editorInputBusy" @click="applyAction({ type: 'normal_backspace' })">Backspace（按住连续删除）</button>
+            <button v-if="editingTarget.trigger === 'double'" type="button" class="chip" :class="{ selected: selectedAction?.type === 'delete_to_punctuation' }" :disabled="editorInputBusy" @click="applyAction({ type: 'delete_to_punctuation' })">删到上一个标点（保留标点）</button>
+          </div>
+          <p v-if="actionsOf('back').single.type === 'normal_backspace'" class="muted editor-note">普通退格：按住按 Windows 键盘重复速度连续删除；长按随单击生效，无需另配。</p>
+          <p v-if="actionsOf('back').double.type === 'delete_to_punctuation'" class="muted editor-note punctuation-note">当前双击从光标向左删到上一处标点，并保留标点。仅支持可读取文本的编辑区；无法安全读取时不执行双击批量删除。</p>
+        </section>
+        <section class="action-section action-library" aria-label="功能库">
+          <div class="action-library-toolbar">
+            <div class="action-tabs" role="tablist" aria-label="功能分类">
+              <button v-for="tab in ACTION_TABS" :id="'action-tab-' + tab.id" :key="tab.id" type="button" role="tab" :aria-selected="activeTab === tab.id" aria-controls="action-options" :class="{ selected: activeTab === tab.id }" @click="activeTab = tab.id; actionSearch = ''">{{ tab.label }}</button>
+            </div>
+            <input v-model="actionSearch" type="search" aria-label="搜索全部功能" placeholder="搜索功能或快捷键" />
+          </div>
+          <p v-if="actionSearch.trim()" class="muted library-hint">搜索全部分类，包括你保存的自定义快捷键。</p>
+          <p v-else-if="activeTab === 'common'" class="muted library-hint">按最近和经常选择的功能排序。星标可置顶，下次选择按键时更新顺序。</p>
+          <div id="action-options" class="action-options" role="tabpanel" :aria-labelledby="'action-tab-' + activeTab">
+            <div v-for="entry in visibleActions" :key="entry.id" class="action-option" :class="{ selected: isActiveEntry(entry), secondary: entry.more }">
+              <button class="action-option-select" :data-action-id="entry.id" :aria-pressed="isActiveEntry(entry)" type="button" :disabled="editorInputBusy" @click="chooseEntry(entry)">
+                <strong>{{ entry.label }}</strong>
+                <span v-if="entry.action.type === 'shortcut'" class="action-option-keys">{{ chordLabel(entry.action.chord) }}</span>
+                <small v-if="entry.note">{{ entry.note }}</small>
+              </button>
+              <button class="action-pin" :disabled="editorInputBusy" :class="{ pinned: actionLibrary.pinned.includes(entry.id) }" type="button" :aria-label="(actionLibrary.pinned.includes(entry.id) ? '取消置顶：' : '置顶：') + entry.label" :aria-pressed="actionLibrary.pinned.includes(entry.id)" @click="togglePinned(entry)">{{ actionLibrary.pinned.includes(entry.id) ? '★' : '☆' }}</button>
+            </div>
+            <p v-if="!visibleActions.length" class="muted">没有匹配项，可以在上方录制快捷键。</p>
+          </div>
+          <p v-if="duplicateAssignment" class="muted library-hint">{{ duplicateAssignment }}</p>
+          <p v-if="libraryWarning" class="error-text" role="alert">{{ libraryWarning }}</p>
+          <details class="shortcut-help">
+            <summary>快捷键使用说明</summary>
+            <p class="muted">先切到要控制的应用。若改过应用快捷键，请以应用内设置为准；按住听写在「连接与语音」中设置。</p>
+            <a :href="CODEX_SHORTCUTS_SOURCE" target="_blank" rel="noopener noreferrer" @click.prevent="openCodexReference">Codex 官方快捷键表</a>
+          </details>
+        </section>
+
+
+        <section v-if="activeTab === 'view' && !actionSearch.trim()" class="action-section">
+          <h4 class="action-section-title">鼠标滚轮</h4>
+          <div class="preset-grid">
+            <button v-for="direction in (['up', 'down'] as const)" :key="direction" class="chip"
+              :class="{ selected: isActiveScroll(direction) }" type="button" :disabled="editorInputBusy" title="在鼠标当前位置滚动"
+              @click="applyAction({ type: 'scroll', direction, steps: scrollSteps })">{{ direction === "up" ? "滚轮向上" : "滚轮向下" }}</button>
+          </div>
+          <label v-if="selectedAction?.type === 'scroll'" class="mouse-amount">
+            <span>每次滚动</span>
+            <input aria-label="每次滚动格数" :disabled="editorInputBusy" type="number" min="1" max="100" step="1" :value="scrollSteps" @change="updateMouseAmount($event, 'scroll')" />
+            <span>格</span>
+          </label>
+        </section>
+
+        <section v-if="activeTab === 'view' && !actionSearch.trim()" class="action-section">
+          <h4 class="action-section-title">鼠标点击</h4>
+          <div class="preset-grid">
+            <button v-for="(label, kind) in mouseClickLabels" :key="kind" class="chip" type="button" :disabled="editorInputBusy"
+              :class="{ selected: selectedAction?.type === 'mouse_click' && selectedAction.kind === kind }"
+              title="点击鼠标当前位置" @click="applyAction({ type: 'mouse_click', kind })">{{ label }}</button>
+          </div>
+        </section>
+
+        <section v-if="activeTab === 'view' && !actionSearch.trim()" class="action-section">
+          <h4 class="action-section-title">鼠标移动</h4>
+          <div class="preset-grid">
+            <button v-for="(label, direction) in mouseMoveLabels" :key="direction" class="chip mouse-direction" type="button" :disabled="editorInputBusy"
+              :aria-label="label" :title="label" :class="{ selected: selectedAction?.type === 'mouse_move' && selectedAction.direction === direction }"
+              @click="applyAction({ type: 'mouse_move', direction, distance: moveDistance })">{{ moveSymbols[direction] }}</button>
+          </div>
+          <label v-if="selectedAction?.type === 'mouse_move'" class="mouse-amount">
+            <span>每次移动</span>
+            <input aria-label="每次移动像素" :disabled="editorInputBusy" type="number" min="1" max="2000" step="1" :value="moveDistance" @change="updateMouseAmount($event, 'mouse_move')" />
+            <span>像素</span>
+          </label>
+        </section>
+
+        <section v-if="(activeTab === 'system' && !actionSearch.trim()) || (actionSearch.trim() && (filteredPresetApps.length || filteredCustomApps.length))" class="action-section">
+          <h4 class="action-section-title">打开应用</h4>
+          <div class="preset-grid">
+            <button
+              v-for="app in filteredPresetApps"
+              :key="app.id"
+              class="chip"
+              :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.id }"
+              type="button"
+              title="已运行则切到该应用窗口，未运行则启动"
+              :disabled="editorInputBusy"
+              @click="applyAction({ type: 'open_app', target: app.id })"
+            >
+              {{ app.name }}
+            </button>
+            <button v-if="!actionSearch.trim()" class="chip" type="button" :disabled="editorInputBusy" @click="appPickerError = null; appPickerOpen = true">扫描本机应用</button>
+            <button
+              class="chip add-app"
+              v-if="!actionSearch.trim()"
+              type="button"
+              title="从本机选择任意程序或快捷方式"
+              :disabled="editorInputBusy"
+              @click="addCustomApp"
+            >
+              ＋ 添加应用
+            </button>
+          </div>
+          <input v-if="customApps.length > 12" v-model="appFilter" class="app-library-search" type="search" aria-label="筛选已添加应用" placeholder="筛选已添加应用" />
+          <div v-if="customApps.length" class="preset-grid saved-app-grid">
+            <button v-for="app in filteredCustomApps" :key="app.path" class="chip" type="button" :disabled="editorInputBusy"
+              :class="{ selected: openAppTargetOf(editingTarget.button, editingTarget.trigger) === app.path }"
+              :title="app.name" @click="applyAction({ type: 'open_app', target: app.path })">{{ app.name }}</button>
+          </div>
+        </section>
+
+
       </div>
       <p v-if="normalBackspaceNote" class="muted editor-note gesture-timing-note">
         {{ normalBackspaceNote }}
       </p>
       <p v-else-if="editingTarget.trigger === 'single'" class="muted editor-note gesture-timing-note">
-        未配置双击与长按时，单击在按下瞬间触发（零延迟）；返回/方向/音量键按住会连续触发。
+        未配置双击与长按时，单击在按下时触发。返回、方向和音量键通常支持按住连发；切换聊天和插队/排队每次按住只触发一次。
       </p>
       <p v-else class="muted editor-note gesture-timing-note">
         {{ editingTarget.trigger === "double" ? "双击判定窗口约 0.3 秒：配置后单击会稍等片刻以区分双击。" : "长按约 0.55 秒触发；配置后按住连发停用。" }}
@@ -1343,7 +1390,7 @@ onUnmounted(() => {
           v-if="rawInput?.phase === 'ready' || rawInput?.phase === 'stopped' || rawInput?.phase === 'failed'"
           class="secondary-button footer-listener-toggle"
           type="button"
-          :disabled="busy"
+          :disabled="editorInputBusy"
           @click="toggleListener"
         >
           {{ rawInput?.phase === "ready" ? "停止监听" : "启动监听" }}
@@ -1356,17 +1403,17 @@ onUnmounted(() => {
       </label>
       <span class="muted lock-hint">按遥控器时保持当前编辑项</span>
       <div class="button-row">
-        <button class="secondary-button" type="button" :disabled="busy" @click="saveConfiguration">
+        <button class="secondary-button" type="button" :disabled="editorInputBusy" @click="saveConfiguration">
           保存配置
         </button>
-        <button class="secondary-button" type="button" :disabled="busy" @click="importConfiguration">
+        <button class="secondary-button" type="button" :disabled="editorInputBusy" @click="importConfiguration">
           导入配置…
         </button>
-        <button class="secondary-button" type="button" :disabled="busy" @click="exportConfiguration">
+        <button class="secondary-button" type="button" :disabled="editorInputBusy" @click="exportConfiguration">
           导出配置…
         </button>
-        <button class="secondary-button" type="button" :disabled="busy" @click="restoreDefaults">
-          恢复基础配置
+        <button class="secondary-button" type="button" :disabled="editorInputBusy" @click="restoreDefaults">
+          恢复默认配置
         </button>
       </div>
     </footer>
@@ -1378,25 +1425,35 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.shortcut-recorder { padding: 16px; border: 1px solid var(--accent-border); border-radius: 12px; background: var(--accent-surface); }
+.shortcut-recorder .action-section-title { color: var(--text-primary); font-size: 15px; }
+.custom-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 12px; }
+.custom-name-row input { flex: 1; min-width: 180px; }
+.action-library-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.action-tabs { display: flex; max-width: 100%; overflow-x: auto; padding: 4px; gap: 3px; background: var(--surface-chip); border-radius: 9px; }
+.action-tabs button { padding: 9px 15px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; }
+.action-tabs button.selected { background: var(--accent-surface); color: var(--accent-text); font-weight: 650; }
+.action-library-toolbar input, .custom-name-row input { min-height: 36px; box-sizing: border-box; padding: 7px 10px; color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-strong); border-radius: 7px; font: inherit; }
+.action-library-toolbar input { flex: 1; min-width: 170px; max-width: 320px; }
+.mapping-editor .library-hint { margin: 10px 0; line-height: 1.5; font-size: 12px; }
+.action-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-height: 360px; overflow-y: auto; overscroll-behavior: contain; padding: 3px; align-content: start; scrollbar-gutter: stable; }
+.action-option { display: flex; min-width: 0; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-control); }
+.action-option:hover, .action-option.selected { border-color: var(--accent-border); background: var(--accent-surface); }
+.action-option-select { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; flex: 1; min-width: 0; min-height: 72px; padding: 12px; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: transparent; border: 0; cursor: pointer; }
+.action-option-select strong { overflow-wrap: anywhere; }
+.action-option-select:disabled { cursor: wait; opacity: 0.65; }
+.action-option-keys { color: var(--accent-text); font-size: 12px; overflow-wrap: anywhere; }
+.action-option small { color: var(--muted); line-height: 1.45; }
+.action-pin { align-self: flex-start; min-width: 32px; min-height: 32px; padding: 5px; margin: 4px 4px 0 0; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font: inherit; font-size: 18px; cursor: pointer; }
+.action-pin:hover, .action-pin.pinned { color: var(--accent-text); background: var(--accent-surface); }
+.shortcut-help { margin-top: 12px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.shortcut-help summary { cursor: pointer; }
+.shortcut-help a { color: var(--accent-text); }
+@media (max-width: 700px) { .action-library-toolbar input { max-width: none; flex-basis: 100%; } .action-options { grid-template-columns: 1fr; } }
 .back-hardware-badge { margin-left: auto; font-size: 10px; color: var(--warning-text); }
 .back-hardware-note { margin: 8px 0; font-size: 12px; line-height: 1.5; }
 .backspace-actions { border-left: 3px solid var(--accent-border); padding-left: 12px; }
 .mapping-editor .backspace-actions .editor-note { margin-top: 7px; line-height: 1.5; }
-.codex-shortcuts { padding: 14px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface-chip); }
-.codex-shortcuts-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.codex-shortcuts-heading .action-section-title { color: var(--text-primary); font-size: 14px; }
-.codex-shortcuts-heading a { color: var(--accent-text); font-size: 12px; }
-.mapping-editor .codex-shortcuts-intro, .mapping-editor .codex-shortcuts-footnote { margin-top: 9px; line-height: 1.55; }
-.codex-shortcuts-controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
-.codex-shortcuts-controls label { display: flex; align-items: center; gap: 7px; }
-.codex-shortcuts-controls select, .codex-shortcuts-controls input { min-height: 32px; padding: 5px 8px; font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-strong); border-radius: 6px; }
-.codex-shortcuts-controls input { flex: 1; min-width: 160px; }
-.codex-shortcuts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; max-height: 330px; overflow-y: auto; padding: 2px; }
-.codex-shortcut { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-height: 69px; padding: 10px 12px; text-align: left; font: inherit; font-size: 13px; color: var(--text-primary); background: var(--surface-control); border: 1px solid var(--border-strong); border-radius: 8px; cursor: pointer; }
-.codex-shortcut:hover, .codex-shortcut.selected { border-color: var(--accent-border); background: var(--accent-surface); }
-.codex-shortcut:disabled { cursor: wait; opacity: 0.65; }
-.codex-shortcut-keys { color: var(--accent-text); font-size: 12px; }
-.codex-shortcut small { color: var(--muted); line-height: 1.45; }
 .mouse-amount { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 13px; }
 .mouse-amount input { width: 88px; max-width: 100%; padding: 5px 8px; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; }
 .mouse-direction { width: 40px; height: 30px; padding: 0; font-size: 17px; }

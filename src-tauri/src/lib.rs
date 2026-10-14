@@ -1327,10 +1327,14 @@ pub fn run() {
                 }
                 Err(error) => {
                     sayall_windows::gatt_note(
-                        "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=failed error_domain=settings error_code=parse_or_read_failed reason=defaults_applied retryable=true".to_owned(),
+                        "shortcut_settings feature=button_mapping action=load phase=completed terminal_result=failed error_domain=settings error_code=parse_or_read_failed reason=mapping_disabled retryable=true".to_owned(),
                     );
                     eprintln!("{error}");
-                    ButtonMappings::default()
+                    ButtonMappings {
+                        enabled: false,
+                        actions: Default::default(),
+                        applications: Vec::new(),
+                    }
                 }
             };
             // 启动即热加载已保存映射（引擎与门控吞键配置同步就绪）。

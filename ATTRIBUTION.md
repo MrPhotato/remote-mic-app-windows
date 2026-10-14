@@ -2,6 +2,15 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 2026-10-14 按键目录、历史与默认配置
+
+- UI 沿用本仓库已归属的原遥控器图、连线与单击/双击/长按卡片，不重新绘制或复制第三方布局。编辑区依据用户确认的五页签方案及当前应用菜单截图调整；单键保留键名，组合键显示功能名。
+- 对照 [OpenAI 官方命令表](https://learn.chatgpt.com/docs/reference/commands) 的 Windows 列：聊天切换使用 Ctrl+Shift+[ / ]、侧栏 Ctrl+Shift+S、聊天和标签区 Ctrl+Alt+B、重做 Ctrl+Y。Ctrl+Enter 的“插队/排队”名称及用途来自用户明确要求，不标为独立实测的官方行为。全部快捷键作用于当前前台应用。
+- 常用历史与置顶仅参考 [VS Code Run Recent Command](https://code.visualstudio.com/docs/terminal/shell-integration#_run-recent-command) 的可搜索历史及置顶交互；未复制实现，也不读取 VS Code 或其他应用的历史。无线麦只记录用户成功分配的功能、次数与选择时间，以及用户主动录制命名的快捷键；不统计实际遥控按压，不收集输入文字或声音。最近与次数的排序规则由本项目实现。
+- 普通手势沿用既有 Mac 参考的 300ms 双击与 550ms 长按阈值，不进行未实测的时序优化。源码确认 OK 闲置首按的原生 Enter 仍可能泄漏，而单击对冲不能补偿长按 Ctrl+Enter；故默认插队/排队放在直接归因的电源键长按，OK 维持 Enter。音量映射为聊天切换时不连发，物理冷首用仍须单独验收。
+- 计时回调迟到的释放路径按原按下截止时间补发一次长按；测试先复现 Esc/空结果，再验证原阈值内外、已触发及取消不重复。没有调整延迟常量，实体冷首用仍与软件测试分开记录。
+- 后端首次无配置文件与前端手动应用共用一个默认配置源；不通过升级覆盖已有用户文件，不改变语音、设备、管理员增强或系统默认音频设置。验收边界见 [WindowsMappingWorkflow](Testing/WindowsMappingWorkflow.md)。
+
 ## 2026-10-08 RC003 TV 原生字符抑制
 
 - 用户明确授权将可选 Helper 的内部接口例外仅扩展到所选 RC003 的 TV，先做本地验证；见 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。不安装驱动，不改变系统蓝牙或普通键盘输入。
