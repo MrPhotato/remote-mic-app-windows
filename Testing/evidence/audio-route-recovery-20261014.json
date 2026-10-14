@@ -1,14 +1,15 @@
 {
   "date": "2026-10-14",
   "candidateVersion": "0.2.12",
-  "status": "implementation_validated_installation_and_voice_pending",
+  "status": "installed_awaiting_user_start_and_voice_validation",
   "software": {
     "frontendTestsPassed": 178,
     "frontendBuild": "passed",
     "workspaceTestsPassedBeforeFinalInventoryGuard": 324,
     "workspaceTestsIgnored": 6,
     "finalInventoryUnitTestsPassed": 9,
-    "formatCheck": "passed"
+    "formatCheck": "passed",
+    "runtimeSimulationCompile": "passed"
   },
   "readOnlyWindowsInventory": {
     "result": "passed",
@@ -24,7 +25,21 @@
     "replacementReason": "verified_virtual_route",
     "streamsOpened": false
   },
-  "installation": "deferred",
+  "installation": {
+    "helperUnchanged": true,
+    "installerExitCode": 0,
+    "automaticallyLaunched": false,
+    "systemAudioDefaultsUnchanged": false,
+    "binaryMatchesAfterBundleMarkerNormalization": true,
+    "settingsPreserved": true,
+    "version": "0.2.12",
+    "result": "passed",
+    "bleSessionCleanup": "passed",
+    "normalExitConfirmed": true,
+    "defaultCaptureUnchanged": true,
+    "defaultRoleObservation": "OPPO headphones were defaults before upgrade; after normal app exit and installation, render/communications roles used other devices. CABLE Output remained default capture. New app was not running at the after snapshot; cause of external role change is not established.",
+    "formerHeadsetPresentAfterUpgrade": false
+  },
   "voiceEndToEnd": "deferred",
   "physicalDeviceReturn": "deferred",
   "audioLossDuringVoice": "deferred",
@@ -32,8 +47,16 @@
   "boundaries": {
     "bluetoothChanged": false,
     "driversChanged": false,
-    "systemAudioDefaultsChanged": false,
     "applicationRestartedDuringInvestigation": false,
-    "published": false
+    "published": false,
+    "systemAudioDefaultMutationCalled": false
+  },
+  "sourceRevision": "e6b4ad7f184665b47517cfb85194b3a5e09c5a28",
+  "package": {
+    "helperFilesVerified": 98,
+    "sha256": "bd67a3c7e32b0ecc64fdef1c331ced39c0c53acce2abcd328f45b5ebbad33016",
+    "helperManifestSha256": "348ff780c6f2f72cce4945afe9601c5619ac7444702e36a517419a0c85b768d4",
+    "assetName": "Remote Coding_0.2.12_x64-setup.exe",
+    "bytes": 49576821
   }
 }
