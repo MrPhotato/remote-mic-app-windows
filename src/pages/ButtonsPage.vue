@@ -5,6 +5,7 @@ import RegisteredAppsDialog from "../components/RegisteredAppsDialog.vue";
 import BatteryIndicator from "../components/BatteryIndicator.vue";
 import Rc003InputControl from "../components/Rc003InputControl.vue";
 import { reportFrontendEvent } from "../lib/frontend-diagnostics";
+import { useSlidingIndicator } from "../lib/sliding-indicator";
 import {
   CODEX_SHORTCUTS_SOURCE,
 } from "../lib/codex-shortcuts";
@@ -429,6 +430,9 @@ const libraryWarning = ref<string | null>(loadedLibrary.error);
 reportFrontendEvent({ event: "button_action_library", phase: "loaded", result: loadedLibrary.error ? "failed" : "passed", reason: loadedLibrary.error ? "storage_read_failed" : "library_loaded" });
 const activeTab = ref<(typeof ACTION_TABS)[number]["id"]>("common");
 const actionSearch = ref("");
+// 页签选中块随分类滑动；页签只在编辑面板打开时存在，容器出现时重新就位。
+const actionTabsEl = ref<HTMLElement | null>(null);
+useSlidingIndicator(actionTabsEl, "button.selected", activeTab);
 const commonOrder = ref<string[]>([]);
 const customName = ref("");
 
@@ -1196,7 +1200,7 @@ onUnmounted(() => {
 
     <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">RC003 的返回和音量键需先开启上方的按键增强，再配置动作。</p>
 
-    <Transition name="list">
+    <Transition name="rise">
     <article v-if="editingTarget" ref="editorPanel" class="card mapping-editor">
       <div class="card-title-row">
         <div>
@@ -1300,7 +1304,7 @@ onUnmounted(() => {
 
         <section class="action-section action-library" aria-label="功能库">
           <div class="action-library-toolbar">
-            <div class="action-tabs" role="tablist" aria-label="功能分类">
+            <div ref="actionTabsEl" class="action-tabs sliding-indicator" role="tablist" aria-label="功能分类">
               <button v-for="tab in ACTION_TABS" :id="'action-tab-' + tab.id" :key="tab.id" type="button" role="tab" :aria-selected="activeTab === tab.id" aria-controls="action-options" :class="{ selected: activeTab === tab.id }" @click="activeTab = tab.id; actionSearch = ''">{{ tab.label }}</button>
             </div>
             <input v-model="actionSearch" type="search" aria-label="搜索全部功能" placeholder="搜索功能或快捷键" />
@@ -1464,7 +1468,7 @@ onUnmounted(() => {
   box-shadow: inset 0 1px 0 var(--glass-edge-soft);
 }
 /* summary 做成"玻璃按钮"：悬停时底色浅浅亮一下；右侧放一只用 CSS 画的
-   小箭头，展开时顺时针转 90°，隐去原生三角 marker。 */
+   小箭头（收起指右、展开指下，转 90°），隐去原生三角 marker。 */
 .mapping-tools summary {
   position: relative;
   padding: 12px 36px 12px 14px;
@@ -1473,10 +1477,13 @@ onUnmounted(() => {
   font-size: 14px;
   font-weight: 650;
   list-style: none;
+  /* 悬停底色要贴合外框圆角：收起时四角、展开时只有上两角。 */
+  border-radius: calc(var(--radius-control) - 1px);
   transition:
     background-color var(--motion-state) var(--ease-out-quart),
     color var(--motion-state) var(--ease-out-quart);
 }
+.mapping-tools[open] summary { border-radius: calc(var(--radius-control) - 1px) calc(var(--radius-control) - 1px) 0 0; }
 .mapping-tools summary::-webkit-details-marker { display: none; }
 .mapping-tools summary:hover { background: var(--nav-hover); }
 .mapping-tools summary::after {
@@ -1556,17 +1563,21 @@ onUnmounted(() => {
 }
 .action-tabs button:hover { color: var(--text-primary); }
 .action-tabs button:active { transform: scale(0.97); }
-.action-tabs button.selected {
-  border-color: var(--glass-rim);
+/* 选中块由 .action-tabs::before（滑动选中块）画出，页签本身只换文字。 */
+.action-tabs button.selected { color: var(--accent-text); font-weight: 650; }
+.action-tabs.sliding-indicator::before {
+  border: 1px solid var(--glass-rim);
   border-top-color: var(--glass-edge);
+  border-radius: calc(var(--radius-control) - 3px);
   background: var(--glass-panel-strong);
-  color: var(--accent-text);
-  font-weight: 650;
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 2px 8px -3px var(--shadow-glass);
 }
 @media (prefers-reduced-motion: reduce) {
   .action-tabs button { transition: color 120ms linear, background-color 120ms linear; }
   .action-tabs button:active { transform: none; }
+}
+@media (forced-colors: active) {
+  .action-tabs button.selected { border-color: Highlight; }
 }
 .action-library-toolbar input, .custom-name-row input, .app-library-search {
   min-height: 36px;

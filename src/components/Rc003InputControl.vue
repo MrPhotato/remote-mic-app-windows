@@ -237,9 +237,17 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--toggle-off);
   box-shadow: inset 0 1px 3px rgba(20, 25, 40, 0.25);
-  transition: background-color 0.18s;
+  transition: background-color var(--motion-state) var(--ease-out-quart), box-shadow var(--motion-state) var(--ease-out-quart);
 }
-.switch-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--toggle-thumb); box-shadow: 0 1px 3px var(--toggle-shadow); }
+/* 滑块用 transform 滑到右端（轨道内宽 36 − 滑块 18 = 18px），与通用开关同一曲线。 */
+.switch-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--toggle-thumb);
+  box-shadow: 0 1px 3px var(--toggle-shadow);
+  transition: transform var(--motion-state) var(--ease-out-quart);
+}
 .neutral-inline {
   display: flex;
   align-items: center;
@@ -320,10 +328,13 @@ onUnmounted(() => {
 .neutral-direction span:nth-child(2) { grid-column: 1; }
 .neutral-direction span:nth-child(3) { font-size: 12px; }
 .neutral-direction span:last-child { grid-column: 2; }
+.enhancement-switch[aria-checked="true"] .switch-thumb { transform: translate3d(18px, 0, 0); }
 .enhancement-switch[aria-checked="true"] .switch-track {
-  justify-content: flex-end;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 84%, white) 0%, var(--accent) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch-track, .switch-thumb { transition: none; }
 }
 @media (forced-colors: active) {
   .switch-track { border-color: ButtonText; background: Canvas; }

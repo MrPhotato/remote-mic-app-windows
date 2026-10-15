@@ -677,7 +677,7 @@ onUnmounted(() => {
           </button>
         </div>
         <Transition name="collapse">
-        <div v-if="showAdvancedAudio" id="advanced-audio-settings">
+        <div v-if="showAdvancedAudio" id="advanced-audio-settings" class="collapse-region">
           <p class="muted">下方列出 Windows 的录音设备。选择 VB-CABLE 麦克风后，遥控器语音会送入它；电脑自带或外接麦克风请在目标应用中选择。</p>
           <div class="setting-list compact">
             <div class="setting-row">
@@ -708,7 +708,7 @@ onUnmounted(() => {
             </button>
           </div>
           <Transition name="collapse">
-          <ul v-if="showEndpointList && microphones.length" id="audio-endpoint-list" class="device-list endpoint-list">
+          <ul v-if="showEndpointList && microphones.length" id="audio-endpoint-list" class="device-list endpoint-list collapse-region">
             <li v-for="microphone in microphones" :key="microphone.id">
               <div>
                 <strong>{{ microphone.name }}</strong>

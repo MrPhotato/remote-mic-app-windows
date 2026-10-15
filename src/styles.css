@@ -118,7 +118,7 @@
   --focus-ring: 0 0 0 2px var(--surface-canvas), 0 0 0 4px var(--accent);
 
   /* 动效：只用减速曲线（液体"落定"而不回弹）；退出比进入快。
-     减少动态效果时位移与形变归零，只保留淡入淡出（见文末）。 */
+     减少动态效果时位移与形变归零，只保留淡入淡出（各规则旁的 reduce 媒体查询）。 */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-press: 120ms;
@@ -126,6 +126,7 @@
   --motion-slide: 320ms;
   --motion-expand: 280ms;
   --motion-enter: 440ms;
+  --motion-exit: 150ms;
   --motion-rise: 10px;
   --motion-overlay-scale: 0.96;
 }
@@ -299,91 +300,113 @@ body {
 }
 
 /* ---- 应用外壳 ---- */
-/* 页面切换：被动的淡入 + 轻微上浮，离开更快（液体"落定"）。
-   动效只在视图切换这一次性事件中出现，不会持续重绘；玻璃面板的
-   backdrop-filter 对后面每一帧都重模糊，所以位移要克制。
-   @media (prefers-reduced-motion: reduce) 下只保留淡入。 */
-.page-enter-active {
-  transition:
-    opacity var(--motion-enter) var(--ease-out-quart),
-    transform var(--motion-enter) var(--ease-out-quart),
-    filter var(--motion-enter) var(--ease-out-quart);
+/* 页面切换：页面整体只做 transform 上浮，淡入淡出落在"玻璃单元"自身上。
+   Chromium 中祖先元素一旦 opacity<1 或带 filter，就成为子级玻璃的
+   backdrop root：卡片只能模糊页面容器内部的内容，看不到背后的光场，
+   过渡结束瞬间才"闪"回磨砂（2026-10-15 在 Edge 中实测确认）。
+   transform 不触发这一点，卡片等玻璃元素对自身做 opacity 也不受影响；页头里含
+   玻璃芯片（按键页的遥控器状态）的那一列不整体淡入，改由芯片自己淡入。
+   只在切页这一次性事件中运行，不产生常驻重绘。 */
+.page-enter-active { transition: transform var(--motion-enter) var(--ease-out-quint); }
+.page-leave-active { transition: transform var(--motion-exit) var(--ease-out-quart); }
+.page-enter-from { transform: translate3d(0, var(--motion-rise), 0); }
+.page-leave-to { transform: translate3d(0, -4px, 0); }
+.page-enter-active :is(.page-header > :not(:has(.device-chip)), .device-chip, .card, .mapping-card, .remote-photo, .mapping-connections),
+.page-enter-active > p {
+  transition: opacity var(--motion-enter) var(--ease-out-quart);
 }
-.page-leave-active {
-  transition:
-    opacity 160ms var(--ease-out-quart),
-    transform 160ms var(--ease-out-quart);
+.page-leave-active :is(.page-header > :not(:has(.device-chip)), .device-chip, .card, .mapping-card, .remote-photo, .mapping-connections),
+.page-leave-active > p {
+  transition: opacity var(--motion-exit) var(--ease-out-quart);
 }
-.page-enter-from {
-  opacity: 0;
-  transform: translate3d(0, var(--motion-rise), 0);
-  filter: blur(6px);
-}
-.page-leave-to {
-  opacity: 0;
-  transform: translate3d(0, -4px, 0);
-}
+.page-enter-from :is(.page-header > :not(:has(.device-chip)), .device-chip, .card, .mapping-card, .remote-photo, .mapping-connections),
+.page-enter-from > p,
+.page-leave-to :is(.page-header > :not(:has(.device-chip)), .device-chip, .card, .mapping-card, .remote-photo, .mapping-connections),
+.page-leave-to > p { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
-  .page-enter-active,
-  .page-leave-active { transition: opacity 120ms linear; }
-  .page-enter-from,
-  .page-leave-to { transform: none; filter: none; }
+  .page-enter-active, .page-leave-active { transition: none; }
+  .page-enter-from, .page-leave-to { transform: none; }
 }
 
-/* 对话框进场：从左上点亮，缩放到位。 */
-.overlay-enter-active {
+/* 折叠块（v-if 控制的"高级设置""麦克风列表"）：高度从 0 过渡到内容自然高度。
+   interpolate-size 让 height:auto 可插值（Chromium 129+，WebView2 支持；
+   不支持时高度直接到位，仍保留淡入）。过渡期间 overflow:hidden 会让元素成为
+   BFC，所以折叠目标常驻 .collapse-region（flow-root），结束时子元素外边距
+   不会突然"穿出"造成跳动。 */
+.collapse-region { display: flow-root; }
+.collapse-enter-active,
+.collapse-leave-active {
+  interpolate-size: allow-keywords;
+  overflow: hidden;
+}
+.collapse-enter-active {
+  transition:
+    height var(--motion-expand) var(--ease-out-quart),
+    margin-top var(--motion-expand) var(--ease-out-quart),
+    margin-bottom var(--motion-expand) var(--ease-out-quart),
+    opacity var(--motion-expand) var(--ease-out-quart);
+}
+.collapse-leave-active {
+  transition:
+    height 200ms var(--ease-out-quart),
+    margin-top 200ms var(--ease-out-quart),
+    margin-bottom 200ms var(--ease-out-quart),
+    opacity var(--motion-exit) var(--ease-out-quart);
+}
+.collapse-enter-from,
+.collapse-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .collapse-enter-from,
+  .collapse-leave-to { height: 0; margin-top: 0; margin-bottom: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collapse-enter-active, .collapse-leave-active { transition: opacity 120ms linear; }
+}
+
+/* 面板浮现（按键编辑面板）：淡入 + 轻微上浮；离开只淡出，保持原有占位，
+   不脱离文档流（否则面板会缩成内容宽度、压在页脚上）。 */
+.rise-enter-active {
   transition:
     opacity var(--motion-expand) var(--ease-out-quart),
     transform var(--motion-expand) var(--ease-out-quart);
 }
-.overlay-leave-active {
-  transition:
-    opacity 160ms var(--ease-out-quart),
-    transform 160ms var(--ease-out-quart);
-}
-.overlay-enter-from { opacity: 0; transform: scale(var(--motion-overlay-scale)); }
-.overlay-leave-to { opacity: 0; transform: scale(var(--motion-overlay-scale)); }
+.rise-leave-active { transition: opacity var(--motion-exit) var(--ease-out-quart); }
+.rise-enter-from { opacity: 0; transform: translate3d(0, 8px, 0); }
+.rise-leave-to { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
-  .overlay-enter-active,
-  .overlay-leave-active { transition: opacity 120ms linear; }
-  .overlay-enter-from,
-  .overlay-leave-to { transform: none; }
+  .rise-enter-active { transition: opacity 120ms linear; }
+  .rise-enter-from { transform: none; }
 }
 
-/* 折叠块（v-if 控制的区域，如"高级设置""选择麦克风"）：
-   利用 grid-template-rows 0fr→1fr 从 0 平滑展开到自身高度，
-   不动 height 本身，避免布局抖动。 */
-.collapse-enter-active,
-.collapse-leave-active {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows var(--motion-expand) var(--ease-out-quart),
-    opacity var(--motion-expand) var(--ease-out-quart);
-}
-.collapse-enter-active > *,
-.collapse-leave-active > * {
-  min-height: 0;
-  overflow: hidden;
-}
-.collapse-enter-from,
-.collapse-leave-to {
-  grid-template-rows: 0fr;
+/* 滑动选中块：选中项的位置/尺寸由 src/lib/sliding-indicator.ts 写入
+   --indicator-x/y/w/h，::before 画出选中块并滑过去。isolation 让 z-index:-1
+   落在容器背景之上、选项文字之下；它不是 backdrop root，不影响玻璃。
+   首次就位（placed）不带过渡，animate 之后才滑动。各控件自行指定外观。 */
+.sliding-indicator { position: relative; isolation: isolate; }
+.sliding-indicator::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: var(--indicator-w, 0px);
+  height: var(--indicator-h, 0px);
+  transform: translate3d(var(--indicator-x, 0px), var(--indicator-y, 0px), 0);
   opacity: 0;
+  pointer-events: none;
+}
+.sliding-indicator[data-indicator]::before { opacity: 1; }
+.sliding-indicator[data-indicator="animate"]::before {
+  transition:
+    transform var(--motion-slide) var(--ease-out-quint),
+    width var(--motion-slide) var(--ease-out-quint),
+    height var(--motion-slide) var(--ease-out-quint);
 }
 @media (prefers-reduced-motion: reduce) {
-  .collapse-enter-active,
-  .collapse-leave-active { transition: opacity 120ms linear; grid-template-rows: 1fr; }
+  .sliding-indicator[data-indicator="animate"]::before { transition: none; }
 }
-
-/* 列表项淡入（设备列表、麦克风列表）：出现时轻微上浮。 */
-.list-enter-active { transition: opacity 220ms var(--ease-out-quart), transform 220ms var(--ease-out-quart); }
-.list-leave-active { transition: opacity 140ms var(--ease-out-quart); position: absolute; }
-.list-enter-from { opacity: 0; transform: translate3d(0, 6px, 0); }
-.list-leave-to { opacity: 0; }
-@media (prefers-reduced-motion: reduce) {
-  .list-enter-active, .list-leave-active { transition: opacity 120ms linear; }
-  .list-enter-from { transform: none; }
+@media (forced-colors: active) {
+  .sliding-indicator::before { display: none; }
 }
 
 /* 侧栏对齐 macOS SettingsView：宽 108px、图标 21、文字 13 semibold。
@@ -451,17 +474,22 @@ nav { display: grid; gap: 4px; }
 }
 .nav-item:hover { background: var(--nav-hover); border-color: var(--glass-edge-soft); }
 .nav-item:active { transform: scale(0.97); }
-/* 选中态 = 一块被点亮的玻璃：底色是强调色的折射光，边缘只亮左上 */
-.nav-item.active {
-  color: var(--accent-text);
+/* 选中态 = 一块被点亮的玻璃：底色是强调色的折射光，边缘只亮左上。
+   这块玻璃由 nav::before（.sliding-indicator）画出并在页面间滑动，
+   选中项本身只换文字颜色，悬停也不再叠加底色。 */
+.nav-item.active { color: var(--accent-text); background: transparent; border-color: transparent; }
+nav.sliding-indicator::before {
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-control);
   background: var(--accent-surface);
-  border-color: var(--accent-border);
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 4px 14px rgba(30, 38, 66, 0.10);
 }
-.nav-item.active:active { transform: scale(0.97); }
 @media (prefers-reduced-motion: reduce) {
   .nav-item { transition: color 120ms linear, background-color 120ms linear; }
-  .nav-item:active, .nav-item.active:active { transform: none; }
+  .nav-item:active { transform: none; }
+}
+@media (forced-colors: active) {
+  .nav-item.active { border-color: Highlight; }
 }
 .nav-icon { width: 21px; height: 21px; display: block; }
 .sidebar-footer {
@@ -712,19 +740,8 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   cursor: pointer;
   font-size: 13.5px;
   font-weight: 600;
-  transition:
-    color var(--motion-state) var(--ease-out-quart),
-    background-color var(--motion-state) var(--ease-out-quart),
-    box-shadow var(--motion-state) var(--ease-out-quart),
-    transform var(--motion-press) var(--ease-out-quart);
 }
-.period-switch button:not(.active):hover { background: var(--nav-hover); color: var(--text-primary); }
-.period-switch button:active { transform: scale(0.97); }
 .period-switch button.active { color: var(--text-on-accent); background: var(--accent); box-shadow: 0 4px 12px -6px color-mix(in srgb, var(--accent) 80%, transparent); }
-@media (prefers-reduced-motion: reduce) {
-  .period-switch button { transition: color 120ms linear, background-color 120ms linear; }
-  .period-switch button:active { transform: none; }
-}
 .usage-chart-card { margin-top: 14px; }
 .usage-chart-card .card-title-row p { margin: 3px 0 0; font-size: 13px; }
 .chart-legend { display: flex; gap: 12px; color: var(--muted); font-size: 13px; white-space: nowrap; }
@@ -868,8 +885,10 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 }
 .theme-option:hover { color: var(--text-primary); background: var(--nav-hover); }
 .theme-option:active { transform: scale(0.97); }
-.theme-option.selected {
-  color: var(--text-on-accent);
+/* 选中底色由 .theme-selector::before（滑动选中块）画出，选项只换文字颜色。 */
+.theme-option.selected { color: var(--text-on-accent); background: transparent; }
+.theme-selector.sliding-indicator::before {
+  border-radius: var(--radius-chip);
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30), 0 4px 14px -8px color-mix(in srgb, var(--accent) 80%, transparent);
 }
@@ -970,8 +989,8 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 84%, white) 0%, var(--accent) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 3px 10px -5px color-mix(in srgb, var(--accent) 80%, transparent);
 }
-/* 滑块本体用 transform 位移（GPU 加速、单元素复合层），
-   按下时沿行进方向稍微拉长 1px，像一滴液体被拨动。 */
+/* 滑块本体用 transform 位移（GPU 加速、单元素复合层）；按住时向行进方向
+   拉长 3px，像一滴液体被拨动（选中态同时左移 3px，保证不越出轨道）。 */
 .toggle-input::after {
   content: "";
   position: absolute;
@@ -983,15 +1002,11 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   background: var(--toggle-thumb);
   box-shadow: 0 1px 3px var(--toggle-shadow);
   transform: translate3d(0, 0, 0);
-  transform-origin: left center;
   transition:
     transform var(--motion-state) var(--ease-out-quart),
     width var(--motion-press) var(--ease-out-quart);
 }
-.toggle-input:checked::after {
-  transform: translate3d(15px, 0, 0);
-  transform-origin: right center;
-}
+.toggle-input:checked::after { transform: translate3d(15px, 0, 0); }
 .toggle-input:not(:disabled):active::after { width: 20px; }
 .toggle-input:not(:disabled):checked:active::after { width: 20px; transform: translate3d(12px, 0, 0); }
 @media (prefers-reduced-motion: reduce) {

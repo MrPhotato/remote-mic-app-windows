@@ -1,9 +1,15 @@
 <script setup lang="ts">
+import { ref } from "vue";
+import { useSlidingIndicator } from "../lib/sliding-indicator";
 import type { NavIcon, PageId } from "../navigation";
 import { navigationItems } from "../navigation";
 
-defineProps<{ activePage: PageId }>();
+const props = defineProps<{ activePage: PageId }>();
 const emit = defineEmits<{ select: [page: PageId] }>();
+
+// 选中玻璃在侧栏项之间滑动（样式见 styles.css 的 nav.sliding-indicator）。
+const navEl = ref<HTMLElement | null>(null);
+useSlidingIndicator(navEl, ".nav-item.active", () => props.activePage);
 
 /**
  * 侧栏图标：SVG path 组（24x24 视窗，描边风格），形状对齐
@@ -47,7 +53,7 @@ const ICON_PATHS: Record<NavIcon, { strokes: string[]; fills?: string[] }> = {
       <img src="/app-logo.png" alt="" draggable="false" />
       <span>SayAll</span>
     </div>
-    <nav aria-label="设置页面">
+    <nav ref="navEl" class="sliding-indicator" aria-label="设置页面">
       <button
         v-for="item in navigationItems"
         :key="item.id"
