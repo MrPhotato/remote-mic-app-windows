@@ -615,6 +615,17 @@ describe("buttons mapping page", () => {
     wrapper.unmount();
   });
 
+  it("renders prepared settings in its first render without a duplicate backend read", async () => {
+    const initialMappings: ButtonMappings = { enabled: true, actions: { ok: { single: { type: "shortcut", chord: { keys: ["enter"] } }, double: { type: "disabled" }, long: { type: "disabled" } } } };
+    const wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    expect(wrapper.findAll(".mapping-cell-placeholder")).toHaveLength(0);
+    expect(wrapper.get(".mapping-canvas").text()).toContain("Enter");
+    await flushPromises();
+    expect(getButtonMappings).not.toHaveBeenCalled();
+    expect(subscribeButtonEdges).toHaveBeenCalledOnce();
+    wrapper.unmount();
+  });
+
   it("shows saved mappings without waiting for the installed app scan", async () => {
     let resolveApps!: (value: Awaited<ReturnType<typeof listPresetApps>>) => void;
     vi.mocked(listPresetApps).mockImplementationOnce(() => new Promise((resolve) => { resolveApps = resolve; }));

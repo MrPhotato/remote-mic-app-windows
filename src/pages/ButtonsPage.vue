@@ -69,7 +69,7 @@ import {
   type ShortcutCaptureEdge,
 } from "../lib/bridge";
 
-const props = defineProps<{ runtime: RuntimeSnapshot | null }>();
+const props = defineProps<{ runtime: RuntimeSnapshot | null; initialMappings?: ButtonMappings | null }>();
 
 /** 画布几何：对齐 Mac RemoteMappingCanvas——高度固定 570，宽度流式
  * （占满容器，ResizeObserver 观测）；卡宽 = clamp((宽-260)/2, 270, 300)，
@@ -206,10 +206,12 @@ const buttonIcons: Record<RemoteButton, string[]> = {
 const VOICE_ICON_FILLED = "M12 2.8a3.4 3.4 0 0 1 3.4 3.4v5.6a3.4 3.4 0 0 1-6.8 0V6.2A3.4 3.4 0 0 1 12 2.8z";
 const VOICE_ICON_STROKES = ["M6.3 11.5a5.7 5.7 0 0 0 11.4 0", "M12 17.2v3.8"];
 
-const mappings = ref<ButtonMappings>({ enabled: true, actions: {} });
-const mappingsReady = ref(false);
+const mappings = ref<ButtonMappings>(props.initialMappings
+  ? JSON.parse(JSON.stringify(props.initialMappings)) as ButtonMappings
+  : { enabled: true, actions: {} });
+const mappingsReady = ref(!!props.initialMappings);
 const mappingLoadFailed = ref(false);
-const savedSnapshot = ref<ButtonMappings>({ enabled: true, actions: {} });
+const savedSnapshot = ref<ButtonMappings>(JSON.parse(JSON.stringify(mappings.value)) as ButtonMappings);
 /** 已安装的预设应用（打开应用动作可选列表）。 */
 const presetApps = ref<PresetAppInfo[]>([]);
 const selectedButton = ref<RemoteButton | null>(null);
@@ -967,13 +969,13 @@ onMounted(() => {
 });
 
 async function initializeMappings(): Promise<void> {
-  if (mappingsReady.value) return;
+  if (resourcesReady) return;
   const setupStarted = performance.now();
   mappingLoadFailed.value = false;
   try {
-    const loaded = await getButtonMappings();
+    const loaded = props.initialMappings ?? await getButtonMappings();
     if (unmounted) return;
-    mappings.value = loaded;
+    mappings.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
     savedSnapshot.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
     mappingsReady.value = true;
     reportFrontendEvent({ event: "button_mapping_load", phase: "completed", result: "passed", reason: "configuration_ready", elapsedMs: Math.round(performance.now() - setupStarted) });
