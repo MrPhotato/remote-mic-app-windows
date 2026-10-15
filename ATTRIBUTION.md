@@ -462,3 +462,16 @@ PKEY_Device_InstanceId，改用公开拓扑查询适配器属性；这是只读�
 实际同线程通知/重试与旧会话隔离由测试覆盖，不能据此宣称设备热插拔和睡眠真机通过。
 本机只读检查已验证正常虚拟录音端和双播放接口、旧 Code 10 端点的替代关系；安装版
 与遥控器端到端边界见 [验证记录](Testing/WindowsAudioRecovery.md)。
+
+## GitHub Preview CD（2026-10-15）
+
+参考 GitHub 官方 [Auto-merge](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request)、
+[工作流触发规则](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
+及 [gh pr merge](https://cli.github.com/manual/gh_pr_merge)。评估原生 auto-merge 后保留仓库全局设置，
+改用 workflow_run 接续带明确发布标签的版本 PR；只运行 main 的控制脚本，核对精确 CI 和合并树后合并。
+GITHUB_TOKEN 的合并和 Tag 写入不触发 push，因此用明确 dispatch 接续发布，在发布工作流内继续构建与验证。
+不轮询 CI、不新增 PAT、不利用 pull_request_target 执行分支代码。
+
+远端六附件下载、来源/digest/签名校验沿用本仓库既有人工发布核验的约束，整理为生产脚本；
+没有复制第三方实现或新增运行时依赖。发布请求是明确的版本 PR 标签加 CD 请求，
+失败保留现场、同版本重跑复用已有字节；应用更新及硬件路径不变。见 [发布流程](RELEASING.md)。

@@ -1,0 +1,43 @@
+name: Preview CD
+
+on:
+  workflow_run:
+    workflows: [Windows CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: '已获发布授权的版本 PR 编号'
+        type: string
+        required: true
+      expected_head:
+        description: '该 PR 当前完整 head SHA'
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: preview-cd-${{ github.event.workflow_run.head_sha || inputs.expected_head }}
+  cancel-in-progress: false
+
+jobs:
+  deliver:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      # workflow_run uses the default branch, never PR code or untrusted artifacts.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Merge authorized preview PR and dispatch release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_PR: ${{ inputs.pull_request }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+        run: ./scripts/continue-preview-cd.ps1
