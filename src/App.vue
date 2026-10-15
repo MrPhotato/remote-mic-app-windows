@@ -102,7 +102,12 @@ onUnmounted(() => {
     <Sidebar :active-page="activePage" @select="activePage = $event" />
     <main class="content">
       <div v-if="loadError" class="error-banner" role="alert">暂时读不到运行状态，正在重试：{{ loadError }}</div>
-      <component :is="activeComponent" :runtime="runtime" @navigate="activePage = $event" />
+      <!-- 页面切换：out-in 顺序让旧页面先淡出，新页面再上浮进场。
+           玻璃面板的 backdrop-filter 对后一帧全重新模糊，用 mode=out-in
+           避免两屏同时在渲染时的峰值绘制开销。 -->
+      <Transition name="page" mode="out-in">
+        <component :is="activeComponent" :key="activePage" :runtime="runtime" @navigate="activePage = $event" />
+      </Transition>
     </main>
   </div>
 </template>

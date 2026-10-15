@@ -676,6 +676,7 @@ onUnmounted(() => {
             {{ showAdvancedAudio ? "收起高级设置" : "高级设置" }}
           </button>
         </div>
+        <Transition name="collapse">
         <div v-if="showAdvancedAudio" id="advanced-audio-settings">
           <p class="muted">下方列出 Windows 的录音设备。选择 VB-CABLE 麦克风后，遥控器语音会送入它；电脑自带或外接麦克风请在目标应用中选择。</p>
           <div class="setting-list compact">
@@ -706,6 +707,7 @@ onUnmounted(() => {
               {{ showEndpointList ? "收起列表" : selectedMicrophone ? "更换麦克风" : "选择麦克风" }}
             </button>
           </div>
+          <Transition name="collapse">
           <ul v-if="showEndpointList && microphones.length" id="audio-endpoint-list" class="device-list endpoint-list">
             <li v-for="microphone in microphones" :key="microphone.id">
               <div>
@@ -728,12 +730,14 @@ onUnmounted(() => {
               </button>
             </li>
           </ul>
+          </Transition>
           <details v-if="audio.selectedEndpointName" class="usage-hint-details audio-route-details">
             <summary>内部传声线路</summary>
             <p>{{ audio.selectedEndpointName }}</p>
             <p class="muted">这是无线麦写入声音的入口，目标应用录音时使用对应的麦克风。</p>
           </details>
         </div>
+        </Transition>
       </article>
     </div>
   </section>

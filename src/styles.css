@@ -116,6 +116,18 @@
   --radius-overlay: 22px;
   --radius-pill: 999px;
   --focus-ring: 0 0 0 2px var(--surface-canvas), 0 0 0 4px var(--accent);
+
+  /* 动效：只用减速曲线（液体"落定"而不回弹）；退出比进入快。
+     减少动态效果时位移与形变归零，只保留淡入淡出（见文末）。 */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-press: 120ms;
+  --motion-state: 200ms;
+  --motion-slide: 320ms;
+  --motion-expand: 280ms;
+  --motion-enter: 440ms;
+  --motion-rise: 10px;
+  --motion-overlay-scale: 0.96;
 }
 
 /* ---- 设计令牌：深色 ---- */
@@ -287,6 +299,93 @@ body {
 }
 
 /* ---- 应用外壳 ---- */
+/* 页面切换：被动的淡入 + 轻微上浮，离开更快（液体"落定"）。
+   动效只在视图切换这一次性事件中出现，不会持续重绘；玻璃面板的
+   backdrop-filter 对后面每一帧都重模糊，所以位移要克制。
+   @media (prefers-reduced-motion: reduce) 下只保留淡入。 */
+.page-enter-active {
+  transition:
+    opacity var(--motion-enter) var(--ease-out-quart),
+    transform var(--motion-enter) var(--ease-out-quart),
+    filter var(--motion-enter) var(--ease-out-quart);
+}
+.page-leave-active {
+  transition:
+    opacity 160ms var(--ease-out-quart),
+    transform 160ms var(--ease-out-quart);
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translate3d(0, var(--motion-rise), 0);
+  filter: blur(6px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -4px, 0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-active,
+  .page-leave-active { transition: opacity 120ms linear; }
+  .page-enter-from,
+  .page-leave-to { transform: none; filter: none; }
+}
+
+/* 对话框进场：从左上点亮，缩放到位。 */
+.overlay-enter-active {
+  transition:
+    opacity var(--motion-expand) var(--ease-out-quart),
+    transform var(--motion-expand) var(--ease-out-quart);
+}
+.overlay-leave-active {
+  transition:
+    opacity 160ms var(--ease-out-quart),
+    transform 160ms var(--ease-out-quart);
+}
+.overlay-enter-from { opacity: 0; transform: scale(var(--motion-overlay-scale)); }
+.overlay-leave-to { opacity: 0; transform: scale(var(--motion-overlay-scale)); }
+@media (prefers-reduced-motion: reduce) {
+  .overlay-enter-active,
+  .overlay-leave-active { transition: opacity 120ms linear; }
+  .overlay-enter-from,
+  .overlay-leave-to { transform: none; }
+}
+
+/* 折叠块（v-if 控制的区域，如"高级设置""选择麦克风"）：
+   利用 grid-template-rows 0fr→1fr 从 0 平滑展开到自身高度，
+   不动 height 本身，避免布局抖动。 */
+.collapse-enter-active,
+.collapse-leave-active {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--motion-expand) var(--ease-out-quart),
+    opacity var(--motion-expand) var(--ease-out-quart);
+}
+.collapse-enter-active > *,
+.collapse-leave-active > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.collapse-enter-from,
+.collapse-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .collapse-enter-active,
+  .collapse-leave-active { transition: opacity 120ms linear; grid-template-rows: 1fr; }
+}
+
+/* 列表项淡入（设备列表、麦克风列表）：出现时轻微上浮。 */
+.list-enter-active { transition: opacity 220ms var(--ease-out-quart), transform 220ms var(--ease-out-quart); }
+.list-leave-active { transition: opacity 140ms var(--ease-out-quart); position: absolute; }
+.list-enter-from { opacity: 0; transform: translate3d(0, 6px, 0); }
+.list-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .list-enter-active, .list-leave-active { transition: opacity 120ms linear; }
+  .list-enter-from { transform: none; }
+}
+
 /* 侧栏对齐 macOS SettingsView：宽 108px、图标 21、文字 13 semibold。
    在玻璃方案里它不再是独立卡片，而是同一块玻璃的左侧减薄区：
    只有一条受光的分隔棱，没有自己的背景板。 */
@@ -343,15 +442,26 @@ nav { display: grid; gap: 4px; }
   font-size: 13px;
   font-weight: 600;
   line-height: 1.2;
-  transition: color 0.18s, background-color 0.18s, border-color 0.18s, box-shadow 0.18s;
+  transition:
+    color var(--motion-state) var(--ease-out-quart),
+    background-color var(--motion-state) var(--ease-out-quart),
+    border-color var(--motion-state) var(--ease-out-quart),
+    box-shadow var(--motion-state) var(--ease-out-quart),
+    transform var(--motion-press) var(--ease-out-quart);
 }
 .nav-item:hover { background: var(--nav-hover); border-color: var(--glass-edge-soft); }
+.nav-item:active { transform: scale(0.97); }
 /* 选中态 = 一块被点亮的玻璃：底色是强调色的折射光，边缘只亮左上 */
 .nav-item.active {
   color: var(--accent-text);
   background: var(--accent-surface);
   border-color: var(--accent-border);
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 4px 14px rgba(30, 38, 66, 0.10);
+}
+.nav-item.active:active { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) {
+  .nav-item { transition: color 120ms linear, background-color 120ms linear; }
+  .nav-item:active, .nav-item.active:active { transform: none; }
 }
 .nav-icon { width: 21px; height: 21px; display: block; }
 .sidebar-footer {
@@ -602,8 +712,19 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   cursor: pointer;
   font-size: 13.5px;
   font-weight: 600;
+  transition:
+    color var(--motion-state) var(--ease-out-quart),
+    background-color var(--motion-state) var(--ease-out-quart),
+    box-shadow var(--motion-state) var(--ease-out-quart),
+    transform var(--motion-press) var(--ease-out-quart);
 }
+.period-switch button:not(.active):hover { background: var(--nav-hover); color: var(--text-primary); }
+.period-switch button:active { transform: scale(0.97); }
 .period-switch button.active { color: var(--text-on-accent); background: var(--accent); box-shadow: 0 4px 12px -6px color-mix(in srgb, var(--accent) 80%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .period-switch button { transition: color 120ms linear, background-color 120ms linear; }
+  .period-switch button:active { transform: none; }
+}
 .usage-chart-card { margin-top: 14px; }
 .usage-chart-card .card-title-row p { margin: 3px 0 0; font-size: 13px; }
 .chart-legend { display: flex; gap: 12px; color: var(--muted); font-size: 13px; white-space: nowrap; }
@@ -739,13 +860,22 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   cursor: pointer;
   font-size: 13.5px;
   font-weight: 600;
-  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+  transition:
+    color var(--motion-state) var(--ease-out-quart),
+    background-color var(--motion-state) var(--ease-out-quart),
+    box-shadow var(--motion-state) var(--ease-out-quart),
+    transform var(--motion-press) var(--ease-out-quart);
 }
 .theme-option:hover { color: var(--text-primary); background: var(--nav-hover); }
+.theme-option:active { transform: scale(0.97); }
 .theme-option.selected {
   color: var(--text-on-accent);
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30), 0 4px 14px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-option { transition: color 120ms linear, background-color 120ms linear; }
+  .theme-option:active { transform: none; }
 }
 .theme-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
@@ -831,13 +961,17 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   box-shadow: inset 0 1px 3px rgba(20, 25, 40, 0.25);
   position: relative;
   cursor: pointer;
-  transition: background 0.18s, box-shadow 0.18s;
+  transition:
+    background-color var(--motion-state) var(--ease-out-quart),
+    box-shadow var(--motion-state) var(--ease-out-quart);
   margin: 0;
 }
 .toggle-input:checked {
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 84%, white) 0%, var(--accent) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 3px 10px -5px color-mix(in srgb, var(--accent) 80%, transparent);
 }
+/* 滑块本体用 transform 位移（GPU 加速、单元素复合层），
+   按下时沿行进方向稍微拉长 1px，像一滴液体被拨动。 */
 .toggle-input::after {
   content: "";
   position: absolute;
@@ -848,9 +982,24 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   border-radius: 50%;
   background: var(--toggle-thumb);
   box-shadow: 0 1px 3px var(--toggle-shadow);
-  transition: left 0.18s cubic-bezier(0.32, 0.72, 0, 1);
+  transform: translate3d(0, 0, 0);
+  transform-origin: left center;
+  transition:
+    transform var(--motion-state) var(--ease-out-quart),
+    width var(--motion-press) var(--ease-out-quart);
 }
-.toggle-input:checked::after { left: 17px; }
+.toggle-input:checked::after {
+  transform: translate3d(15px, 0, 0);
+  transform-origin: right center;
+}
+.toggle-input:not(:disabled):active::after { width: 20px; }
+.toggle-input:not(:disabled):checked:active::after { width: 20px; transform: translate3d(12px, 0, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .toggle-input { transition: background-color 120ms linear; }
+  .toggle-input::after { transition: transform 120ms linear; }
+  .toggle-input:not(:disabled):active::after,
+  .toggle-input:not(:disabled):checked:active::after { width: 17px; }
+}
 /* 画布对齐 Mac RemoteMappingLayout：高度 570、宽度流式（占满容器，
    卡宽 = clamp((容器宽-260)/2, 270, 300)）；容器不足最小画布 800px 时
    （小于最小窗口 980 的恢复态窗口）按视口连续缩放兜底，左边原点。 */
@@ -1053,7 +1202,36 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
 .mapping-footer .button-row { margin-left: auto; }
 .mapping-status { margin: 10px 0 0; }
 .usage-hint-details { margin-top: 12px; font-size: 13px; }
-.usage-hint-details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.usage-hint-details summary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px 3px 2px;
+  border-radius: var(--radius-chip);
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  list-style: none;
+  transition: color var(--motion-state) var(--ease-out-quart), background-color var(--motion-state) var(--ease-out-quart);
+}
+.usage-hint-details summary::-webkit-details-marker { display: none; }
+.usage-hint-details summary:hover { color: var(--text-primary); background: var(--nav-hover); }
+.usage-hint-details summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.3px solid currentColor;
+  border-bottom: 1.3px solid currentColor;
+  transform: translate3d(0, -1px, 0) rotate(-45deg);
+  transition: transform var(--motion-expand) var(--ease-out-quart);
+}
+.usage-hint-details[open] summary::before {
+  transform: translate3d(0, 1px, 0) rotate(45deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-hint-details summary::before { transition: none; }
+}
 .usage-hint-details ol { margin: 8px 0 0; padding-left: 18px; line-height: 1.65; font-size: 13px; color: var(--text-subtle-strong); }
 .voice-hotkey-row { margin-top: 10px; }
 .voice-hotkey-row p { margin: 0; font-size: 13px; }

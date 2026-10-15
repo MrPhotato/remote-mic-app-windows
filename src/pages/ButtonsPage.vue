@@ -1196,6 +1196,7 @@ onUnmounted(() => {
 
     <p v-if="remoteModel !== 'rc001'" class="muted back-hardware-note">RC003 的返回和音量键需先开启上方的按键增强，再配置动作。</p>
 
+    <Transition name="list">
     <article v-if="editingTarget" ref="editorPanel" class="card mapping-editor">
       <div class="card-title-row">
         <div>
@@ -1410,6 +1411,7 @@ onUnmounted(() => {
         {{ editingTarget.trigger === "double" ? "双击判定窗口约 0.3 秒：配置后单击会稍等片刻以区分双击。" : "长按约 0.55 秒触发；配置后按住连发停用。" }}
       </p>
     </article>
+    </Transition>
 
     <footer class="card mapping-footer">
       <div class="mapping-footer-status">
@@ -1461,9 +1463,44 @@ onUnmounted(() => {
   background: var(--surface-subtle);
   box-shadow: inset 0 1px 0 var(--glass-edge-soft);
 }
-.mapping-tools summary { padding: 12px 14px; cursor: pointer; color: var(--text-primary); font-size: 14px; font-weight: 650; }
+/* summary 做成"玻璃按钮"：悬停时底色浅浅亮一下；右侧放一只用 CSS 画的
+   小箭头，展开时顺时针转 90°，隐去原生三角 marker。 */
+.mapping-tools summary {
+  position: relative;
+  padding: 12px 36px 12px 14px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  list-style: none;
+  transition:
+    background-color var(--motion-state) var(--ease-out-quart),
+    color var(--motion-state) var(--ease-out-quart);
+}
+.mapping-tools summary::-webkit-details-marker { display: none; }
+.mapping-tools summary:hover { background: var(--nav-hover); }
+.mapping-tools summary::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  color: var(--muted);
+  transform: translate3d(0, -2px, 0) rotate(-45deg);
+  transition: transform var(--motion-expand) var(--ease-out-quart);
+}
+.mapping-tools[open] summary::after {
+  transform: translate3d(0, 1px, 0) rotate(45deg);
+}
 .mapping-tools summary:focus-visible { outline: 2px solid var(--accent-border); outline-offset: -2px; border-radius: var(--radius-control); }
 .mapping-tools[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .mapping-tools summary::after { transition: none; }
+}
 .mapping-tools-body { display: grid; gap: 14px; padding: 0 14px 14px; }
 .selected-action-settings {
   padding: 12px 14px;
@@ -1510,9 +1547,15 @@ onUnmounted(() => {
   font-size: 13.5px;
   white-space: nowrap;
   cursor: pointer;
-  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+  transition:
+    color var(--motion-state) var(--ease-out-quart),
+    background-color var(--motion-state) var(--ease-out-quart),
+    border-color var(--motion-state) var(--ease-out-quart),
+    box-shadow var(--motion-state) var(--ease-out-quart),
+    transform var(--motion-press) var(--ease-out-quart);
 }
 .action-tabs button:hover { color: var(--text-primary); }
+.action-tabs button:active { transform: scale(0.97); }
 .action-tabs button.selected {
   border-color: var(--glass-rim);
   border-top-color: var(--glass-edge);
@@ -1520,6 +1563,10 @@ onUnmounted(() => {
   color: var(--accent-text);
   font-weight: 650;
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 2px 8px -3px var(--shadow-glass);
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-tabs button { transition: color 120ms linear, background-color 120ms linear; }
+  .action-tabs button:active { transform: none; }
 }
 .action-library-toolbar input, .custom-name-row input, .app-library-search {
   min-height: 36px;

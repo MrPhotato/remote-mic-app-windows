@@ -85,8 +85,27 @@ onMounted(() => {
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 30px 80px -24px var(--shadow-float);
   color: var(--text-primary);
   overflow: auto;
+  opacity: 0;
+  transform: translate3d(0, 10px, 0) scale(var(--motion-overlay-scale));
 }
-.registered-apps-dialog::backdrop { background: rgba(8, 10, 18, 0.42); backdrop-filter: blur(4px); }
+/* <dialog> 打开时整体淡入 + 从下方上浮；关闭由浏览器一次性移除。 */
+.registered-apps-dialog[open] {
+  animation: dialog-rise var(--motion-expand) var(--ease-out-quart) forwards;
+}
+.registered-apps-dialog::backdrop { background: rgba(8, 10, 18, 0.42); backdrop-filter: blur(4px); opacity: 0; }
+.registered-apps-dialog[open]::backdrop {
+  animation: dialog-backdrop var(--motion-expand) var(--ease-out-quart) forwards;
+}
+@keyframes dialog-rise {
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes dialog-backdrop {
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .registered-apps-dialog[open] { animation: none; opacity: 1; transform: none; }
+  .registered-apps-dialog[open]::backdrop { animation: none; opacity: 1; }
+}
 .picker-header, .picker-toolbar, .picker-select-row, .picker-footer { display: flex; align-items: center; gap: 12px; }
 .picker-header { justify-content: space-between; margin-bottom: 14px; }
 .picker-header h3 { font-size: 19px; font-weight: 650; letter-spacing: -0.2px; margin: 0; }
