@@ -1,8 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$workflow = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../.github/workflows/windows-release.yml') -Raw
-$match = [regex]::Match($workflow, '(?ms)^          function Select-LatestPrCiRun.*?(?=^          \$runs = )')
-if (!$match.Success) { throw 'Cannot locate production gate functions' }
-$source = $match.Value -replace '(?m)^ {10}', ''
+$source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-source-gates.ps1') -Raw
 $tokens = $null; $errors = $null
 $gateAst = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Gate PowerShell parse failed' }
@@ -96,4 +93,4 @@ foreach ($case in $proofCases) {
     if ($accepted -ne $case.accept) { throw "Checkout proof fixture failed: $($case.name)" }
     $passed++
 }
-[pscustomobject]@{check='release_source_gate_fixtures';passed=$passed;failed=0;remote_queries=0;workflow_function_source='actual_yaml_functions'}|ConvertTo-Json -Compress
+[pscustomobject]@{check='release_source_gate_fixtures';passed=$passed;failed=0;remote_queries=0;workflow_function_source='production_gate_module'}|ConvertTo-Json -Compress

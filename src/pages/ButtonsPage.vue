@@ -69,7 +69,7 @@ import {
   type ShortcutCaptureEdge,
 } from "../lib/bridge";
 
-const props = defineProps<{ runtime: RuntimeSnapshot | null }>();
+const props = defineProps<{ runtime: RuntimeSnapshot | null; initialMappings?: ButtonMappings | null }>();
 
 /** 画布几何：对齐 Mac RemoteMappingCanvas——高度固定 570，宽度流式
  * （占满容器，ResizeObserver 观测）；卡宽 = clamp((宽-260)/2, 270, 300)，
@@ -206,8 +206,12 @@ const buttonIcons: Record<RemoteButton, string[]> = {
 const VOICE_ICON_FILLED = "M12 2.8a3.4 3.4 0 0 1 3.4 3.4v5.6a3.4 3.4 0 0 1-6.8 0V6.2A3.4 3.4 0 0 1 12 2.8z";
 const VOICE_ICON_STROKES = ["M6.3 11.5a5.7 5.7 0 0 0 11.4 0", "M12 17.2v3.8"];
 
-const mappings = ref<ButtonMappings>({ enabled: true, actions: {} });
-const savedSnapshot = ref<ButtonMappings>({ enabled: true, actions: {} });
+const mappings = ref<ButtonMappings>(props.initialMappings
+  ? JSON.parse(JSON.stringify(props.initialMappings)) as ButtonMappings
+  : { enabled: true, actions: {} });
+const mappingsReady = ref(!!props.initialMappings);
+const mappingLoadFailed = ref(false);
+const savedSnapshot = ref<ButtonMappings>(JSON.parse(JSON.stringify(mappings.value)) as ButtonMappings);
 /** 已安装的预设应用（打开应用动作可选列表）。 */
 const presetApps = ref<PresetAppInfo[]>([]);
 const selectedButton = ref<RemoteButton | null>(null);
@@ -247,7 +251,7 @@ interface PendingSelection {
 let selectionRequest = 0;
 const pendingSelections = new Map<string, PendingSelection>();
 const learnedSelections = new Set<number>();
-const editorInputBusy = computed(() => busy.value || capturingShortcut.value || captureStarting.value || captureStopping.value);
+const editorInputBusy = computed(() => !mappingsReady.value || busy.value || capturingShortcut.value || captureStarting.value || captureStopping.value);
 
 function releasePageResources(): void {
   window.removeEventListener("keydown", handleCaptureKeydown, true);
@@ -305,10 +309,11 @@ function inheritsBackspaceHold(button: RemoteButton, trigger: ButtonTrigger): bo
 }
 
 function cellDisabled(button: RemoteButton, trigger: ButtonTrigger): boolean {
-  return inheritsBackspaceHold(button, trigger);
+  return !mappingsReady.value || inheritsBackspaceHold(button, trigger);
 }
 
 function cellSummary(button: RemoteButton, trigger: ButtonTrigger): string {
+  if (!mappingsReady.value) return mappingLoadFailed.value ? "配置读取失败" : "正在读取配置";
   return inheritsBackspaceHold(button, trigger) ? "Backspace" : actionDisplayName(actionOf(button, trigger), actionLibrary.value);
 }
 
@@ -593,6 +598,7 @@ const capabilityNote = computed<string | null>(() => {
 let saveQueue: Promise<void> = Promise.resolve();
 let saveRequest = 0;
 async function persist(message?: string): Promise<void> {
+  if (!mappingsReady.value) return;
   const request = ++saveRequest;
   const payload = JSON.parse(JSON.stringify(mappings.value)) as ButtonMappings;
   const selections = [...pendingSelections.values()].filter(selection => {
@@ -941,23 +947,46 @@ async function toggleListener(): Promise<void> {
 const rawInput = computed(() => props.runtime?.platform.rawInput);
 const connectionInfo = computed(() => props.runtime?.platform.connection);
 
-onMounted(async () => {
+onMounted(() => {
+  // 首帧布局不能等待配置、应用扫描或事件订阅；它们可能在页面淡入后才完成。
+  const canvas = canvasEl.value;
+  if (!canvas) return;
+  canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, canvas.clientWidth);
+  if (typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, Math.round(entry.contentRect.width));
+      }
+    });
+    resizeObserver.observe(canvas);
+  }
+  reportFrontendEvent({
+    event: "buttons_canvas_layout",
+    phase: "completed",
+    result: "passed",
+    reason: "measured_before_backend_setup",
+  });
+});
+
+async function initializeMappings(): Promise<void> {
+  if (resourcesReady) return;
   const setupStarted = performance.now();
-  window.addEventListener("keydown", handleCaptureKeydown, true);
-  window.addEventListener("keyup", handleCaptureKeyup, true);
-  window.addEventListener("blur", handleCaptureBlur);
-  const [loaded, snapshot, apps] = await Promise.all([
-    getButtonMappings(),
-    getButtonMappingSnapshot(),
-    listPresetApps().catch(() => [] as PresetAppInfo[]),
-  ]);
-  if (unmounted) {
+  mappingLoadFailed.value = false;
+  try {
+    const loaded = props.initialMappings ?? await getButtonMappings();
+    if (unmounted) return;
+    mappings.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
+    savedSnapshot.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
+    mappingsReady.value = true;
+    reportFrontendEvent({ event: "button_mapping_load", phase: "completed", result: "passed", reason: "configuration_ready", elapsedMs: Math.round(performance.now() - setupStarted) });
+  } catch {
+    if (unmounted) return;
+    mappingLoadFailed.value = true;
+    reportFrontendEvent({ event: "button_mapping_load", phase: "completed", result: "failed", reason: "configuration_read_failed", elapsedMs: Math.round(performance.now() - setupStarted) });
     return;
   }
-  presetApps.value = apps.filter((app) => app.installed);
-  registerPresetAppNames(presetApps.value);
-  mappings.value = loaded;
-  savedSnapshot.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
+  const snapshot = await getButtonMappingSnapshot();
+  if (unmounted) return;
   mappingSnapshot.value = snapshot;
   if (rawInput.value?.activeButtons) {
     activeButtons.value = new Set(rawInput.value.activeButtons);
@@ -1012,17 +1041,6 @@ onMounted(async () => {
     }
   }, 1_000);
 
-  // 流式画布：观测容器宽（不足最小画布 800px 时保持 800 由 CSS 缩放兜底）。
-  // jsdom 测试环境无 ResizeObserver，跳过观测。
-  if (canvasEl.value && typeof ResizeObserver !== "undefined") {
-    canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, canvasEl.value.clientWidth);
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, Math.round(entry.contentRect.width));
-      }
-    });
-    resizeObserver.observe(canvasEl.value);
-  }
   resourcesReady = true;
   reportFrontendEvent({
     event: "buttons_page_resource_setup",
@@ -1031,6 +1049,19 @@ onMounted(async () => {
     reason: "listeners_and_polling_ready",
     elapsedMs: Math.max(0, Math.round(performance.now() - setupStarted)),
   });
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", handleCaptureKeydown, true);
+  window.addEventListener("keyup", handleCaptureKeyup, true);
+  window.addEventListener("blur", handleCaptureBlur);
+  // 应用扫描不参与配置就绪判定，慢扫描不能让已保存的动作显示为空。
+  void listPresetApps().then((apps) => {
+    if (unmounted) return;
+    presetApps.value = apps.filter((app) => app.installed);
+    registerPresetAppNames(presetApps.value);
+  }).catch(() => {});
+  void initializeMappings();
 });
 
 onUnmounted(() => {
@@ -1070,7 +1101,11 @@ onUnmounted(() => {
 
     <Rc003InputControl :remote-model="remoteModel" :connected="['ready', 'streaming', 'draining'].includes(connectionInfo?.phase ?? '')" />
 
-    <div ref="canvasEl" class="mapping-canvas" :style="{ height: `${CANVAS_HEIGHT}px` }">
+    <p v-if="mappingLoadFailed" class="error-text mapping-load-error" role="alert">
+      按键配置读取失败，请重试。
+      <button type="button" class="secondary-button" @click="initializeMappings">重新读取</button>
+    </p>
+    <div ref="canvasEl" class="mapping-canvas" :aria-busy="!mappingsReady && !mappingLoadFailed" :style="{ height: `${CANVAS_HEIGHT}px` }">
       <svg
         class="mapping-connections"
         :width="canvasWidth"
@@ -1168,7 +1203,8 @@ onUnmounted(() => {
             @click.stop="openEditor(placement.button, trigger)"
           >
             <small>{{ buttonTriggerLabel(trigger) }}</small>
-            <span>{{ cellSummary(placement.button, trigger) }}</span>
+            <span v-if="mappingsReady">{{ cellSummary(placement.button, trigger) }}</span>
+            <span v-else class="mapping-cell-placeholder" aria-hidden="true">&nbsp;</span>
           </button>
         </div>
       </article>

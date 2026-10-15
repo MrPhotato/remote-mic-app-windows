@@ -1119,6 +1119,13 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   white-space: nowrap;
 }
 .mapping-cell:first-child span { font-weight: 600; }
+.mapping-cell .mapping-cell-placeholder {
+  width: 60%;
+  margin: 0 auto;
+  border-radius: 3px;
+  background: var(--mapping-line);
+  opacity: 0.3;
+}
 .mapping-cell.set span { color: var(--accent-text); }
 .mapping-cell.editing { background: var(--accent-surface-strong); border-color: var(--accent-border); }
 .mapping-cell.flashed { background: var(--pressed-surface); }

@@ -14,6 +14,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/bridge")>();
   return {
     ...actual,
+    listPresetApps: vi.fn(async () => []),
     getButtonMappings: vi.fn(async () => ({
       enabled: true,
       actions: {
@@ -79,6 +80,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 import {
   exportButtonMappingConfiguration,
   getButtonMappings,
+  listPresetApps,
   importButtonMappingConfiguration,
   subscribeButtonEdges,
   subscribeButtonGestures,
@@ -546,6 +548,108 @@ describe("buttons mapping page", () => {
     expect(subscribeButtonGestures).not.toHaveBeenCalled();
     expect(intervalSpy).not.toHaveBeenCalled();
     intervalSpy.mockRestore();
+  });
+
+  it("places and resizes the remote before backend loading finishes", async () => {
+    let resolveMappings!: (value: ButtonMappings) => void;
+    vi.mocked(getButtonMappings).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveMappings = resolve;
+    }));
+    const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1280);
+    let notifyResize!: ResizeObserverCallback;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { notifyResize = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    const wrapper = mount(ButtonsPage, { props: { runtime } });
+    try {
+      await flushPromises();
+      expect(subscribeButtonEdges).not.toHaveBeenCalled();
+      expect(wrapper.get(".mapping-connections").attributes("width")).toBe("1280");
+      expect(wrapper.get(".remote-photo").attributes("style")).toContain("left: 539px");
+      expect(observe).toHaveBeenCalledWith(wrapper.get(".mapping-canvas").element);
+      notifyResize([{ contentRect: { width: 1000 } } as ResizeObserverEntry], {} as ResizeObserver);
+      await flushPromises();
+      expect(wrapper.get(".mapping-connections").attributes("width")).toBe("1000");
+      expect(wrapper.get(".remote-photo").attributes("style")).toContain("left: 399px");
+      notifyResize([{ contentRect: { width: 700 } } as ResizeObserverEntry], {} as ResizeObserver);
+      await flushPromises();
+      expect(wrapper.get(".mapping-connections").attributes("width")).toBe("800");
+    } finally {
+      wrapper.unmount();
+      resolveMappings({ enabled: true, actions: {} });
+      await flushPromises();
+      widthSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(subscribeButtonEdges).not.toHaveBeenCalled();
+  });
+
+  it("does not display or save empty mappings while the configuration is loading", async () => {
+    let resolveMappings!: (value: ButtonMappings) => void;
+    vi.mocked(getButtonMappings).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveMappings = resolve;
+    }));
+    const wrapper = mount(ButtonsPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".mapping-canvas").attributes("aria-busy")).toBe("true");
+    expect(wrapper.findAll(".mapping-cell-placeholder")).toHaveLength(36);
+    expect(wrapper.get(".mapping-canvas").text()).not.toContain("未设置");
+    expect(wrapper.findAll(".mapping-cell").every(cell => cell.attributes("disabled") !== undefined)).toBe(true);
+    await wrapper.get(".mapping-cell").trigger("click");
+    expect(wrapper.find(".mapping-editor").exists()).toBe(false);
+    const save = wrapper.findAll(".mapping-footer button").find(button => button.text() === "保存配置")!;
+    expect(save.attributes("disabled")).toBeDefined();
+    await save.trigger("click");
+    expect(saveButtonMappings).not.toHaveBeenCalled();
+    resolveMappings({ enabled: true, actions: { ok: { single: { type: "shortcut", chord: { keys: ["enter"] } }, double: { type: "disabled" }, long: { type: "disabled" } } } });
+    await flushPromises();
+    expect(wrapper.findAll(".mapping-cell-placeholder")).toHaveLength(0);
+    expect(wrapper.get(".mapping-canvas").text()).toContain("Enter");
+    expect(wrapper.get(".mapping-canvas").text()).toContain("未设置");
+    expect(wrapper.get(".mapping-canvas").attributes("aria-busy")).toBe("false");
+    wrapper.unmount();
+  });
+
+  it("renders prepared settings in its first render without a duplicate backend read", async () => {
+    const initialMappings: ButtonMappings = { enabled: true, actions: { ok: { single: { type: "shortcut", chord: { keys: ["enter"] } }, double: { type: "disabled" }, long: { type: "disabled" } } } };
+    const wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    expect(wrapper.findAll(".mapping-cell-placeholder")).toHaveLength(0);
+    expect(wrapper.get(".mapping-canvas").text()).toContain("Enter");
+    await flushPromises();
+    expect(getButtonMappings).not.toHaveBeenCalled();
+    expect(subscribeButtonEdges).toHaveBeenCalledOnce();
+    wrapper.unmount();
+  });
+
+  it("shows saved mappings without waiting for the installed app scan", async () => {
+    let resolveApps!: (value: Awaited<ReturnType<typeof listPresetApps>>) => void;
+    vi.mocked(listPresetApps).mockImplementationOnce(() => new Promise((resolve) => { resolveApps = resolve; }));
+    const wrapper = await mountPage();
+    expect(wrapper.get(".mapping-canvas").text()).toContain("Enter");
+    expect(wrapper.findAll(".mapping-cell-placeholder")).toHaveLength(0);
+    wrapper.unmount();
+    resolveApps([]);
+    await flushPromises();
+  });
+
+  it("offers a read retry instead of empty settings after a configuration failure", async () => {
+    vi.mocked(getButtonMappings).mockRejectedValueOnce(new Error("unavailable"));
+    const wrapper = mount(ButtonsPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".mapping-load-error").text()).toContain("按键配置读取失败");
+    expect(wrapper.get(".mapping-canvas").text()).not.toContain("未设置");
+    expect(subscribeButtonEdges).not.toHaveBeenCalled();
+    await wrapper.get(".mapping-load-error button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".mapping-load-error").exists()).toBe(false);
+    expect(wrapper.get(".mapping-canvas").text()).toContain("Enter");
+    expect(subscribeButtonEdges).toHaveBeenCalledOnce();
+    wrapper.unmount();
   });
 
   it("immediately releases a listener that resolves after the page is unmounted", async () => {

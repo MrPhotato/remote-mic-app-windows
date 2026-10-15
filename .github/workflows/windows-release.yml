@@ -1,25 +1,65 @@
 name: Windows Release
 
 # 独立 Windows fork 的完整签名预览包。不会启用应用内自动更新。
-# Tag 必须是已通过 PR CI 合入 main 的当前提交；只创建草稿，核验后再公开。
+# release:preview PR 经 Preview CD 合并后创建 Tag、签名、下载核验并公开。
+# GITHUB_TOKEN 创建的 Tag 不会再次触发 push；构建在同一工作流继续。
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布或恢复当前 main 的预览版（例如 v0.3.4）'
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
   actions: read
   pull-requests: read
 
 concurrency:
-  group: windows-release-${{ github.ref }}
+  group: windows-preview-release-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
     runs-on: windows-latest
+    permissions:
+      # Listing draft releases requires push access; this job performs reads only.
+      contents: write
+      pull-requests: read
+    outputs:
+      ready: ${{ steps.plan.outputs.ready }}
+      tag: ${{ steps.plan.outputs.tag }}
+      source: ${{ steps.plan.outputs.source }}
+      existing: ${{ steps.plan.outputs.existing }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check release intent and immutable version
+        id: plan
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: ./scripts/prepare-preview-release.ps1 -RequestedTag $env:REQUESTED_TAG
+
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: read
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
 
       - name: Require current main and successful merged PR CI
         shell: pwsh
@@ -37,44 +77,7 @@ jobs:
           if ($matched.Count -ne 1) { throw 'Expected one merged main PR for this source' }
           $head = $matched[0].head.sha
           $prNumber = [long]$matched[0].number
-          function Select-LatestPrCiRun($Response, [string]$Head, [long]$PrNumber) {
-            $headRuns = @($Response.workflow_runs | Where-Object { $_.event -eq 'pull_request' -and $_.head_sha -eq $Head })
-            if (!$headRuns.Count) { throw 'No Windows CI run for exact PR head' }
-            if (@($headRuns | Where-Object { @($_.pull_requests | Where-Object { $null -ne $_ -and [long]$_.number -le 0 }).Count }).Count) {
-              throw 'Invalid PR association metadata'
-            }
-            # GitHub clears pull_requests after merge. Keep such runs in the
-            # latest-run selection; require checkout/tree proof below instead.
-            $prRuns = @($headRuns | Where-Object { !@($_.pull_requests | Where-Object { $null -ne $_ }).Count -or @($_.pull_requests | Where-Object { $_.number -eq $PrNumber }).Count -eq 1 })
-            if (!$prRuns.Count) { throw 'No Windows CI run associated with the merged PR' }
-            return ($prRuns | Sort-Object -Property @{Expression={[DateTimeOffset]$_.created_at}; Descending=$true}, @{Expression={[long]$_.id}; Descending=$true}, @{Expression={[long]$_.run_attempt}; Descending=$true} | Select-Object -First 1)
-          }
-          function Assert-LatestPrCiPassed($Run, $ListedRun, [string]$Head, [long]$PrNumber) {
-            if ($Run.id -ne $ListedRun.id -or $Run.event -ne 'pull_request' -or $Run.head_sha -ne $Head -or
-                (@($Run.pull_requests | Where-Object { $null -ne $_ }).Count -gt 0 -and @($Run.pull_requests | Where-Object { $_.number -eq $PrNumber }).Count -ne 1) -or
-                [long]$Run.run_attempt -lt 1 -or [long]$Run.run_attempt -lt [long]$ListedRun.run_attempt) {
-              throw 'Cannot verify the latest CI run identity and attempt'
-            }
-            if ($Run.status -ne 'completed' -or $Run.conclusion -ne 'success') {
-              throw 'Latest Windows CI run/attempt for the merged PR head must have completed successfully'
-            }
-          }
-          function Get-TestedMergeSha([string]$Log, [long]$PrNumber) {
-            $fetchPattern = '(?m)^.*\tRun actions/checkout@v4\t.*\bfetch\b.*\borigin \+(?<sha>[0-9a-f]{40}):refs/remotes/pull/' + $PrNumber + '/merge\s*$'
-            $checkoutPattern = '(?m)^.*\tRun actions/checkout@v4\t.*\bcheckout --progress --force refs/remotes/pull/' + $PrNumber + '/merge\s*$'
-            $commits = @([regex]::Matches($Log, $fetchPattern) | ForEach-Object { $_.Groups['sha'].Value } | Sort-Object -Unique)
-            if ($commits.Count -ne 1 -or $Log -notmatch $checkoutPattern) {
-              throw 'Cannot prove the selected CI attempt checked out this PR merge'
-            }
-            return $commits[0]
-          }
-          function Assert-TestedMergeTree($Commit, [string]$Sha, [string]$Head, [string]$SourceTree) {
-            if ($Commit.sha -ne $Sha -or @($Commit.parents).Count -ne 2 -or
-                @($Commit.parents | Where-Object { $_.sha -eq $Head }).Count -ne 1 -or
-                $Commit.tree.sha -ne $SourceTree) {
-              throw 'CI checkout commit must contain the exact PR head and release tree'
-            }
-          }
+          . ./scripts/release-source-gates.ps1
           $runs = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/windows-ci.yml/runs?event=pull_request&head_sha=$head&per_page=100" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Cannot verify PR CI result' }
           $latest = Select-LatestPrCiRun $runs $head $prNumber
@@ -98,11 +101,28 @@ jobs:
           }
           Write-Host "Verified source=$source pr=$prNumber head=$head ci_run=$($verified.id) attempt=$($verified.run_attempt) conclusion=success"
 
+      - name: Create immutable tag after source verification
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . ./scripts/release-cd-common.ps1
+          $source = (git rev-parse HEAD).Trim()
+          $existing = Get-ReleaseTagSource $env:RELEASE_TAG
+          if ($existing -and $existing -cne $source) { throw 'Tag source mismatch' }
+          if (!$existing) {
+            gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$env:RELEASE_TAG" -f "sha=$source" --silent
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot create tag; inspect outcome before retry' }
+          }
+          if ((Get-ReleaseTagSource $env:RELEASE_TAG) -cne $source) { throw 'Tag readback mismatch' }
+
       - uses: pnpm/action-setup@v4
+        if: needs.prepare.outputs.existing != 'true'
         with:
           version: 10.15.0
 
       - uses: actions/setup-node@v4
+        if: needs.prepare.outputs.existing != 'true'
         with:
           node-version: 22
           cache: pnpm
@@ -110,14 +130,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: actions/setup-python@v5
+        if: needs.prepare.outputs.existing != 'true'
         with:
           python-version: '3.11.9'
           architecture: x64
 
       - name: Install frontend dependencies
+        if: needs.prepare.outputs.existing != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Verify updater signing secret is present
+        if: needs.prepare.outputs.existing != 'true'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -128,8 +151,9 @@ jobs:
           Write-Host "正式更新签名密钥已就绪"
 
       - name: Build complete signed NSIS preview installer
+        if: needs.prepare.outputs.existing != 'true'
         shell: pwsh
-        run: ./scripts/build-local.ps1 -SkipTests -Installer -BuildChannel preview -ReleaseTag $env:GITHUB_REF_NAME -CreateUpdaterArtifacts
+        run: ./scripts/build-local.ps1 -SkipTests -Installer -BuildChannel preview -ReleaseTag $env:RELEASE_TAG -CreateUpdaterArtifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # 密码变量缺失时 tauri build 会交互式等待输入（无 TTY 的 CI 上挂死，
@@ -138,6 +162,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Verify production build and complete helper payload
+        if: needs.prepare.outputs.existing != 'true'
         shell: pwsh
         run: |
           ./scripts/verify-runtime-simulation-isolation.ps1
@@ -145,27 +170,30 @@ jobs:
           ./scripts/verify-rc003-helper-bundle.ps1 -ExpectedManifestPath target/rc003-helper/manifest.json
 
       - name: Generate updater manifest and stage release assets
+        if: needs.prepare.outputs.existing != 'true'
         shell: pwsh
         run: |
-          ./scripts/generate-updater-manifest.ps1 -Tag $env:GITHUB_REF_NAME -Repository $env:GITHUB_REPOSITORY
+          ./scripts/generate-updater-manifest.ps1 -Tag $env:RELEASE_TAG -Repository $env:GITHUB_REPOSITORY
           $version = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).version
           $asset = "artifacts/windows-release/SayAll-Windows-$version-x64-setup.exe"
           cargo run --release --locked --manifest-path tools/release-signature-verify/Cargo.toml -- $asset "$asset.sig" artifacts/windows-release/release-signing.pub
           if ($LASTEXITCODE -ne 0) { throw 'Release signature verification failed' }
 
       - name: Show staged assets before release (delete-free verification)
+        if: needs.prepare.outputs.existing != 'true'
         shell: pwsh
         run: |
-          Write-Host "将上传到 Draft Release $env:GITHUB_REF_NAME 的资产清单："
+          Write-Host "将上传到 Draft Release $env:RELEASE_TAG 的资产清单："
           Get-ChildItem -LiteralPath "artifacts/windows-release" -File |
             ForEach-Object { Write-Host ("- {0} ({1} bytes) SHA256={2}" -f $_.Name, $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) }
 
       - name: Create draft GitHub release with assets
+        if: needs.prepare.outputs.existing != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = $env:GITHUB_REF_NAME
+          $tag = $env:RELEASE_TAG
           $assets = Get-ChildItem -LiteralPath "artifacts/windows-release" -File | ForEach-Object { $_.FullName }
           $notes = "releases/$tag.md"
           if (!(Test-Path -LiteralPath $notes)) { throw 'Versioned release notes are missing' }
@@ -173,4 +201,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "gh release create 失败（exit $LASTEXITCODE；若 Release 已存在请人工核对后处理，本流程不做任何删除/覆盖）"
           }
-          Write-Host "Draft Preview $tag 已创建并挂载资产，等待核验；应用自动更新仍关闭"
+          Write-Host "Draft Preview $tag 已创建，继续下载核验；应用自动更新仍关闭"
+
+      - name: Download verify and publish preview
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/publish-verified-preview.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Retain verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: artifacts/release-verification.json
+          if-no-files-found: ignore
+
+      - name: Explain failed delivery
+        if: failure()
+        shell: pwsh
+        run: |
+          "## Preview 发布未完成`n`n失败步骤见本次运行日志。已有 Tag 和附件保留；重跑只核验已有完整资产，不覆盖或重新签名。" >> $env:GITHUB_STEP_SUMMARY
