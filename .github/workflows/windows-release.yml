@@ -26,6 +26,10 @@ concurrency:
 jobs:
   prepare:
     runs-on: windows-latest
+    permissions:
+      # Listing draft releases requires push access; this job performs reads only.
+      contents: write
+      pull-requests: read
     outputs:
       ready: ${{ steps.plan.outputs.ready }}
       tag: ${{ steps.plan.outputs.tag }}

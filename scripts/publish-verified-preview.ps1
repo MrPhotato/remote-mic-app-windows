@@ -3,7 +3,8 @@ param([Parameter(Mandatory)][ValidatePattern('^v\d+\.\d+\.\d+$')][string]$Tag)
 $source = (git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $source -notmatch '^[a-f0-9]{40}$') { throw 'Exact source required' }
 $notes = Get-Content -LiteralPath "releases/$Tag.md" -Raw
-$release = Read-ReleaseApi "releases/tags/$Tag"
+$release = Find-PreviewRelease $Tag
+if (!$release) { throw 'Expected exactly one existing preview release' }
 Assert-ReleaseEnvelope $release $Tag $notes
 if ((Get-ReleaseTagSource $Tag) -cne $source) { throw 'Tag source mismatch' }
 $directory = Join-Path $PWD 'artifacts/release-download-verification'

@@ -94,7 +94,7 @@ function Invoke-RestMethod {
     param([string]$Uri, $Headers)
     if ($Uri -like '*/pulls') { return $global:sayallCdFixture.pr }
     if ($Uri -like '*/git/ref/tags/*') { return $global:sayallCdFixture.tag }
-    if ($Uri -like '*/releases/tags/*') { return $global:sayallCdFixture.release }
+    if ($Uri -match '/releases\?per_page=100&page=') { return $global:sayallCdFixture.release }
     throw 'Unexpected fixture API request'
 }
 try {

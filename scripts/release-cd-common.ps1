@@ -21,6 +21,19 @@ function Get-ReleaseTagSource([string]$Tag) {
     throw 'Unexpected tag object type'
 }
 
+function Find-PreviewRelease([string]$Tag) {
+    # The tag endpoint documents published releases only. List with push access
+    # so a draft is not mistaken for an absent release during retry.
+    for ($page=1; $page -le 20; $page++) {
+        $releases = @((Read-ReleaseApi "releases?per_page=100&page=$page") | ForEach-Object { $_ })
+        $matching = @($releases | Where-Object { $_.tag_name -ceq $Tag })
+        if ($matching.Count -gt 1) { throw 'Ambiguous release identity' }
+        if ($matching.Count -eq 1) { return $matching[0] }
+        if ($releases.Count -lt 100) { return $null }
+    }
+    throw 'Release listing limit reached; cannot establish absence'
+}
+
 function Get-ReleaseAssetNames([string]$Version) {
     @("SayAll-Windows-$Version-x64-setup.exe", "SayAll-Windows-$Version-x64-setup.exe.sig",
       'latest.json', 'release-signing.pub', 'release-metadata.json', 'SHA256SUMS.txt')

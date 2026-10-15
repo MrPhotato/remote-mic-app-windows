@@ -1,4 +1,5 @@
-# Runs with read-only GitHub permissions. Ordinary main merges are a no-op.
+# Read-only operations; push permission is needed to include release drafts.
+# Ordinary main merges are a no-op.
 param([string]$RequestedTag = '')
 . (Join-Path $PSScriptRoot 'release-cd-common.ps1')
 $source = (git rev-parse HEAD).Trim()
@@ -23,7 +24,7 @@ if ((Get-Content package.json -Raw | ConvertFrom-Json).version -ne $config.versi
 if (!(Test-Path -LiteralPath "releases/$tag.md")) { throw 'Committed release notes required' }
 $tagSource = Get-ReleaseTagSource $tag
 if ($tagSource -and $tagSource -cne $source) { throw 'Existing tag points to another commit; never overwrite it' }
-$release = Read-ReleaseApi "releases/tags/$tag" -AllowMissing
+$release = Find-PreviewRelease $tag
 if ($release -and !$tagSource) { throw 'Existing release has no verifiable tag' }
 if ($release) { Assert-ReleaseEnvelope $release $tag (Get-Content -LiteralPath "releases/$tag.md" -Raw) }
 "ready=true`ntag=$tag`nsource=$source`nexisting=$([bool]$release)".ToLowerInvariant() >> $env:GITHUB_OUTPUT

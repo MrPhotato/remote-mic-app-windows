@@ -475,3 +475,5 @@ GITHUB_TOKEN 的合并和 Tag 写入不触发 push，因此用明确 dispatch �
 远端六附件下载、来源/digest/签名校验沿用本仓库既有人工发布核验的约束，整理为生产脚本；
 没有复制第三方实现或新增运行时依赖。发布请求是明确的版本 PR 标签加 CD 请求，
 失败保留现场、同版本重跑复用已有字节；应用更新及硬件路径不变。见 [发布流程](RELEASING.md)。
+按 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases) 的草稿可见性约束，
+查询使用具备 push 权限的分页列表，再匹配精确 Tag；不把仅保证已公开 Release 的按 Tag 查询用于草稿恢复。
