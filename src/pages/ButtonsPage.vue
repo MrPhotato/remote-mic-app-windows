@@ -207,6 +207,8 @@ const VOICE_ICON_FILLED = "M12 2.8a3.4 3.4 0 0 1 3.4 3.4v5.6a3.4 3.4 0 0 1-6.8 0
 const VOICE_ICON_STROKES = ["M6.3 11.5a5.7 5.7 0 0 0 11.4 0", "M12 17.2v3.8"];
 
 const mappings = ref<ButtonMappings>({ enabled: true, actions: {} });
+const mappingsReady = ref(false);
+const mappingLoadFailed = ref(false);
 const savedSnapshot = ref<ButtonMappings>({ enabled: true, actions: {} });
 /** 已安装的预设应用（打开应用动作可选列表）。 */
 const presetApps = ref<PresetAppInfo[]>([]);
@@ -247,7 +249,7 @@ interface PendingSelection {
 let selectionRequest = 0;
 const pendingSelections = new Map<string, PendingSelection>();
 const learnedSelections = new Set<number>();
-const editorInputBusy = computed(() => busy.value || capturingShortcut.value || captureStarting.value || captureStopping.value);
+const editorInputBusy = computed(() => !mappingsReady.value || busy.value || capturingShortcut.value || captureStarting.value || captureStopping.value);
 
 function releasePageResources(): void {
   window.removeEventListener("keydown", handleCaptureKeydown, true);
@@ -305,10 +307,11 @@ function inheritsBackspaceHold(button: RemoteButton, trigger: ButtonTrigger): bo
 }
 
 function cellDisabled(button: RemoteButton, trigger: ButtonTrigger): boolean {
-  return inheritsBackspaceHold(button, trigger);
+  return !mappingsReady.value || inheritsBackspaceHold(button, trigger);
 }
 
 function cellSummary(button: RemoteButton, trigger: ButtonTrigger): string {
+  if (!mappingsReady.value) return mappingLoadFailed.value ? "配置读取失败" : "正在读取配置";
   return inheritsBackspaceHold(button, trigger) ? "Backspace" : actionDisplayName(actionOf(button, trigger), actionLibrary.value);
 }
 
@@ -593,6 +596,7 @@ const capabilityNote = computed<string | null>(() => {
 let saveQueue: Promise<void> = Promise.resolve();
 let saveRequest = 0;
 async function persist(message?: string): Promise<void> {
+  if (!mappingsReady.value) return;
   const request = ++saveRequest;
   const payload = JSON.parse(JSON.stringify(mappings.value)) as ButtonMappings;
   const selections = [...pendingSelections.values()].filter(selection => {
@@ -962,23 +966,25 @@ onMounted(() => {
   });
 });
 
-onMounted(async () => {
+async function initializeMappings(): Promise<void> {
+  if (mappingsReady.value) return;
   const setupStarted = performance.now();
-  window.addEventListener("keydown", handleCaptureKeydown, true);
-  window.addEventListener("keyup", handleCaptureKeyup, true);
-  window.addEventListener("blur", handleCaptureBlur);
-  const [loaded, snapshot, apps] = await Promise.all([
-    getButtonMappings(),
-    getButtonMappingSnapshot(),
-    listPresetApps().catch(() => [] as PresetAppInfo[]),
-  ]);
-  if (unmounted) {
+  mappingLoadFailed.value = false;
+  try {
+    const loaded = await getButtonMappings();
+    if (unmounted) return;
+    mappings.value = loaded;
+    savedSnapshot.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
+    mappingsReady.value = true;
+    reportFrontendEvent({ event: "button_mapping_load", phase: "completed", result: "passed", reason: "configuration_ready", elapsedMs: Math.round(performance.now() - setupStarted) });
+  } catch {
+    if (unmounted) return;
+    mappingLoadFailed.value = true;
+    reportFrontendEvent({ event: "button_mapping_load", phase: "completed", result: "failed", reason: "configuration_read_failed", elapsedMs: Math.round(performance.now() - setupStarted) });
     return;
   }
-  presetApps.value = apps.filter((app) => app.installed);
-  registerPresetAppNames(presetApps.value);
-  mappings.value = loaded;
-  savedSnapshot.value = JSON.parse(JSON.stringify(loaded)) as ButtonMappings;
+  const snapshot = await getButtonMappingSnapshot();
+  if (unmounted) return;
   mappingSnapshot.value = snapshot;
   if (rawInput.value?.activeButtons) {
     activeButtons.value = new Set(rawInput.value.activeButtons);
@@ -1041,6 +1047,19 @@ onMounted(async () => {
     reason: "listeners_and_polling_ready",
     elapsedMs: Math.max(0, Math.round(performance.now() - setupStarted)),
   });
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", handleCaptureKeydown, true);
+  window.addEventListener("keyup", handleCaptureKeyup, true);
+  window.addEventListener("blur", handleCaptureBlur);
+  // 应用扫描不参与配置就绪判定，慢扫描不能让已保存的动作显示为空。
+  void listPresetApps().then((apps) => {
+    if (unmounted) return;
+    presetApps.value = apps.filter((app) => app.installed);
+    registerPresetAppNames(presetApps.value);
+  }).catch(() => {});
+  void initializeMappings();
 });
 
 onUnmounted(() => {
@@ -1080,7 +1099,11 @@ onUnmounted(() => {
 
     <Rc003InputControl :remote-model="remoteModel" :connected="['ready', 'streaming', 'draining'].includes(connectionInfo?.phase ?? '')" />
 
-    <div ref="canvasEl" class="mapping-canvas" :style="{ height: `${CANVAS_HEIGHT}px` }">
+    <p v-if="mappingLoadFailed" class="error-text mapping-load-error" role="alert">
+      按键配置读取失败，请重试。
+      <button type="button" class="secondary-button" @click="initializeMappings">重新读取</button>
+    </p>
+    <div ref="canvasEl" class="mapping-canvas" :aria-busy="!mappingsReady && !mappingLoadFailed" :style="{ height: `${CANVAS_HEIGHT}px` }">
       <svg
         class="mapping-connections"
         :width="canvasWidth"
@@ -1178,7 +1201,8 @@ onUnmounted(() => {
             @click.stop="openEditor(placement.button, trigger)"
           >
             <small>{{ buttonTriggerLabel(trigger) }}</small>
-            <span>{{ cellSummary(placement.button, trigger) }}</span>
+            <span v-if="mappingsReady">{{ cellSummary(placement.button, trigger) }}</span>
+            <span v-else class="mapping-cell-placeholder" aria-hidden="true">&nbsp;</span>
           </button>
         </div>
       </article>
