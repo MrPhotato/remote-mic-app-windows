@@ -8,6 +8,7 @@ import {
   openLogDirectory,
   setLaunchAtLogin,
 } from "../lib/bridge";
+import { useSlidingIndicator } from "../lib/sliding-indicator";
 import { useTheme } from "../lib/theme";
 
 defineProps<{ runtime: RuntimeSnapshot | null }>();
@@ -24,6 +25,8 @@ const themeOptions: Array<{ value: ThemePreference; label: string }> = [
   { value: "light", label: "浅色" },
   { value: "dark", label: "深色" },
 ];
+const themeSelector = ref<HTMLElement | null>(null);
+useSlidingIndicator(themeSelector, ".theme-option.selected", themePreference);
 
 const launchAtLogin = ref(false);
 /**
@@ -136,7 +139,7 @@ onMounted(() => {
     <article class="card appearance-card">
       <h2>外观</h2>
       <p class="muted">选择浅色、深色，或跟随 Windows。</p>
-      <div class="theme-selector" role="radiogroup" aria-label="显示模式">
+      <div ref="themeSelector" class="theme-selector sliding-indicator" role="radiogroup" aria-label="显示模式">
         <label
           v-for="option in themeOptions"
           :key="option.value"
