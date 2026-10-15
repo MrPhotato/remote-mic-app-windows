@@ -941,6 +941,27 @@ async function toggleListener(): Promise<void> {
 const rawInput = computed(() => props.runtime?.platform.rawInput);
 const connectionInfo = computed(() => props.runtime?.platform.connection);
 
+onMounted(() => {
+  // 首帧布局不能等待配置、应用扫描或事件订阅；它们可能在页面淡入后才完成。
+  const canvas = canvasEl.value;
+  if (!canvas) return;
+  canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, canvas.clientWidth);
+  if (typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, Math.round(entry.contentRect.width));
+      }
+    });
+    resizeObserver.observe(canvas);
+  }
+  reportFrontendEvent({
+    event: "buttons_canvas_layout",
+    phase: "completed",
+    result: "passed",
+    reason: "measured_before_backend_setup",
+  });
+});
+
 onMounted(async () => {
   const setupStarted = performance.now();
   window.addEventListener("keydown", handleCaptureKeydown, true);
@@ -1012,17 +1033,6 @@ onMounted(async () => {
     }
   }, 1_000);
 
-  // 流式画布：观测容器宽（不足最小画布 800px 时保持 800 由 CSS 缩放兜底）。
-  // jsdom 测试环境无 ResizeObserver，跳过观测。
-  if (canvasEl.value && typeof ResizeObserver !== "undefined") {
-    canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, canvasEl.value.clientWidth);
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, Math.round(entry.contentRect.width));
-      }
-    });
-    resizeObserver.observe(canvasEl.value);
-  }
   resourcesReady = true;
   reportFrontendEvent({
     event: "buttons_page_resource_setup",

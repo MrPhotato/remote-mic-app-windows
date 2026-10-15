@@ -548,6 +548,45 @@ describe("buttons mapping page", () => {
     intervalSpy.mockRestore();
   });
 
+  it("places and resizes the remote before backend loading finishes", async () => {
+    let resolveMappings!: (value: ButtonMappings) => void;
+    vi.mocked(getButtonMappings).mockImplementationOnce(() => new Promise((resolve) => {
+      resolveMappings = resolve;
+    }));
+    const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1280);
+    let notifyResize!: ResizeObserverCallback;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { notifyResize = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    const wrapper = mount(ButtonsPage, { props: { runtime } });
+    try {
+      await flushPromises();
+      expect(subscribeButtonEdges).not.toHaveBeenCalled();
+      expect(wrapper.get(".mapping-connections").attributes("width")).toBe("1280");
+      expect(wrapper.get(".remote-photo").attributes("style")).toContain("left: 539px");
+      expect(observe).toHaveBeenCalledWith(wrapper.get(".mapping-canvas").element);
+      notifyResize([{ contentRect: { width: 1000 } } as ResizeObserverEntry], {} as ResizeObserver);
+      await flushPromises();
+      expect(wrapper.get(".mapping-connections").attributes("width")).toBe("1000");
+      expect(wrapper.get(".remote-photo").attributes("style")).toContain("left: 399px");
+      notifyResize([{ contentRect: { width: 700 } } as ResizeObserverEntry], {} as ResizeObserver);
+      await flushPromises();
+      expect(wrapper.get(".mapping-connections").attributes("width")).toBe("800");
+    } finally {
+      wrapper.unmount();
+      resolveMappings({ enabled: true, actions: {} });
+      await flushPromises();
+      widthSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(subscribeButtonEdges).not.toHaveBeenCalled();
+  });
+
   it("immediately releases a listener that resolves after the page is unmounted", async () => {
     let resolveUnlisten!: (unlisten: () => void) => void;
     const pendingUnlisten = new Promise<() => void>((resolve) => {
