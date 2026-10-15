@@ -66,7 +66,9 @@ $confirmed = Read-ReleaseApi "actions/runs/$($verified.id)"
 if ($confirmed.run_attempt -ne $verified.run_attempt) { throw 'CI was rerun during verification' }
 Assert-LatestPrCiPassed $confirmed $latest $head $number
 $currentPr = Read-ReleaseApi "pulls/$number"
-if ($currentPr.head.sha -cne $head -or 'release:preview' -notin $currentPr.labels.name) { throw 'Release intent changed' }
+if ($currentPr.head.sha -cne $head -or $currentPr.base.ref -ne 'main' -or $currentPr.draft -or
+    'release:preview' -notin $currentPr.labels.name) { throw 'Release intent or target changed' }
+if ((Read-ReleaseApi 'git/ref/heads/main').object.sha -cne $main) { throw 'main changed before merge' }
 if (!$pr.merged) {
     gh api --method PUT "repos/$env:GITHUB_REPOSITORY/pulls/$number/merge" -f "sha=$head" -f merge_method=merge --silent
     if ($LASTEXITCODE -ne 0) { throw 'Merge failed or uncertain; inspect PR before retry' }

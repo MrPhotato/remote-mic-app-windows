@@ -12,6 +12,8 @@ function Invoke-RestMethod {
     if($Uri -match '/pulls/7$') {
         $f.prReads++
         if($f.cancel -and $f.prReads -ge 2){$f.pr.labels=@()}
+        if($f.retarget -and $f.prReads -ge 2){$f.pr.base.ref='develop'}
+        if($f.mainChanged -and $f.prReads -ge 2){$f.main='f'*40}
         return $f.pr
     }
     if($Uri -match '/runs\?') {return @{workflow_runs=@($f.run)}}
@@ -63,6 +65,8 @@ $cases=@(
     @{name='existing version';ok=$false;change={param($f)$f.tag=@{object=@{type='commit';sha=('f'*40)}}}},
     @{name='CI rerun while verifying';ok=$false;change={param($f)$f.rerun=$true}},
     @{name='label removed while verifying';ok=$false;change={param($f)$f.cancel=$true}},
+    @{name='base changed while verifying';ok=$false;change={param($f)$f.retarget=$true}},
+    @{name='main changed while verifying';ok=$false;change={param($f)$f.mainChanged=$true}},
     @{name='main moved after merge blocks release';ok=$false;merges=1;change={param($f)$f.movedAfterMerge=$true}},
     @{name='dispatch failure retains merged PR';ok=$false;merges=1;dispatch=1;change={param($f)$f.dispatchFailure=$true}},
     @{name='merged PR retry dispatches without second merge';ok=$true;dispatch=1;change={param($f)$f.pr.merged=$true;$f.pr.state='closed';$f.pr.merge_commit_sha='d'*40;$f.main='d'*40}},
