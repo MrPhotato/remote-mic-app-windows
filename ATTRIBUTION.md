@@ -477,3 +477,17 @@ GITHUB_TOKEN 的合并和 Tag 写入不触发 push，因此用明确 dispatch �
 失败保留现场、同版本重跑复用已有字节；应用更新及硬件路径不变。见 [发布流程](RELEASING.md)。
 按 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases) 的草稿可见性约束，
 查询使用具备 push 权限的分页列表，再匹配精确 Tag；不把仅保证已公开 Release 的按 Tag 查询用于草稿恢复。
+
+## 应用图标更新（2026-10-17）
+
+延续本应用的靛紫、薄荷绿配色，用原创几何图形组合遥控器、麦克风和无线声波。
+由 `scripts/generate-local-icons.py` 使用 Pillow 生成 1024px 母版及各尺寸资源，
+没有复制外部图形或实现；生成资产继续按 GPL-3.0-only 提供。
+参考 [Tauri 官方图标文档](https://v2.tauri.app/develop/icons/) 的 RGBA PNG 和 Windows ICO 格式要求，
+以及 [Microsoft 应用图标设计指南](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-design)。
+ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实际小尺寸。
+现有应用、网页图标、托盘默认图标和 NSIS 安装器配置仍指向原资源路径。
+
+验证 passed：18 个 PNG 的尺寸/透明通道、7 种 ICO 解码尺寸、预览目视检查、
+`npm run build`、`cargo fmt --check`，以及构建后品牌图与 favicon 的 SHA-256 一致性。
+安装版任务栏、托盘和安装器实际外观 deferred；本次仅完成本地资源交付，用户确认前不 push。
