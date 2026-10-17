@@ -48,31 +48,56 @@ def master():
     d = ImageDraw.Draw(tile)
     d.rounded_rectangle((42, 42, 982, 982), radius=218, outline=(168, 173, 220, 105), width=3)
 
-    # A solid, sculpted remote silhouette stays legible in a Windows tray.
+    # RC003-inspired silver body, widened and shortened for small icon sizes.
+    # Drawn geometry only; no pixels from the product photo are incorporated.
     device = Image.new("RGBA", tile.size)
     body_mask = Image.new("L", tile.size)
-    ImageDraw.Draw(body_mask).rounded_rectangle((348, 183, 640, 851), radius=109, fill=255)
-    body = gradient((250, 252, 255), (149, 166, 214))
+    ImageDraw.Draw(body_mask).rounded_rectangle((334, 173, 654, 863), radius=30, fill=255)
+    body = gradient((239, 238, 231), (158, 165, 174))
+    metal = ImageDraw.Draw(body)
+    for x in range(334, 655):
+        t = (x - 334) / 320
+        edge = math.exp(-t * 38) + math.exp(-(1-t) * 38)
+        sheen = math.exp(-((t - .16) / .09) ** 2)
+        for y in range(173, 864):
+            v = round(219 - 24 * (y - 173) / 690 - 88 * edge + 22 * sheen)
+            metal.point((x, y), fill=(v, v, min(255, v + 2), 255))
     body.putalpha(body_mask)
     device = Image.alpha_composite(device, body)
     d = ImageDraw.Draw(device)
-    d.rounded_rectangle((351, 186, 637, 848), radius=106, outline=(246, 248, 255, 225), width=5)
-    d.line((370, 315, 370, 738), fill=(255, 255, 255, 135), width=4)
+    d.rounded_rectangle((337, 176, 651, 860), radius=28, outline=(239, 240, 242), width=3)
 
-    # Microphone capsule: voice is an intrinsic part of the controller.
-    d.rounded_rectangle((474, 244, 514, 306), radius=20, fill=(42, 50, 78))
-    d.arc((459, 267, 529, 326), 0, 180, fill=(42, 50, 78), width=8)
-    d.rounded_rectangle((490, 320, 498, 340), radius=4, fill=(42, 50, 78))
-    d.rounded_rectangle((476, 336, 512, 344), radius=4, fill=(42, 50, 78))
+    ink, glyph = (32, 35, 39), (234, 237, 240)
+    # Top power and microphone buttons, matching the real controller layout.
+    for x in (409, 579):
+        d.ellipse((x-33, 211, x+33, 277), fill=(203, 206, 207), outline=ink, width=3)
+    d.arc((394, 229, 424, 260), 310, 230, fill=ink, width=5)
+    d.line((409, 225, 409, 246), fill=ink, width=5)
+    d.rounded_rectangle((572, 225, 586, 248), radius=7, fill=ink)
+    d.arc((565, 232, 593, 257), 0, 180, fill=ink, width=4)
+    d.line((579, 256, 579, 264), fill=ink, width=4)
 
-    # Navigation ring, with a mint center rather than tiny arrows/lettering.
-    d.ellipse((392, 391, 596, 595), fill=(35, 45, 69), outline=(255, 255, 255, 180), width=4)
-    d.ellipse((424, 423, 564, 563), fill=(23, 33, 51), outline=(106, 121, 154), width=3)
-    d.ellipse((447, 446, 541, 540), fill=(79, 213, 177))
-    d.arc((452, 451, 536, 535), 202, 290, fill=(183, 255, 228), width=4)
-    d.rounded_rectangle((422, 651, 473, 709), radius=25, fill=(49, 61, 86))
-    d.rounded_rectangle((515, 651, 566, 709), radius=25, fill=(49, 61, 86))
-    d.rounded_rectangle((459, 769, 529, 779), radius=5, fill=(216, 225, 247))
+    # Large dark navigation ring: the strongest identifying silhouette.
+    d.ellipse((361, 296, 627, 562), fill=(38, 40, 43), outline=(239, 240, 242), width=3)
+    d.arc((366, 301, 622, 557), 185, 290, fill=(89, 92, 97), width=4)
+    d.ellipse((426, 361, 562, 497), fill=(48, 50, 53), outline=(13, 15, 18), width=4)
+
+    # Back/home/menu on the left; the volume rocker and TV key on the right.
+    for y in (614, 704, 794):
+        d.ellipse((384, y-36, 456, y+36), fill=ink, outline=(245, 245, 243), width=2)
+    d.rounded_rectangle((522, 578, 594, 740), radius=36, fill=ink, outline=(245, 245, 243), width=2)
+    d.ellipse((522, 758, 594, 830), fill=ink, outline=(245, 245, 243), width=2)
+    d.line([(426, 602), (414, 614), (426, 626)], fill=glyph, width=4)
+    d.line([(407, 703), (420, 691), (433, 703), (433, 718), (407, 718), (407, 703)], fill=glyph, width=3)
+    for y in (785, 794, 803):
+        d.line((408, y, 432, y), fill=glyph, width=3)
+    d.line((545, 614, 571, 614), fill=glyph, width=4)
+    d.line((558, 601, 558, 627), fill=glyph, width=4)
+    d.line((545, 704, 571, 704), fill=glyph, width=4)
+    d.rounded_rectangle((541, 781, 575, 807), radius=5, outline=glyph, width=2)
+    d.line((546, 788, 556, 788), fill=glyph, width=2)
+    d.line((551, 788, 551, 800), fill=glyph, width=2)
+    d.line([(560, 788), (564, 800), (569, 788)], fill=glyph, width=2)
     device = device.rotate(-17, resample=Image.Resampling.BICUBIC)
 
     shadow = Image.new("RGBA", tile.size, (0, 0, 0, 0))
