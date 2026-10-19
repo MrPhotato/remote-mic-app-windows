@@ -12,6 +12,7 @@ import {
   type PageId,
 } from "./navigation";
 import AboutPage from "./pages/AboutPage.vue";
+import WindowTitlebar from "./components/WindowTitlebar.vue";
 import ButtonsPage from "./pages/ButtonsPage.vue";
 import CodingPage from "./pages/CodingPage.vue";
 import ConnectionPage from "./pages/ConnectionPage.vue";
@@ -138,6 +139,7 @@ onUnmounted(() => {
     <span class="ambient-light mint"></span>
     <span class="ambient-light violet"></span>
   </div>
+  <WindowTitlebar />
   <div class="app-shell">
     <Sidebar :active-page="activePage" @select="navigate" />
     <main class="content" :aria-busy="navigationPending">

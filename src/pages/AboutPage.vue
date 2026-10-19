@@ -121,7 +121,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section>
+  <section class="about-page">
     <header class="page-header">
       <div>
         <h1>关于</h1>
@@ -238,6 +238,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.about-page { display: grid; gap: 12px; }
+.about-page > * { margin-top: 0; margin-bottom: 0; }
 /* 启动行为与许可都是一两行的小卡，并排放置省出一屏高度 */
 .about-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .about-grid .card > .muted { margin: 3px 0 12px; font-size: 13.5px; }
