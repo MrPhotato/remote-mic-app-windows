@@ -21,13 +21,27 @@
 | 宿主与 Windows 平台状态机 | passed | 宿主含 runtime-simulation 35 项，平台 27 项；包含手选提交后最终读回被外部更改、首次连接也不抢回。真实接口 1 项默认 ignored，执行结果下列独立记录 |
 | 实际 Edge 深浅主题 × 正常／减少动画 | passed | 1030×734 四组合，无页面错误／溢出；动效仅选择行，初始／轮询不动，减少动画为零；最终源码摘要一致 |
 | Windows 真实默认麦往返与手选提交 | passed | 已安装应用先正常退出。独立 COM 读三种 Capture／Render；CABLE 临时选择→手选回原物理→释放后保留→新 CABLE 会话恢复新基线→退出，全部实际读回一致，三个 Render 始终不变 |
-| 本地新版完整升级及原生页面 | deferred | 接续安装、旧物理目标迁移、真实按钮点选和设置保留验收 |
+| 本地新版完整升级及原生页面 | passed | 静默安装返回 0，主程序仅 NSIS 标记差异，96 个 Helper 完整。启动将旧物理目标迁移到已验证 CABLE；原生按钮普通麦 A→B→A 后重应用 CABLE，CABLE 全程留在上方，高亮随实际当前端点变化 |
 | 实体遥控器连接／断连、RC001／RC003 听写 | deferred | 当前遥控器未就绪；不以接口往返、浏览器或离线安装结果替代 |
 
 本地证据在 `target/microphone-fixed-target/`：`browser-check.json`、20 张浏览器截图、
 `live-probe.json`、`live-round-trip.log` 与独立音频读回；宿主／平台日志在
 `target/microphone-selection-motion/{host-target-tests,platform-target-tests}.log`。组件最终日志为
 `target/microphone-connection-ui/pinned-tests.log`。详细文件被 Git 忽略，不提交设备身份。
+
+本机安装构建源为 `95009fa292d9b7abedcbf62c2b80c1d070b77e81`，仍为 0.3.12 本地测试包。
+安装包 `target/microphone-fixed-target/SayAll-Windows-0.3.12-local-fixed-target.exe`，SHA-256：
+`66C4B1F7AEA40B894B3BDB8385789D0A850478CE940EB74CE6BEFF171DACBBA9`。
+安装阶段原三份配置哈希不变；启动修正旧物理目标时仅改变 `target_microphone_id` 与
+`target_microphone_name`。两次普通麦点选及重应用 CABLE 后，虚拟目标始终不变，其余设置、按键映射与语音快捷键配置不变。
+
+三次原生点击均有 `microphone_selection_feedback` 请求及 settled 完成，约 326–336ms。
+每步经独立只读 Core Audio 核对：普通麦确实立即生效，最后三个 Capture 恢复安装前原麦，
+三个 Render 全程不变。CABLE 离线重应用只保存目标并恢复等待连接，不假装实际使用 CABLE。
+原生截图与辅助功能树目视确认柔和靛紫高亮、按钮“使用中”／“已选择”、无绿色选中底色或额外徽标。
+物理设备可因枚举的当前优先排序在下方组内换序；本次固定的是虚拟／物理分组，不声称系统枚举顺序恒定。
+新增证据 `installed-highlight.json`、`native-ui-check.json`、`after-array.json`、`after-original.json`、
+`after-cable.json` 及生产诊断日志均在上述本地目录。未推送、创建 Tag 或发布 Release。
 
 ## 2026-10-20 按钮状态与选择反馈（历史，目标可移动行为已由上节取代）
 
