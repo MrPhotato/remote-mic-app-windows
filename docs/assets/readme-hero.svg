@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="530" viewBox="0 0 1200 530" role="img" aria-labelledby="title desc">
+  <title id="title">无线麦 SayAll Windows 版：说出想法，按下下一步</title>
+  <desc id="desc">靛紫与薄荷绿背景上的银灰遥控器插画，展示按住说话、切换会话与自由映射。</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#22213f"/><stop offset=".6" stop-color="#101522"/><stop offset="1" stop-color="#143634"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#9690ff" stop-opacity=".25"/><stop offset="1" stop-color="#9690ff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="silver"><stop stop-color="#8f949e"/><stop offset=".12" stop-color="#f2f2ee"/><stop offset=".4" stop-color="#d7d9dc"/><stop offset=".9" stop-color="#b7bdc5"/><stop offset="1" stop-color="#777f8a"/></linearGradient>
+    <linearGradient id="glass" x2="1" y2="1"><stop stop-color="#343450"/><stop offset="1" stop-color="#16232f"/></linearGradient>
+  </defs>
+  <rect width="1200" height="530" rx="28" fill="url(#bg)"/>
+  <ellipse cx="250" cy="145" rx="540" ry="360" fill="url(#glow)"/>
+  <g fill="none" stroke="#96a9ce" opacity=".10"><path d="M690 0v530M830 0v530M970 0v530M1110 0v530"/><path d="M665 105h535M665 245h535M665 385h535"/></g>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif">
+    <rect x="56" y="52" width="7" height="32" rx="3.5" fill="#72e7c4"/>
+    <text x="79" y="77" fill="#f0f1fc" font-size="28" font-weight="700">无线麦 <tspan fill="#aba8f8">SayAll</tspan></text>
+    <text x="58" y="115" fill="#9ba6bc" font-size="13" letter-spacing="3">WINDOWS · REMOTE + VOICE</text>
+    <text x="53" y="215" fill="#f4f5ff" font-size="62" font-weight="700">说出想法，</text>
+    <text x="53" y="293" fill="#f4f5ff" font-size="62" font-weight="700">按下下一步。</text>
+    <text x="58" y="345" fill="#bdc5d9" font-size="21">把小米蓝牙遥控器，变成语音与快捷操作入口。</text>
+    <g font-size="15" fill="#d9def0">
+      <rect x="58" y="395" width="126" height="36" rx="18" fill="#343447" stroke="#595575"/>
+      <text x="121" y="419" text-anchor="middle">按住说话</text>
+      <rect x="198" y="395" width="126" height="36" rx="18" fill="#343447" stroke="#595575"/>
+      <text x="261" y="419" text-anchor="middle">切换会话</text>
+      <rect x="338" y="395" width="126" height="36" rx="18" fill="#343447" stroke="#595575"/>
+      <text x="401" y="419" text-anchor="middle">自由映射</text>
+    </g>
+    <text x="58" y="483" fill="#8d99af" font-size="13" letter-spacing="1.4">OPEN SOURCE / GPL-3.0-ONLY / BUILT FOR WINDOWS</text>
+  </g>
+  <rect x="755" y="65" width="340" height="390" rx="60" fill="url(#glass)" stroke="#737497" stroke-opacity=".55"/>
+  <circle cx="925" cy="262" r="141" fill="none" stroke="#a5a3ef" opacity=".12"/>
+  <circle cx="925" cy="262" r="112" fill="none" stroke="#a5a3ef" opacity=".12"/>
+  <g transform="rotate(17 925 262)">
+    <rect x="851" y="111" width="158" height="311" rx="15" fill="#060b13" opacity=".45"/>
+    <rect x="846" y="100" width="158" height="311" rx="13" fill="url(#silver)" stroke="#f0f2f6" stroke-width="2"/>
+    <g fill="#c7cbcd" stroke="#31363d" stroke-width="1.8"><circle cx="885" cy="133" r="15"/><circle cx="966" cy="133" r="15"/></g>
+    <g fill="none" stroke="#31363d" stroke-width="2.5" stroke-linecap="round"><path d="M885 124v9m-5-6a8 8 0 1 0 10 0"/><rect x="962" y="124" width="8" height="13" rx="4" fill="#31363d"/><path d="M959 132a7 7 0 0 0 14 0m-7 7v4"/></g>
+    <circle cx="925" cy="215" r="63" fill="#292d33" stroke="#f1f2f4" stroke-width="1.5"/>
+    <circle cx="925" cy="215" r="32" fill="#353a40" stroke="#161a20" stroke-width="2"/>
+    <g fill="#292d33" stroke="#edf0f1"><circle cx="888" cy="301" r="18"/><circle cx="888" cy="343" r="18"/><circle cx="888" cy="385" r="18"/><rect x="946" y="283" width="36" height="78" rx="18"/><circle cx="964" cy="385" r="18"/></g>
+    <g fill="none" stroke="#eaedf0" stroke-width="2" stroke-linecap="round"><path d="m891 295-6 6 6 6m-9 35 6-6 6 6v8h-12zm0 40h12m-12 4h12m-12 4h12m70-92h12m-6-6v12m-6 36h12"/><rect x="954" y="378" width="20" height="14" rx="3"/></g>
+  </g>
+  <g fill="none" stroke-linecap="round"><path d="M1026 127a44 44 0 0 1 28 37" stroke="#72e7c4" stroke-width="10"/><path d="M1037 99a76 76 0 0 1 47 60" stroke="#a29dff" stroke-width="10"/></g>
+  <g font-family="Segoe UI, sans-serif" font-size="11" letter-spacing="2" fill="#b8c5d9"><text x="925" y="488" text-anchor="middle">YOUR VOICE. YOUR SHORTCUTS.</text></g>
+</svg>

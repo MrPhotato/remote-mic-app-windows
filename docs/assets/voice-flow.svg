@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="280" viewBox="0 0 1120 280" role="img" aria-labelledby="title desc">
+  <title id="title">遥控器语音与快捷键的两条路径</title>
+  <desc id="desc">声音经蓝牙、SayAll、VB-CABLE 到目标输入法；快捷键从 SayAll 发给当前前台应用。</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="m0 0 8 4-8 4" fill="none" stroke="#73dfbe"/></marker></defs>
+  <rect width="1120" height="280" rx="20" fill="#121724"/>
+  <g fill="#1e2636" stroke="#39445d"><rect x="30" y="56" width="210" height="112" rx="17"/><rect x="310" y="56" width="210" height="112" rx="17"/><rect x="590" y="56" width="210" height="112" rx="17"/><rect x="870" y="56" width="220" height="112" rx="17"/></g>
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" text-anchor="middle">
+    <g fill="#8d9ab2" font-size="12" letter-spacing="2"><text x="135" y="36">01 / SPEAK</text><text x="415" y="36">02 / ROUTE</text><text x="695" y="36">03 / CAPTURE</text><text x="980" y="36">04 / TYPE</text></g>
+    <g fill="#f1f3fb" font-size="23" font-weight="600"><text x="135" y="101">小米遥控器</text><text x="415" y="101">SayAll</text><text x="695" y="101">VB-CABLE</text><text x="980" y="101">语音输入工具</text></g>
+    <g fill="#b6c1d5" font-size="15"><text x="135" y="136">按住说话，松开结束</text><text x="415" y="136">接收并传送声音</text><text x="695" y="129">CABLE Input 写入</text><text x="695" y="150">CABLE Output 录音</text><text x="980" y="136">识别后在文本框输入</text></g>
+    <g fill="#73dfbe" font-size="13"><text x="275" y="90">蓝牙</text><text x="555" y="90">音频</text><text x="835" y="90">录音</text></g>
+    <text x="688" y="252" fill="#b2acf6" font-size="15">快捷键另行发送至当前前台窗口 · 使用目标工具自己的语音识别</text>
+  </g>
+  <g fill="none" stroke="#73dfbe" stroke-width="2" marker-end="url(#arrow)"><path d="M251 112h47"/><path d="M531 112h47"/><path d="M811 112h47"/></g>
+  <path d="M415 180v33h565v-33" fill="none" stroke="#a7a0f7" stroke-width="2" stroke-dasharray="5 5"/>
+</svg>
