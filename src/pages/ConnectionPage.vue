@@ -65,10 +65,9 @@ const scanMessage = ref("尚未扫描");
 const operationMessage = ref("");
 const audioEndpoints = ref<AudioEndpoint[]>([]);
 const microphones = ref<MicrophoneEndpoint[]>([]);
-const showAdvancedAudio = ref(false);
-const showEndpointList = ref(false);
 const scanningAudio = ref(false);
 const audioScanComplete = ref(false);
+const audioInventoryStale = ref(false);
 const selectingEndpointId = ref("");
 const retryingAudio = ref(false);
 const openingVbCablePage = ref(false);
@@ -208,9 +207,10 @@ const selectedMicrophone = computed(() =>
   virtualCableEndpoints.value.find((endpoint) => endpoint.renderEndpointIds.includes(audio.value.selectedEndpointId ?? "")),
 );
 const selectedVirtualCable = computed(() => Boolean(selectedMicrophone.value));
+const otherMicrophones = computed(() => microphones.value.filter((microphone) => microphone.id !== selectedMicrophone.value?.id));
 const microphoneName = computed(() => selectedMicrophone.value?.name
   ?? (audioOperationError.value && !audioScanComplete.value ? "读取失败"
-    : scanningAudio.value || !audioScanComplete.value ? "正在确认…" : "尚未确认可用的麦克风"));
+    : scanningAudio.value || !audioScanComplete.value ? "正在读取…" : "尚未选择"));
 
 watch(
   [() => audio.value.selectedEndpointId, () => audio.value.phase === "failed"],
@@ -230,12 +230,10 @@ function routeForMicrophone(microphone: MicrophoneEndpoint): AudioEndpoint | und
 }
 
 function microphoneDetail(microphone: MicrophoneEndpoint): string {
-  const details = [microphone.isVirtualCableCandidate
-    ? routeForMicrophone(microphone) ? "可接收遥控器语音" : "传声线路暂不可用"
-    : "电脑麦克风 · 请在目标应用中选择"];
-  if (microphone.isDefault) details.push("Windows 默认录音设备");
-  if (microphone.isDefaultCommunications) details.push("默认通信设备");
-  return details.join(" · ");
+  if (audioInventoryStale.value) return "等待刷新";
+  return microphone.isVirtualCableCandidate
+    ? routeForMicrophone(microphone) ? "虚拟麦克风" : "暂不可用"
+    : "在目标应用中选择";
 }
 
 const phaseTone = computed(() => {
@@ -254,6 +252,7 @@ const phaseDetail = computed(() => {
 
 const audioTone = computed(() => {
   if (audio.value.phase === "failed") return "error";
+  if (audioInventoryStale.value) return "warning";
   if (audioOperationError.value) return audioSettingsUnsaved.value ? "warning" : "error";
   if (!selectedVirtualCable.value) return audioScanComplete.value ? "warning" : "pending";
   if (audio.value.phase === "streaming") return "active";
@@ -262,22 +261,26 @@ const audioTone = computed(() => {
   return "pending";
 });
 
-const audioDetail = computed(() => {
-  if (audioOperationError.value) return audioOperationError.value;
-  if (audio.value.lastError) return audio.value.lastError;
-  if (audio.value.phase === "failed") return "语音线路暂不可用，可重试恢复或重新选择麦克风";
-  if (selectedVirtualCable.value && wasapiReady.value) return "声音传送已就绪，请在目标应用中确认麦克风设置";
-  if (audio.value.selectedEndpointId && audioScanComplete.value && !selectedVirtualCable.value) {
-    return "已保留原有设置，尚未找到对应的可用麦克风";
-  }
-  return scanningAudio.value || !audioScanComplete.value
-    ? "正在准备声音传送，设置详情见下方"
-    : "声音传送待设置，请查看下方提示";
+const audioStatus = computed(() => {
+  if (audioInventoryStale.value) return "等待刷新";
+  if (audioOperationError.value) return audioSettingsUnsaved.value ? "设置未保存" : "暂不可用";
+  if (audio.value.phase === "failed") return "暂不可用";
+  if (!selectedVirtualCable.value) return scanningAudio.value || !audioScanComplete.value ? "正在读取" : "待选择";
+  if (audio.value.phase === "streaming") return "传送中";
+  if (audio.value.phase === "draining") return "收尾中";
+  return wasapiReady.value ? "已就绪" : "正在准备";
 });
 
-function toggleAdvancedAudio() {
-  showAdvancedAudio.value = !showAdvancedAudio.value;
-  reportFrontendEvent({ event: "audio_advanced_settings", phase: "completed", result: "passed", reason: showAdvancedAudio.value ? "expanded" : "collapsed" });
+const audioVisibleError = computed(() => {
+  if (audioOperationError.value.startsWith("麦克风读取失败：")) return "麦克风列表暂时无法更新，正在自动重试。";
+  if (audioSettingsUnsaved.value) return "麦克风已启用，但设置未保存。";
+  if (audioOperationError.value.startsWith("麦克风线路启用失败：")) return "麦克风启用失败，可重试。";
+  if (audioOperationError.value) return "语音线路恢复失败，可稍后重试。";
+  return "";
+});
+
+function reportAudioDetailsToggle(event: Event) {
+  reportFrontendEvent({ event: "audio_advanced_settings", phase: "completed", result: "passed", reason: (event.target as HTMLDetailsElement).open ? "expanded" : "collapsed" });
 }
 
 async function refreshConnection() {
@@ -352,6 +355,7 @@ async function detectAudioEndpoints(autoSelectVirtualCable: boolean) {
     if (disposed) return;
     audioEndpoints.value = endpoints;
     microphones.value = captures;
+    audioInventoryStale.value = false;
     audioScanComplete.value = true;
     if (!audioSettingsUnsaved.value && (audioOperationError.value.startsWith("麦克风读取失败：") || (wasapiReady.value && !selectingEndpointId.value))) {
       audioOperationError.value = "";
@@ -365,8 +369,7 @@ async function detectAudioEndpoints(autoSelectVirtualCable: boolean) {
     audioMessage.value = `找到 ${captures.length} 个麦克风，其中 ${virtualCables.length} 个可接收遥控器语音`;
   } catch (error) {
     if (disposed) return;
-    audioEndpoints.value = [];
-    microphones.value = [];
+    audioInventoryStale.value = true;
     audioScanComplete.value = false;
     audioMessage.value = error instanceof Error ? error.message : String(error);
     if (!audioSettingsUnsaved.value) audioOperationError.value = `麦克风读取失败：${audioMessage.value}`;
@@ -384,10 +387,10 @@ async function detectAudioEndpoints(autoSelectVirtualCable: boolean) {
 async function scanAudio() {
   if (!audioSettingsUnsaved.value) audioOperationError.value = "";
   await detectAudioEndpoints(false);
-  showEndpointList.value = microphones.value.length > 0;
 }
 
 async function chooseMicrophone(microphone: MicrophoneEndpoint, automatic = false) {
+  if (audioInventoryStale.value) return;
   const endpoint = routeForMicrophone(microphone);
   if (!endpoint) return;
   selectingEndpointId.value = endpoint.id;
@@ -401,13 +404,13 @@ async function chooseMicrophone(microphone: MicrophoneEndpoint, automatic = fals
     audioMessage.value = automatic
       ? `已自动选择 ${microphone.name}`
       : `已选择 ${microphone.name}`;
-    showEndpointList.value = false;
     reportFrontendEvent({ event: "audio_route_selection", phase: "completed", result: "passed", reason: route, elapsedMs: Math.round(performance.now() - started) });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     audioMessage.value = detail;
     const refreshed = await refreshAudio();
-    audioSettingsUnsaved.value = refreshed && wasapiReady.value && audio.value.selectedEndpointId === endpoint.id;
+    audioSettingsUnsaved.value = refreshed && wasapiReady.value
+      && microphone.renderEndpointIds.includes(audio.value.selectedEndpointId ?? "");
     audioOperationError.value = audioSettingsUnsaved.value
       ? `${microphone.name} 已启用，但设置未保存。`
       : `麦克风线路启用失败：${detail}`;
@@ -580,7 +583,7 @@ onUnmounted(() => {
         <details v-if="codexDictationActive" class="usage-hint-details" open>
           <summary>Codex 听写使用步骤</summary>
           <ol>
-            <li>确认右侧遥控器麦克风的声音传送已就绪；需要调整时打开高级设置；</li>
+            <li>确认右侧遥控器麦克风已就绪；需要调整时直接选择下方的虚拟麦克风；</li>
             <li>让 Codex 听写使用 CABLE Output 麦克风；若 Codex 没有麦克风选择入口，在 Windows 中将它使用的录音设备设为 CABLE Output；</li>
             <li>将 Codex 切到前台，点击输入框；</li>
             <li>按住遥控器语音键说话，松开结束。检查识别文字后再发送；本程序不会自动发送。</li>
@@ -590,7 +593,7 @@ onUnmounted(() => {
         <details v-else-if="wetypeActive" class="usage-hint-details">
           <summary>微信输入法使用步骤（点开查看）</summary>
           <ol>
-            <li>确认右侧遥控器麦克风的声音传送已就绪；需要调整时打开高级设置；</li>
+            <li>确认右侧遥控器麦克风已就绪；需要调整时直接选择下方的虚拟麦克风；</li>
             <li>在微信输入法的语音设置里，把麦克风设为 CABLE Output；若没有这个选项，把系统默认录音设备设为 CABLE Output；</li>
             <li>在目标应用的文本框内切换到微信输入法（看任务栏输入指示器确认）；</li>
             <li>按住遥控器语音键约半秒后再说话，松开后等待文字出现（需要联网）。</li>
@@ -600,116 +603,46 @@ onUnmounted(() => {
 
       <article class="card audio-settings-card">
         <div class="card-title-row">
-          <div>
-            <h2>麦克风</h2>
-            <p class="muted">把遥控器收到的声音送给目标应用，由它转成文字。</p>
-          </div>
-        </div>
-
-        <div class="status-panel" aria-live="polite">
-          <div class="status-copy">
-            <small>语音来源</small>
-            <div class="status-heading">
-              <span class="status-dot" :class="audioTone"></span>
-              <strong>遥控器麦克风</strong>
-            </div>
-            <small>{{ audioDetail }}</small>
-          </div>
-        </div>
-
-        <div class="setting-list compact">
-          <div class="setting-row">
-            <strong>目标应用应选择的麦克风</strong>
-            <span>{{ microphoneName }}</span>
-          </div>
-        </div>
-        <p v-if="selectedMicrophone" class="muted">请在 Codex 或语音输入法中选择这个麦克风。本程序无法读取目标应用的麦克风设置，电脑扬声器保持原样。</p>
-        <p v-else class="muted">在高级设置中选择可接收遥控器语音的麦克风。电脑扬声器保持原样。</p>
-
-        <div v-if="audioOperationError" class="info-callout warning audio-error-callout" role="alert">
-          <strong>{{ audioOperationError }}</strong>
-          <p>{{ audioSettingsUnsaved ? "当前仍可使用，可稍后重试保存设置。" : "请刷新麦克风列表，或重试恢复语音线路。" }}</p>
-        </div>
-        <div v-else-if="audioScanComplete && !virtualCableEndpoints.length" class="info-callout warning vb-cable-callout">
-          <div>
-            <strong>未检测到可用的 VB-CABLE 麦克风</strong>
-            <p>已安装时可先刷新列表或重试恢复；尚未安装可前往官方下载页。</p>
-          </div>
-          <div class="button-row">
-            <button class="primary-button" type="button" :disabled="openingVbCablePage" @click="openVbCablePage">
-              {{ openingVbCablePage ? "正在打开…" : "打开官方下载页" }}
-            </button>
-            <button class="secondary-button" type="button" :disabled="scanningAudio" @click="scanAudio()">
-              重新检测
-            </button>
-          </div>
-        </div>
-        <div v-else class="info-callout" :class="{ warning: !wasapiReady || !selectedVirtualCable }">
-          {{
-            selectedVirtualCable && wasapiReady
-              ? "声音传送已就绪。按住遥控器语音键说话，松开结束。"
-              : audio.selectedEndpointId
-                ? "已保留原有设置。请重试恢复，或在高级设置中选择可用的麦克风。"
-              : virtualCableEndpoints.length
-                ? "已检测到 VB-CABLE，请在高级设置中选择麦克风。"
-                : "正在检测 VB-CABLE…"
-          }}
-        </div>
-
-        <div class="endpoint-select-row">
-          <button
-            v-if="audio.selectedEndpointId && (!wasapiReady || audioSettingsUnsaved)"
-            class="primary-button"
-            type="button"
-            :disabled="retryingAudio || scanningAudio || audioBusy || Boolean(selectingEndpointId) || !runtime?.platform.windowsApiAvailable"
-            @click="retryAudio"
-          >
-            {{ retryingAudio ? "处理中…" : audioSettingsUnsaved ? "重试保存设置" : "重试恢复语音线路" }}
-          </button>
+          <h2>麦克风</h2>
           <button
             class="secondary-button"
             type="button"
-            :aria-expanded="showAdvancedAudio"
-            aria-controls="advanced-audio-settings"
-            @click="toggleAdvancedAudio"
+            :disabled="scanningAudio || retryingAudio || audioBusy || Boolean(selectingEndpointId) || !runtime?.platform.windowsApiAvailable"
+            @click="scanAudio()"
           >
-            {{ showAdvancedAudio ? "收起高级设置" : "高级设置" }}
+            {{ scanningAudio ? "读取中…" : "刷新设备列表" }}
           </button>
         </div>
-        <Transition name="collapse">
-        <div v-if="showAdvancedAudio" id="advanced-audio-settings" class="collapse-region">
-          <p class="muted">下方列出 Windows 的录音设备。选择 VB-CABLE 麦克风后，遥控器语音会送入它；电脑自带或外接麦克风请在目标应用中选择。</p>
-          <div class="setting-list compact">
-            <div class="setting-row">
-              <strong>传送状态</strong>
-              <span>{{ audioPhaseLabel(audio.phase) }}</span>
-            </div>
+
+        <div class="microphone-target" aria-live="polite">
+          <div class="status-heading">
+            <span class="status-dot" :class="audioTone"></span>
+            <strong>目标虚拟麦克风</strong>
+            <span class="microphone-status muted">{{ audioStatus }}</span>
           </div>
-          <p class="muted">此选择不会修改 Windows 默认扬声器或麦克风。</p>
-          <p class="muted scan-summary" role="status">{{ audioMessage }}</p>
-          <div class="endpoint-select-row">
+          <div class="selected-microphone-row">
+            <strong class="microphone-name">{{ microphoneName }}</strong>
             <button
+              v-if="selectedMicrophone && !wasapiReady && !audioSettingsUnsaved"
               class="secondary-button"
               type="button"
-              :disabled="scanningAudio || retryingAudio || audioBusy || Boolean(selectingEndpointId) || !runtime?.platform.windowsApiAvailable"
-              @click="scanAudio()"
+              :disabled="audioInventoryStale || audioBusy || retryingAudio || Boolean(selectingEndpointId)"
+              @click="chooseMicrophone(selectedMicrophone)"
             >
-              {{ scanningAudio ? "读取中…" : "刷新设备列表" }}
-            </button>
-            <button
-              v-if="microphones.length"
-              class="secondary-button"
-              type="button"
-              :aria-expanded="showEndpointList"
-              aria-controls="audio-endpoint-list"
-              @click="showEndpointList = !showEndpointList"
-            >
-              {{ showEndpointList ? "收起列表" : selectedMicrophone ? "更换麦克风" : "选择麦克风" }}
+              {{ selectingEndpointId ? "正在启用…" : "重试" }}
             </button>
           </div>
-          <Transition name="collapse">
-          <ul v-if="showEndpointList && microphones.length" id="audio-endpoint-list" class="device-list endpoint-list collapse-region">
-            <li v-for="microphone in microphones" :key="microphone.id">
+          <p v-if="selectedMicrophone && !audioInventoryStale" class="muted microphone-target-hint">在 Codex 或语音输入法中选择这个麦克风。</p>
+        </div>
+
+        <p v-if="audioVisibleError" class="error-text microphone-error" role="alert">{{ audioVisibleError }}</p>
+        <p v-else-if="audio.phase === 'failed'" class="error-text microphone-error" role="alert">语音线路暂不可用，可重试恢复。</p>
+        <p v-else-if="audioScanComplete && !virtualCableEndpoints.length" class="muted vb-cable-callout">未检测到可用的 VB-CABLE 麦克风。</p>
+
+        <section class="microphone-options" aria-labelledby="other-microphones-heading">
+          <h3 id="other-microphones-heading">其余麦克风选择</h3>
+          <ul v-if="otherMicrophones.length" id="audio-endpoint-list" class="device-list endpoint-list">
+            <li v-for="microphone in otherMicrophones" :key="microphone.id">
               <div>
                 <strong>{{ microphone.name }}</strong>
                 <small>{{ microphoneDetail(microphone) }}</small>
@@ -717,28 +650,114 @@ onUnmounted(() => {
               <button
                 v-if="routeForMicrophone(microphone)"
                 type="button"
-                :disabled="audioBusy || retryingAudio || Boolean(selectingEndpointId) || (selectedMicrophone?.id === microphone.id && wasapiReady)"
+                :disabled="audioInventoryStale || audioBusy || retryingAudio || Boolean(selectingEndpointId)"
                 @click="chooseMicrophone(microphone)"
               >
-                {{
-                  selectingEndpointId === routeForMicrophone(microphone)?.id
-                    ? "正在启用…"
-                    : selectedMicrophone?.id === microphone.id
-                      ? wasapiReady ? "当前麦克风" : "重试"
-                      : "选择"
-                }}
+                {{ selectingEndpointId === routeForMicrophone(microphone)?.id ? "正在启用…" : "选择" }}
               </button>
             </li>
           </ul>
-          </Transition>
-          <details v-if="audio.selectedEndpointName" class="usage-hint-details audio-route-details">
-            <summary>内部传声线路</summary>
-            <p>{{ audio.selectedEndpointName }}</p>
-            <p class="muted">这是无线麦写入声音的入口，目标应用录音时使用对应的麦克风。</p>
-          </details>
+          <p v-else class="muted microphone-empty">{{ scanningAudio || !audioScanComplete ? "正在读取…" : "没有其他麦克风" }}</p>
+        </section>
+
+        <div v-if="audio.selectedEndpointId && (audioSettingsUnsaved || (!wasapiReady && !selectedMicrophone))" class="endpoint-select-row">
+          <button
+            class="primary-button"
+            type="button"
+            :disabled="retryingAudio || scanningAudio || audioBusy || Boolean(selectingEndpointId) || !runtime?.platform.windowsApiAvailable"
+            @click="retryAudio"
+          >
+            {{ retryingAudio ? "处理中…" : audioSettingsUnsaved ? "重试保存设置" : "重试恢复语音线路" }}
+          </button>
         </div>
-        </Transition>
+
+        <details class="usage-hint-details audio-route-details" @toggle="reportAudioDetailsToggle">
+          <summary>诊断详情</summary>
+          <p>传送状态：{{ audioPhaseLabel(audio.phase) }}</p>
+          <p v-if="audio.selectedEndpointName">内部传声线路：{{ audio.selectedEndpointName }}</p>
+          <p class="muted" role="status">{{ audioMessage }}</p>
+          <p v-if="audioOperationError" class="error-text">{{ audioOperationError }}</p>
+          <p v-if="audio.lastError" class="error-text">{{ audio.lastError }}</p>
+          <ul v-if="microphones.some(microphone => microphone.isDefault || microphone.isDefaultCommunications)">
+            <li v-for="microphone in microphones.filter(item => item.isDefault || item.isDefaultCommunications)" :key="microphone.id">
+              {{ microphone.name }}：{{ [microphone.isDefault ? 'Windows 默认录音设备' : '', microphone.isDefaultCommunications ? '默认通信设备' : ''].filter(Boolean).join('、') }}
+            </li>
+          </ul>
+          <p class="muted">此处只选择遥控器的传声线路，不修改 Windows 默认设备或目标应用的麦克风设置。</p>
+          <button v-if="audioScanComplete && !virtualCableEndpoints.length" class="secondary-button" type="button" :disabled="openingVbCablePage" @click="openVbCablePage">
+            {{ openingVbCablePage ? "正在打开…" : "VB-CABLE 官方下载页" }}
+          </button>
+        </details>
       </article>
     </div>
   </section>
 </template>
+
+<style scoped>
+.audio-settings-card {
+  min-width: 0;
+  align-self: start;
+}
+
+.microphone-target {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.microphone-status {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+.selected-microphone-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-control);
+}
+
+.microphone-name,
+.endpoint-list strong {
+  overflow-wrap: anywhere;
+}
+
+.selected-microphone-row button,
+.endpoint-list button {
+  flex-shrink: 0;
+}
+
+.microphone-target-hint,
+.microphone-error,
+.microphone-empty {
+  margin: 0;
+}
+
+.microphone-error,
+.microphone-options,
+.audio-route-details {
+  margin-top: 16px;
+}
+
+.microphone-options h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.endpoint-list {
+  margin: 0;
+}
+
+.endpoint-list li > div {
+  min-width: 0;
+}
+
+.audio-route-details ul {
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+</style>

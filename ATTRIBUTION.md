@@ -482,6 +482,20 @@ PKEY_Device_InstanceId，改用公开拓扑查询适配器属性；这是只读�
 本机只读检查已验证正常虚拟录音端和双播放接口、旧 Code 10 端点的替代关系；安装版
 与遥控器端到端边界见 [验证记录](Testing/WindowsAudioRecovery.md)。
 
+### 同一虚拟麦克风的占用入口恢复（2026-10-19）
+
+先复核本仓库 2026-10-14 的公开拓扑配对、有界恢复和保存逻辑，再核对
+[VB-CABLE 参考手册](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf) 第 6–7 页：
+同一 CABLE 提供 speaker 与 16ch 两个播放接口，两者不能同时使用。
+微软 [IAudioClient::Initialize](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-initialize)
+说明 `AUDCLNT_E_DEVICE_IN_USE`；本机锁定的 windows-rs 常量确认为 `0x8889000A`。
+现场用相同 shared/autoconvert、16 kHz 单声道格式验证多通道接口失败、同一 Capture 的标准接口成功。
+
+恢复仅尝试同一已验证录音端的唯一其他播放入口，按类型化 HRESULT 判断，不解析错误文本或仅凭名称换设备。
+界面继续显示 Capture，内部 Render 仅在诊断区显示。列表暂时失败保留上次结果并禁用过期选择。
+沿用现有工作线程、重试节奏与公开 API，不复制外部实现、不增加依赖、不改变系统默认设备或蓝牙。
+具体证据与未验证边界见 [故障记录](Bugs/2026-10-19-cable-interface-in-use.md)。
+
 ## GitHub Preview CD（2026-10-15）
 
 参考 GitHub 官方 [Auto-merge](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request)、
