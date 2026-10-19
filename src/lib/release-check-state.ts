@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import { checkGithubRelease, openGithubRelease, type GithubReleaseCheck } from "./github-release";
+import { installAppUpdate, subscribeAppUpdateProgress, type AppUpdateProgress } from "./bridge";
 import { reportFrontendEvent } from "./frontend-diagnostics";
 
 // Shared by startup, the update notice and About; changing pages never starts a request.
@@ -9,6 +10,12 @@ const result = ref<GithubReleaseCheck | null>(null);
 const error = ref("");
 const checkedAt = ref<number | null>(null);
 const fromCache = ref(false);
+const installing = ref(false);
+const installError = ref("");
+const installProgress = ref<AppUpdateProgress | null>(null);
+const completedUpdate = ref<{ version: string; notes: string | null } | null>(null);
+let installAttempt = 0;
+let progressUnsubscribe: (() => void) | null = null;
 let startupChecked = false;
 let installedVersion = "";
 
@@ -16,6 +23,38 @@ const CACHE_KEY = "sayall.github-release-check.v1";
 const SUCCESS_CACHE_MS = 6 * 60 * 60 * 1000;
 const RETRY_COOLDOWN_MS = 15 * 60 * 1000;
 const RELEASE_PAGE = "https://github.com/MrPhotato/remote-mic-app-windows/releases/tag/";
+const PENDING_UPDATE_KEY = "sayall.pending-update.v1";
+
+function rememberPendingUpdate(selected: GithubReleaseCheck): void {
+  try {
+    localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify({
+      fromVersion: selected.currentVersion, version: selected.version, notes: selected.notes?.slice(0, 16000) ?? null,
+    }));
+  } catch {
+    reportFrontendEvent({ event: "release_install", phase: "notice", result: "failed", reason: "storage_unavailable" });
+  }
+}
+
+function readCompletedUpdate(currentVersion: string): void {
+  try {
+    const raw = localStorage.getItem(PENDING_UPDATE_KEY);
+    localStorage.removeItem(PENDING_UPDATE_KEY);
+    if (!raw) return;
+    const pending: unknown = JSON.parse(raw);
+    if (!pending || typeof pending !== "object") return;
+    const item = pending as Record<string, unknown>;
+    if (item.version !== currentVersion || typeof item.fromVersion !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(item.fromVersion) || item.fromVersion === currentVersion
+      || !(item.notes === null || (typeof item.notes === "string" && item.notes.length <= 16000))) return;
+    completedUpdate.value = { version: currentVersion, notes: item.notes as string | null };
+    reportFrontendEvent({ event: "release_install", phase: "completed", result: "passed", reason: "target_version_running" });
+  } catch {
+    // A missing or damaged receipt must never prevent checking or using the app.
+  }
+}
+
+function clearPendingUpdate(): void {
+  try { localStorage.removeItem(PENDING_UPDATE_KEY); } catch { /* Storage is optional. */ }
+}
 
 interface CachedCheck {
   schema: 1;
@@ -66,11 +105,13 @@ function saveCache(value: GithubReleaseCheck | null): void {
 }
 
 async function runCheck(source: "startup" | "manual"): Promise<void> {
-  if (checking.value || opening.value) return;
+  if (checking.value || opening.value || installing.value) return;
   checking.value = true;
   // Retain the previous details and timestamp while rechecking so the card does
   // not collapse. The UI shows progress and disables download until completion.
   error.value = "";
+  installError.value = "";
+  installProgress.value = null;
   fromCache.value = false;
   const started = performance.now();
   reportFrontendEvent({ event: "release_check", phase: "started", result: "unknown", reason: `${source}_requested` });
@@ -101,7 +142,8 @@ async function checkAtStartup(currentVersion: string): Promise<void> {
   if (startupChecked) return;
   startupChecked = true;
   installedVersion = currentVersion;
-  if (checking.value || opening.value) return;
+  readCompletedUpdate(currentVersion);
+  if (checking.value || opening.value || installing.value) return;
   const cached = readCache(currentVersion);
   if (cached) {
     result.value = cached.result;
@@ -115,7 +157,7 @@ async function checkAtStartup(currentVersion: string): Promise<void> {
 }
 
 async function openRelease(): Promise<void> {
-  if (!result.value?.releaseUrl || opening.value || checking.value) return;
+  if (!result.value?.releaseUrl || opening.value || checking.value || installing.value) return;
   opening.value = true;
   error.value = "";
   try {
@@ -127,12 +169,67 @@ async function openRelease(): Promise<void> {
   }
 }
 
+async function install(): Promise<void> {
+  const selected = result.value;
+  if (installing.value || checking.value || opening.value || selected?.status !== "available" || !selected.version) return;
+  const attempt = ++installAttempt;
+  installing.value = true;
+  installError.value = "";
+  error.value = "";
+  installProgress.value = { phase: "preparing", downloaded: 0, contentLength: null, finished: false };
+  const started = performance.now();
+  reportFrontendEvent({ event: "release_install", phase: "started", result: "unknown", reason: "user_requested" });
+  let active = true;
+  let unsubscribe: (() => void) | null = null;
+  try {
+    // Subscribe before invoking, and keep this subscription independent of page
+    // mounts. A user can leave About without losing or duplicating an update.
+    unsubscribe = await subscribeAppUpdateProgress((event) => {
+      if (!active || attempt !== installAttempt || !installing.value) return;
+      const order = { preparing: 0, downloading: 1, verifying: 2, installing: 3 };
+      const previous = installProgress.value;
+      if (!(event.phase in order) || (previous && order[event.phase] < order[previous.phase])) return;
+      installProgress.value = {
+        ...event,
+        downloaded: Number.isFinite(event.downloaded) ? Math.max(previous?.downloaded ?? 0, event.downloaded, 0) : previous?.downloaded ?? 0,
+        contentLength: event.contentLength !== null && Number.isFinite(event.contentLength) && event.contentLength > 0 ? event.contentLength : null,
+      };
+    });
+    if (attempt !== installAttempt) return;
+    progressUnsubscribe = unsubscribe;
+    rememberPendingUpdate(selected);
+    await installAppUpdate(selected.version);
+    if (attempt !== installAttempt) return;
+    // Windows normally exits inside the command. A resolved call means the
+    // installer was requested, not that installation or restart has completed.
+    installProgress.value = { ...installProgress.value!, phase: "installing" };
+    reportFrontendEvent({ event: "release_install", phase: "handoff", result: "unknown", reason: "installer_requested", elapsedMs: Math.round(performance.now() - started) });
+  } catch (failure) {
+    if (attempt !== installAttempt) return;
+    installing.value = false;
+    clearPendingUpdate();
+    installError.value = failure instanceof Error ? failure.message : String(failure);
+    reportFrontendEvent({ event: "release_install", phase: "completed", result: "failed", reason: "update_failed", elapsedMs: Math.round(performance.now() - started) });
+  } finally {
+    active = false;
+    unsubscribe?.();
+    if (progressUnsubscribe === unsubscribe) progressUnsubscribe = null;
+  }
+}
+
 export function useReleaseCheck() {
-  return { checking, opening, result, error, checkedAt, fromCache, check, checkAtStartup, openRelease };
+  return { checking, opening, result, error, checkedAt, fromCache, installing, installError, installProgress, completedUpdate, check, checkAtStartup, openRelease, install };
 }
 
 /** Test isolation without deleting the persistent cache used by restart tests. */
 export function resetReleaseCheckForTests(): void {
+  installAttempt += 1;
+  progressUnsubscribe?.();
+  progressUnsubscribe = null;
+  installing.value = false;
+  installError.value = "";
+  installProgress.value = null;
+  completedUpdate.value = null;
   checking.value = false;
   opening.value = false;
   result.value = null;

@@ -124,6 +124,10 @@ jobs:
         timeout-minutes: 10
         run: ./scripts/test-windows-silent-install.ps1
 
+      - name: Verify installer stops when graceful exit times out
+        shell: pwsh
+        run: ./scripts/test-installer-exit-timeout.ps1 -MakensisPath "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
+
       - name: Test installer graceful exit while the app is running
         shell: pwsh
         timeout-minutes: 12

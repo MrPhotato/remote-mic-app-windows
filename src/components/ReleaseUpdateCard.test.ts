@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReleaseUpdateCard from "./ReleaseUpdateCard.vue";
 import { checkGithubRelease, openGithubRelease, type GithubReleaseCheck } from "../lib/github-release";
 import { resetReleaseCheckForTests, useReleaseCheck } from "../lib/release-check-state";
+import { installAppUpdate, subscribeAppUpdateProgress, type AppUpdateProgress } from "../lib/bridge";
 
 vi.mock("../lib/github-release", () => ({ checkGithubRelease: vi.fn(), openGithubRelease: vi.fn() }));
 vi.mock("../lib/frontend-diagnostics", () => ({ reportFrontendEvent: vi.fn() }));
+vi.mock("../lib/bridge", () => ({ installAppUpdate: vi.fn(), subscribeAppUpdateProgress: vi.fn() }));
 
 const available: GithubReleaseCheck = {
   currentVersion: "0.3.5", status: "available", version: "0.3.6", prerelease: true,
@@ -19,6 +21,7 @@ describe("Release 更新卡片", () => {
     vi.resetAllMocks();
     localStorage.clear();
     resetReleaseCheckForTests();
+    vi.mocked(subscribeAppUpdateProgress).mockResolvedValue(() => {});
   });
 
   it("检查期间切页回来复用请求，完成后再次进来也保留结果", async () => {
@@ -67,9 +70,10 @@ describe("Release 更新卡片", () => {
     expect(wrapper.get("pre").text()).toBe(available.notes);
     expect(wrapper.find("script").exists()).toBe(false);
     expect(openGithubRelease).not.toHaveBeenCalled();
-    await wrapper.get(".primary-button").trigger("click");
+    expect(wrapper.get(".primary-button").text()).toBe("更新并重启");
+    expect(installAppUpdate).not.toHaveBeenCalled();
+    await wrapper.get(".release-page-button").trigger("click");
     expect(openGithubRelease).toHaveBeenCalledWith(available.releaseUrl);
-    expect(wrapper.text()).not.toContain("下载并安装");
   });
 
   it.each([
@@ -122,7 +126,7 @@ describe("Release 更新卡片", () => {
     expect(wrapper.get(".checked-time").text()).toBe(time);
     expect(wrapper.get("pre").text()).toBe(available.notes);
     expect(wrapper.get(".primary-button").attributes("disabled")).toBeDefined();
-    await wrapper.get(".primary-button").trigger("click");
+    await wrapper.get(".release-page-button").trigger("click");
     expect(openGithubRelease).not.toHaveBeenCalled();
     finish({ ...available, status: "up_to_date" });
     await flushPromises();
@@ -135,10 +139,10 @@ describe("Release 更新卡片", () => {
     const wrapper = mount(ReleaseUpdateCard);
     await wrapper.get("button").trigger("click");
     await flushPromises();
-    await wrapper.get(".primary-button").trigger("click");
+    await wrapper.get(".release-page-button").trigger("click");
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain("无法打开发布页");
-    await wrapper.get(".primary-button").trigger("click");
+    await wrapper.get(".release-page-button").trigger("click");
     await flushPromises();
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     expect(openGithubRelease).toHaveBeenCalledTimes(2);
@@ -164,5 +168,70 @@ describe("Release 更新卡片", () => {
     expect(wrapper.text()).toContain("上次检查时已是最新版本");
     expect(wrapper.text()).not.toContain("当前已是最新版本");
     expect(checkGithubRelease).toHaveBeenCalledOnce();
+  });
+
+  it("点击更新后在原按钮显示进度，切页不丢失，也不把下载完成说成安装完成", async () => {
+    let progress!: (value: AppUpdateProgress) => void;
+    let finish!: () => void;
+    vi.mocked(checkGithubRelease).mockResolvedValue(available);
+    vi.mocked(subscribeAppUpdateProgress).mockImplementation(async (handler) => { progress = handler; return () => {}; });
+    vi.mocked(installAppUpdate).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const first = mount(ReleaseUpdateCard);
+    await first.get(".secondary-button").trigger("click");
+    await flushPromises();
+    await first.get(".primary-button").trigger("click");
+    await flushPromises();
+    expect(first.get(".primary-button").text()).toBe("正在准备…");
+    progress({ phase: "downloading", downloaded: 1048576, contentLength: 4194304, finished: false });
+    await flushPromises();
+    expect(first.get(".primary-button").text()).toBe("正在下载 25%");
+    expect(first.get('[role="status"]').text()).toContain("1.0 / 4.0 MB");
+    first.unmount();
+    const second = mount(ReleaseUpdateCard);
+    expect(second.get(".primary-button").text()).toBe("正在下载 25%");
+    expect(second.get(".secondary-button").attributes("disabled")).toBeDefined();
+    expect(second.get(".release-page-button").attributes("disabled")).toBeDefined();
+    progress({ phase: "verifying", downloaded: 4194304, contentLength: 4194304, finished: true });
+    await flushPromises();
+    expect(second.get(".primary-button").text()).toBe("正在校验…");
+    expect(second.text()).not.toContain("安装完成");
+    finish();
+    await flushPromises();
+    expect(second.get(".primary-button").text()).toBe("正在安装…");
+    expect(second.get('[role="status"]').text()).toBe("正在安装，即将重新打开无线麦…");
+    expect(installAppUpdate).toHaveBeenCalledExactlyOnceWith("0.3.6");
+  });
+
+  it("更新失败保留说明、发布页和重试按钮，重试立即清除错误", async () => {
+    vi.mocked(checkGithubRelease).mockResolvedValue(available);
+    vi.mocked(installAppUpdate).mockRejectedValueOnce(new Error("下载失败，请稍后重试。"));
+    const wrapper = mount(ReleaseUpdateCard);
+    await wrapper.get(".secondary-button").trigger("click");
+    await flushPromises();
+    await wrapper.get(".primary-button").trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[role="alert"]').text()).toBe("下载失败，请稍后重试。");
+    expect(wrapper.get(".primary-button").text()).toBe("重试更新");
+    expect(wrapper.get(".primary-button").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get(".release-page-button").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get("pre").text()).toBe(available.notes);
+    await wrapper.get(".primary-button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(installAppUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("升级后的摘要保持纯文本，可关闭；不会自动展开弹窗或触发安装", async () => {
+    localStorage.setItem("sayall.pending-update.v1", JSON.stringify({ fromVersion: "0.3.5", version: "0.3.6", notes: available.notes }));
+    vi.mocked(checkGithubRelease).mockResolvedValue({ ...available, currentVersion: "0.3.6", status: "up_to_date" });
+    await useReleaseCheck().checkAtStartup("0.3.6");
+    const wrapper = mount(ReleaseUpdateCard);
+    expect(wrapper.text()).toContain("已更新至 0.3.6");
+    expect(wrapper.get(".completed-update pre").text()).toBe(available.notes);
+    expect(wrapper.find("script").exists()).toBe(false);
+    expect(wrapper.find("dialog").exists()).toBe(false);
+    expect(installAppUpdate).not.toHaveBeenCalled();
+    await wrapper.get(".completed-update button").trigger("click");
+    expect(wrapper.find(".completed-update").exists()).toBe(false);
   });
 });

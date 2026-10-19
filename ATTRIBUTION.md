@@ -287,6 +287,8 @@
 
 ## 应用内更新（tauri-plugin-updater + GitHub Releases）调研来源（2026-09-05）
 
+2026-10-19 一键升级复核：[Tauri 官方 updater 文档](https://v2.tauri.app/plugin/updater/) 及本机锁定的 `tauri-plugin-updater 2.11.0`、Tauri NSIS 模板。复用 `download()` 的固定公钥验签和 `install()` 的 `/P /UPDATE /R`，不复制签名算法。签名通过后先执行本项目完整收尾，严格核实麦克风恢复与平台关闭；安装器只负责在同目录更新并启动一次。NSIS `/D=` 最后传入原安装目录，退出等待超时主动中止。运行时端点仅取用户点击的本仓库已发布版本，不使用环境变量覆盖或上游仓库通道；测试与真机边界见 [一键升级验证](Testing/WindowsOneClickUpdate.md)。
+
 场景：Windows 应用内"检查更新 + 下载安装"（GitHub-only、零自建服务器）。关键行为均以插件源码/官方文档原文核对，非推测：
 
 - **官方 updater 插件文档**（`v2.tauri.app/plugin/updater/`，免费开源，MIT/Apache-2.0）：静态 JSON 端点模式官方示例即 `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`（GitHub 302 到最新**稳定** Release 的资产，草稿/prerelease 不参与 latest）；`latest.json` 必需字段 `version`/`platforms.<target>.url`/`platforms.<target>.signature`，`signature` 为 `.sig` 文件**内容**（非路径）；签名强制不可关闭，私钥丢失即无法再向存量用户推送更新。

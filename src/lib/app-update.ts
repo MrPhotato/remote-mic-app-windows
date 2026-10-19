@@ -30,7 +30,7 @@ export type AppUpdatePhase =
 const phase = ref<AppUpdatePhase>("idle");
 const info = ref<AppUpdateInfo | null>(null);
 const errorMessage = ref("");
-const progress = ref<AppUpdateProgress>({ downloaded: 0, contentLength: null, finished: false });
+const progress = ref<AppUpdateProgress>({ phase: "preparing", downloaded: 0, contentLength: null, finished: false });
 const bannerDismissed = ref(false);
 const includePrereleases = ref(false);
 const preferenceBusy = ref(false);
@@ -72,12 +72,12 @@ async function check(manual: boolean): Promise<void> {
 }
 
 async function install(): Promise<void> {
-  if (phase.value !== "available") {
+  if (phase.value !== "available" || !info.value?.version) {
     return;
   }
   phase.value = "downloading";
   errorMessage.value = "";
-  progress.value = { downloaded: 0, contentLength: null, finished: false };
+  progress.value = { phase: "preparing", downloaded: 0, contentLength: null, finished: false };
   try {
     if (!progressUnsubscribe) {
       progressUnsubscribe = await subscribeAppUpdateProgress((event) => {
@@ -87,7 +87,7 @@ async function install(): Promise<void> {
         }
       });
     }
-    await installAppUpdate();
+    await installAppUpdate(info.value.version);
     // Windows 上安装成功时进程在 Rust 侧退出，不会走到这里；
     // 走到这里说明安装器启动失败或行为变化。
     phase.value = "installing";
@@ -152,7 +152,7 @@ export function resetAppUpdateForTests(): void {
   phase.value = "idle";
   info.value = null;
   errorMessage.value = "";
-  progress.value = { downloaded: 0, contentLength: null, finished: false };
+  progress.value = { phase: "preparing", downloaded: 0, contentLength: null, finished: false };
   bannerDismissed.value = false;
   includePrereleases.value = false;
   preferenceBusy.value = false;

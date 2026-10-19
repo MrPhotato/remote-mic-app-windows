@@ -313,6 +313,7 @@ export async function setLaunchAtLogin(enabled: boolean): Promise<boolean> {
 }
 
 export interface AppUpdateProgress {
+  phase: "preparing" | "downloading" | "verifying" | "installing";
   downloaded: number;
   contentLength: number | null;
   finished: boolean;
@@ -824,11 +825,11 @@ export async function reportThemeResult(report: ThemeResultReport): Promise<void
 }
 
 /** 下载并安装已检查到的更新（Windows 上安装成功时应用会退出并由安装器重启）。 */
-export async function installAppUpdate(): Promise<void> {
+export async function installAppUpdate(expectedVersion: string): Promise<void> {
   if (!isTauriRuntime()) {
     throw new Error("当前是浏览器预览，无法安装更新");
   }
-  await invoke("install_app_update");
+  await invoke("install_app_update", { expectedVersion });
 }
 
 /** 订阅更新下载进度；浏览器预览下为空订阅。 */

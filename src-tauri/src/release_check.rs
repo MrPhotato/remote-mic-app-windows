@@ -1,5 +1,4 @@
-//! Explicit, read-only checks against this product's public GitHub Releases.
-//! This does not enable the legacy updater or download/install any asset.
+//! Trusted release selection shared by read-only checks and explicit upgrades.
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -80,6 +79,9 @@ enum CheckError {
     UntrustedInstaller,
     UnpublishedRelease,
     ConflictingVersions,
+    SelectionChanged,
+    ManifestIncomplete,
+    UntrustedManifest,
 }
 
 impl CheckError {
@@ -100,6 +102,9 @@ impl CheckError {
             Self::UntrustedInstaller => "installer_url_invalid",
             Self::UnpublishedRelease => "publication_missing",
             Self::ConflictingVersions => "version_conflict",
+            Self::SelectionChanged => "selection_changed",
+            Self::ManifestIncomplete => "manifest_incomplete",
+            Self::UntrustedManifest => "manifest_url_invalid",
         }
     }
 
@@ -122,7 +127,102 @@ impl CheckError {
             Self::PageLimit => "发布记录过多，暂时无法确认最新版本",
             Self::CurrentVersion => "无法识别当前应用版本",
             Self::Client => "暂时无法建立安全连接，请稍后重试",
+            Self::SelectionChanged => "可用版本已变化，请重新检查更新后再试",
+            Self::ManifestIncomplete => "这个版本的更新文件尚未准备好，请稍后重试",
             _ => "GitHub 发布信息校验未通过，暂时无法确认最新版本",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct InstallRelease {
+    pub version: String,
+    pub manifest_url: reqwest::Url,
+    pub installer_url: reqwest::Url,
+    pub installer_size: u64,
+}
+
+fn select_install_release(
+    current: &str,
+    expected: &str,
+    releases: &[Release],
+) -> Result<InstallRelease, CheckError> {
+    let info = select_release(current, releases)?;
+    // A cached UI selection must never install a different version, even when a
+    // newer release appears while the application is running.
+    if info.status != ReleaseStatus::Available || info.version.as_deref() != Some(expected) {
+        return Err(CheckError::SelectionChanged);
+    }
+    let release = releases
+        .iter()
+        .find(|release| !release.draft && Some(&release.html_url) == info.release_url.as_ref())
+        .ok_or(CheckError::SelectionChanged)?;
+    let manifest_name = "latest.json";
+    let manifests: Vec<_> = release
+        .assets
+        .iter()
+        .filter(|asset| asset.name == manifest_name)
+        .collect();
+    if manifests.len() != 1
+        || manifests[0].state != "uploaded"
+        || manifests[0].size == 0
+        || manifests[0].size > 256 * 1024
+    {
+        return Err(CheckError::ManifestIncomplete);
+    }
+    let manifest_url = format!(
+        "{REPOSITORY_URL}/releases/download/{}/{manifest_name}",
+        release.tag_name
+    );
+    if manifests[0].browser_download_url != manifest_url {
+        return Err(CheckError::UntrustedManifest);
+    }
+    let installer_name = format!("SayAll-Windows-{expected}-x64-setup.exe");
+    let installer = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == installer_name)
+        .ok_or(CheckError::InstallerIncomplete)?;
+    if installer.size > 512 * 1024 * 1024 {
+        return Err(CheckError::InstallerIncomplete);
+    }
+    Ok(InstallRelease {
+        version: expected.to_owned(),
+        manifest_url: manifest_url
+            .parse()
+            .map_err(|_| CheckError::UntrustedManifest)?,
+        installer_url: installer
+            .browser_download_url
+            .parse()
+            .map_err(|_| CheckError::UntrustedInstaller)?,
+        installer_size: installer.size,
+    })
+}
+
+pub(crate) async fn resolve_install_release(
+    current: &str,
+    expected: &str,
+) -> Result<InstallRelease, String> {
+    let operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed);
+    let started = Instant::now();
+    note(
+        operation_id,
+        "phase=started source=explicit_install repository=product_public".to_owned(),
+    );
+    let result = async {
+        Version::parse(current).map_err(|_| CheckError::CurrentVersion)?;
+        let releases = fetch_releases(operation_id).await?;
+        select_install_release(current, expected, &releases)
+    }
+    .await;
+    match result {
+        Ok(release) => {
+            note(operation_id, format!("phase=completed source=explicit_install terminal_result=passed version={} took_ms={}", release.version, started.elapsed().as_millis()));
+            Ok(release)
+        }
+        Err(error) => {
+            note(operation_id, format!("phase=completed source=explicit_install terminal_result=failed error_domain=release_check error_code={} retryable={} took_ms={}", error.code(), error.retryable(), started.elapsed().as_millis()));
+            Err(error.message().to_owned())
         }
     }
 }
@@ -442,6 +542,79 @@ mod tests {
                 size: 42,
             }],
         }
+    }
+
+    fn installable_release(version: &str) -> Release {
+        let mut value = release(version);
+        value.assets.push(Asset {
+            name: "latest.json".to_owned(),
+            browser_download_url: format!(
+                "{REPOSITORY_URL}/releases/download/v{version}/latest.json"
+            ),
+            state: "uploaded".to_owned(),
+            size: 1024,
+        });
+        value
+    }
+
+    #[test]
+    fn install_selection_is_locked_to_clicked_newer_version() {
+        let result =
+            select_install_release("0.3.10", "0.3.11", &[installable_release("0.3.11")]).unwrap();
+        assert_eq!(result.version, "0.3.11");
+        assert!(result.manifest_url.path().ends_with("/v0.3.11/latest.json"));
+        for (current, expected, remote) in [
+            ("0.3.10", "0.3.11", "0.3.12"),
+            ("0.3.11", "0.3.11", "0.3.11"),
+            ("0.3.12", "0.3.11", "0.3.11"),
+        ] {
+            assert_eq!(
+                select_install_release(current, expected, &[installable_release(remote)])
+                    .unwrap_err(),
+                CheckError::SelectionChanged
+            );
+        }
+    }
+
+    #[test]
+    fn install_rejects_missing_duplicate_unpublished_or_foreign_manifests() {
+        assert_eq!(
+            select_install_release("0.3.10", "0.3.11", &[release("0.3.11")]).unwrap_err(),
+            CheckError::ManifestIncomplete
+        );
+        for case in 0..5 {
+            let mut value = installable_release("0.3.11");
+            match case {
+                0 => value.assets[1].size = 0,
+                1 => value.assets[1].size = 256 * 1024 + 1,
+                2 => value.assets[1].state = "new".to_owned(),
+                3 => value
+                    .assets
+                    .push(installable_release("0.3.11").assets.remove(1)),
+                _ => {
+                    value.assets[1].browser_download_url =
+                        "https://example.com/latest.json".to_owned()
+                }
+            }
+            assert_eq!(
+                select_install_release("0.3.10", "0.3.11", &[value]).unwrap_err(),
+                if case == 4 {
+                    CheckError::UntrustedManifest
+                } else {
+                    CheckError::ManifestIncomplete
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn install_rejects_excessively_large_installer_before_download() {
+        let mut value = installable_release("0.3.11");
+        value.assets[0].size = 512 * 1024 * 1024 + 1;
+        assert_eq!(
+            select_install_release("0.3.10", "0.3.11", &[value]).unwrap_err(),
+            CheckError::InstallerIncomplete
+        );
     }
 
     #[test]

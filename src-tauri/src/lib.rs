@@ -41,9 +41,6 @@ struct AppState {
     platform: Arc<dyn PlatformRuntime>,
     settings: SettingsStore,
     microphone: Arc<microphone::MicrophoneController>,
-    /// check_app_update 暂存的待安装更新（install_app_update 取走）。
-    /// tauri_plugin_updater::Update 未实现 Debug，用手写 impl 只呈现存在性。
-    pending_update: std::sync::Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -52,19 +49,6 @@ impl std::fmt::Debug for AppState {
             .debug_struct("AppState")
             .field("platform", &self.platform)
             .field("settings", &self.settings)
-            .field(
-                "pending_update",
-                &if self
-                    .pending_update
-                    .lock()
-                    .map(|u| u.is_some())
-                    .unwrap_or(false)
-                {
-                    "Some"
-                } else {
-                    "None"
-                },
-            )
             .finish()
     }
 }
@@ -1057,10 +1041,12 @@ fn runtime_simulation_requested() -> bool {
 const GRACEFUL_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const EXIT_CLEANUP_WAIT: std::time::Duration = std::time::Duration::from_secs(18);
 static EXIT_CLEANUP: exit_cleanup::ExitCleanup = exit_cleanup::ExitCleanup::new();
+static EXIT_CLEANUP_SUCCEEDED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// 退出前收尾：关闭 BLE 会话并**等待其完成**（`ble_session_cleanup` 落盘）。
 ///
-/// 托盘退出和安装器请求统一经过此处；旧自动安装更新器当前禁用。
+/// 托盘退出、安装器请求和用户点选升级统一经过此处。
 ///
 /// 为什么必须显式做：Tauri v2 的 `App::run()` 收尾是 `std::process::exit`
 /// （`tauri/src/app.rs` 文档原文），而它**不执行 Rust 析构**——`BleRuntime::drop`
@@ -1079,7 +1065,9 @@ fn shutdown_platform_for_exit(app: &tauri::AppHandle) -> bool {
         {
             sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=failed error_domain=settings error_code=write_failed reason=exit_sync retryable=true".to_owned());
         }
-        match platform.shutdown_for_exit(GRACEFUL_EXIT_TIMEOUT) {
+        let platform_result = platform.shutdown_for_exit(GRACEFUL_EXIT_TIMEOUT);
+        let platform_cleaned = platform_result.is_ok();
+        match platform_result {
             Ok(()) => sayall_windows::gatt_note(format!(
                 "app_exit platform_shutdown phase=completed terminal_result=passed reason=session_cleanup_acked elapsed_ms={}",
                 started.elapsed().as_millis()
@@ -1091,10 +1079,19 @@ fn shutdown_platform_for_exit(app: &tauri::AppHandle) -> bool {
         }
         // Restore even when BLE cleanup failed. The runtime retains an unfinished
         // restoration journal on failure; do not imply successful restoration.
-        if state.microphone.restore().is_err() {
+        let microphone_restored = state.microphone.restore().is_ok();
+        if !microphone_restored {
             sayall_windows::gatt_note("app_exit microphone_restore phase=completed terminal_result=failed reason=restore_unconfirmed journal_retained=true".to_owned());
         }
+        EXIT_CLEANUP_SUCCEEDED.store(platform_cleaned && microphone_restored, std::sync::atomic::Ordering::Release);
     })
+}
+
+/// An explicit upgrade may proceed only after successful cleanup. Ordinary exit
+/// still retains its bounded best-effort semantics and recovery journal.
+fn shutdown_platform_for_update(app: &tauri::AppHandle) -> bool {
+    shutdown_platform_for_exit(app)
+        && EXIT_CLEANUP_SUCCEEDED.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// 监听安装器发出的"请优雅退出"信号（2026-09-16）。
@@ -1414,7 +1411,6 @@ pub fn run() {
                 platform,
                 settings,
                 microphone,
-                pending_update: std::sync::Mutex::new(None),
             });
             // 安装/升级前的优雅退出监听（2026-09-16）：安装器会先请求退出、
             // 再考虑强杀（详见函数注释）。
