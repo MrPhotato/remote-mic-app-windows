@@ -2,6 +2,12 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 运行窗口任务栏图标（2026-10-19）
+
+- 核对锁定的 Tauri 2.11.5 / tauri-runtime-wry 2.11.4 / Tao 0.35.3：默认窗口图标经 `set_window_icon` 设置 `ICON_SMALL`，独立 `taskbar_icon` 默认空。0.3.11 本机窗口的 `ICON_BIG` 和类大图标均为空，已有小图标有效；不将安装资源正确视为任务栏显示通过。
+- 依据 Microsoft [WM_SETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-seticon)、[WM_GETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-geticon) 和 [LoadImageW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-loadimagew)，在主窗口所属线程为该窗口补齐大图标。资源来自当前 exe 的 Tauri 内嵌图标 32512，使用系统默认尺寸共享句柄；不销毁共享句柄或所有权未知的旧句柄，不从空模块回退加载系统默认图标。
+- 实现自行编写，不复制第三方模块；仅修改本进程同线程窗口的大图标，不修改应用分组标识、固定快捷方式或系统缓存。安装版可见结果另行验证，见 [任务栏图标记录](Bugs/2026-10-19-taskbar-window-icon.md)。
+
 ## README 展示资源（2026-10-19）
 
 - `docs/assets/readme-hero.svg` 与 `voice-flow.svg` 为本项目原创矢量图，沿用新应用图标的银灰遥控器及靛紫、薄荷绿配色，按 GPL-3.0-only 提供；未复制第三方插画、模板或代码。截图来自本机已安装的 0.3.11 应用，展示更新及外观设置，无设备身份或个人路径。
