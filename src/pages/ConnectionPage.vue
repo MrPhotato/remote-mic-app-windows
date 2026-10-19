@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import BatteryIndicator from "../components/BatteryIndicator.vue";
 import { reportFrontendEvent } from "../lib/frontend-diagnostics";
 import type {
@@ -67,6 +67,8 @@ const scanningAudio = ref(false);
 const audioScanComplete = ref(false);
 const audioInventoryStale = ref(false);
 const selectingMicrophoneId = ref("");
+const selectedMicrophoneRow = ref<HTMLElement | null>(null);
+let microphoneSelectionAnimation: Animation | null = null;
 const microphoneSelection = ref<MicrophoneSelectionSnapshot>({
   targetMicrophoneId: null, targetMicrophoneName: null,
   currentMicrophoneId: null, currentMicrophoneName: null,
@@ -431,8 +433,56 @@ async function scanAudio() {
   await Promise.all([refreshMicrophoneSelection(), refreshAudio(), detectAudioEndpoints()]);
 }
 
+function microphoneButtonLabel(microphone: MicrophoneEndpoint, target = false): string {
+  if (selectingMicrophoneId.value === microphone.id) return "正在保存…";
+  if (target && microphoneSelection.value.phase === "external") return "重新应用";
+  if (activeMicrophoneId.value === microphone.id) return "使用中";
+  if (target && microphoneWaitingConnection.value) return "已选择";
+  return target ? "使用这个麦克风" : "选择";
+}
+
+async function showMicrophoneSelectionFeedback() {
+  await nextTick();
+  if (disposed || !selectedMicrophoneRow.value) return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    reportFrontendEvent({ event: "microphone_selection_feedback", phase: "completed", result: "passed", reason: "reduced_motion" });
+    return;
+  }
+  const row = selectedMicrophoneRow.value;
+  if (typeof row.animate !== "function") return;
+  const style = getComputedStyle(row);
+  const duration = style.getPropertyValue("--motion-slide").trim();
+  try {
+    const animation = row.animate([
+      { transform: "translateY(4px) scale(0.985)" },
+      { transform: "translateY(0) scale(1)" },
+    ], {
+      duration: (parseFloat(duration) || 320) * (duration.endsWith("ms") || !duration ? 1 : 1000),
+      easing: style.getPropertyValue("--ease-out-quint").trim() || "cubic-bezier(0.22, 1, 0.36, 1)",
+    });
+    microphoneSelectionAnimation = animation;
+    reportFrontendEvent({ event: "microphone_selection_feedback", phase: "requested", result: "unknown", reason: "selection_confirmed" });
+    void animation.finished.then(() => {
+      if (microphoneSelectionAnimation !== animation) return;
+      microphoneSelectionAnimation = null;
+      reportFrontendEvent({ event: "microphone_selection_feedback", phase: "completed", result: "passed", reason: "settled" });
+    }, () => {
+      if (microphoneSelectionAnimation === animation) microphoneSelectionAnimation = null;
+      reportFrontendEvent({ event: "microphone_selection_feedback", phase: "completed", result: "unknown", reason: "cancelled" });
+    });
+  } catch {
+    reportFrontendEvent({ event: "microphone_selection_feedback", phase: "completed", result: "failed", reason: "animation_unavailable" });
+  }
+}
+
+function cancelMicrophoneSelectionFeedback() {
+  microphoneSelectionAnimation?.cancel();
+  microphoneSelectionAnimation = null;
+}
+
 async function chooseMicrophone(microphone: MicrophoneEndpoint) {
   if (selectionDisabled.value || !microphones.value.some((item) => item.id === microphone.id)) return;
+  cancelMicrophoneSelectionFeedback();
   selectingMicrophoneId.value = microphone.id;
   selectionRevision += 1;
   pendingSelectionId.value = microphone.id;
@@ -448,7 +498,10 @@ async function chooseMicrophone(microphone: MicrophoneEndpoint) {
     microphoneSelectionReadError.value = "";
     const savedWaiting = snapshot.phase === "waiting_connection" && snapshot.targetMicrophoneId === microphone.id;
     const confirmed = savedWaiting || (snapshot.phase === "ready" && snapshot.targetMicrophoneId === microphone.id && snapshot.currentMicrophoneId === microphone.id);
-    if (confirmed) pendingSelectionId.value = "";
+    if (confirmed) {
+      pendingSelectionId.value = "";
+      void showMicrophoneSelectionFeedback();
+    }
     else audioOperationError.value = snapshot.lastError ?? "microphone_selection_unconfirmed";
     await Promise.all([refreshAudio(), detectAudioEndpoints()]);
     reportFrontendEvent({ event: "microphone_selection", phase: "completed", result: confirmed ? "passed" : "failed", reason: savedWaiting ? "target_saved_waiting_connection" : confirmed ? reason : "selection_unconfirmed", elapsedMs: Math.round(performance.now() - started) });
@@ -499,6 +552,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   disposed = true;
+  cancelMicrophoneSelectionFeedback();
   pendingInventoryRefresh = false;
   if (pollTimer) clearInterval(pollTimer);
 });
@@ -643,19 +697,16 @@ onUnmounted(() => {
             <strong>目标麦克风</strong>
             <span class="microphone-status muted">{{ audioStatus }}</span>
           </div>
-          <div class="selected-microphone-row" :class="{ 'microphone-active': activeMicrophoneLocation === 'target' }">
-            <div class="microphone-identity">
-              <strong class="microphone-name">{{ microphoneName }}</strong>
-              <span v-if="activeMicrophoneLocation === 'target'" class="badge success microphone-active-badge" title="当前系统默认麦克风"><span aria-hidden="true">✓</span> 当前生效</span>
-            </div>
+          <div ref="selectedMicrophoneRow" class="selected-microphone-row" :class="{ 'microphone-active': activeMicrophoneLocation === 'target' }">
+            <strong class="microphone-name">{{ microphoneName }}</strong>
             <button
-              v-if="selectedMicrophone && !audioSettingsUnsaved && !audioVisibleError && !defaultMatchesTarget && !microphoneWaitingConnection"
+              v-if="selectedMicrophone"
               class="secondary-button"
               type="button"
-              :disabled="selectionDisabled"
+              :disabled="selectionDisabled || audioSettingsUnsaved || Boolean(audioVisibleError) || defaultMatchesTarget || microphoneWaitingConnection"
               @click="chooseMicrophone(selectedMicrophone)"
             >
-              {{ selectingMicrophoneId ? "正在保存…" : "使用这个麦克风" }}
+              {{ microphoneButtonLabel(selectedMicrophone, true) }}
             </button>
           </div>
           <p class="muted microphone-target-hint">连接遥控器后自动切换到所选麦克风，断开后恢复原设置。目标应用选择“系统默认麦克风”即可跟随切换。</p>
@@ -671,18 +722,16 @@ onUnmounted(() => {
           <ul v-if="otherMicrophones.length" id="audio-endpoint-list" class="device-list endpoint-list">
             <li v-for="microphone in otherMicrophones" :key="microphone.id" :class="{ 'microphone-active': microphone.id === activeMicrophoneId }">
               <div>
-                <div class="microphone-identity">
-                  <strong>{{ microphone.name }}</strong>
-                  <span v-if="microphone.id === activeMicrophoneId" class="badge success microphone-active-badge" title="当前系统默认麦克风"><span aria-hidden="true">✓</span> 当前生效</span>
-                </div>
+                <strong>{{ microphone.name }}</strong>
                 <small>{{ microphoneDetail(microphone) }}</small>
               </div>
               <button
                 type="button"
                 :disabled="selectionDisabled"
+                :title="microphone.id === activeMicrophoneId ? '当前系统默认麦克风，点击设为目标' : undefined"
                 @click="chooseMicrophone(microphone)"
               >
-                {{ selectingMicrophoneId === microphone.id ? "正在保存…" : "选择" }}
+                {{ microphoneButtonLabel(microphone) }}
               </button>
             </li>
           </ul>
@@ -761,19 +810,6 @@ onUnmounted(() => {
   max-width: 100%;
 }
 
-.microphone-identity {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.microphone-active-badge {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
 .selected-microphone-row button,
 .endpoint-list button {
   flex-shrink: 0;
@@ -806,6 +842,21 @@ onUnmounted(() => {
   padding: 12px 16px;
   border: 1px solid var(--border);
   border-radius: 14px;
+}
+
+.selected-microphone-row,
+.endpoint-list li {
+  transition: background-color var(--motion-state) var(--ease-out-quart), border-color var(--motion-state) var(--ease-out-quart);
+}
+
+.microphone-active button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selected-microphone-row,
+  .endpoint-list li { transition: none; }
 }
 
 .selected-microphone-row.microphone-active,

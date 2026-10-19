@@ -182,6 +182,8 @@ describe("Connection and voice settings", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -194,6 +196,105 @@ describe("Connection and voice settings", () => {
   function microphoneButton(wrapper: ReturnType<typeof mount>, name: string) {
     return wrapper.findAll(".endpoint-list li").find((row) => row.text().includes(name))!.get("button");
   }
+
+  function observeSelectionAnimation(wrapper: ReturnType<typeof mount>) {
+    const row = wrapper.get(".selected-microphone-row").element as HTMLElement;
+    const animations: { cancel: ReturnType<typeof vi.fn>; finish: () => void }[] = [];
+    const animate = vi.fn(() => {
+      let finish!: () => void;
+      let reject!: (reason: Error) => void;
+      const finished = new Promise<void>((resolve, rejectPromise) => { finish = resolve; reject = rejectPromise; });
+      const cancel = vi.fn(() => reject(new Error("cancelled")));
+      animations.push({ cancel, finish });
+      return { finished, cancel };
+    });
+    Object.defineProperty(row, "animate", { configurable: true, value: animate });
+    return { animate, animations };
+  }
+
+  it("only acknowledges a confirmed choice, cancels superseded feedback and cleans up on unmount", async () => {
+    vi.useFakeTimers();
+    prepareCable();
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    const feedback = observeSelectionAnimation(wrapper);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(feedback.animate).not.toHaveBeenCalled();
+    let resolveSelection!: (snapshot: MicrophoneSelectionSnapshot) => void;
+    mocks.selectMicrophone.mockImplementationOnce(() => new Promise(resolve => { resolveSelection = resolve; }));
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    expect(feedback.animate).not.toHaveBeenCalled();
+    mocks.selection = selected(physicalMicrophone);
+    resolveSelection(mocks.selection);
+    await flushPromises();
+    expect(feedback.animate).toHaveBeenCalledTimes(1);
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用中");
+    await microphoneButton(wrapper, cableMicrophone.name).trigger("click");
+    await flushPromises();
+    expect(feedback.animations[0].cancel).toHaveBeenCalledOnce();
+    expect(feedback.animate).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+    expect(feedback.animations[1].cancel).toHaveBeenCalledOnce();
+    await flushPromises();
+  });
+
+  it("acknowledges an offline save without claiming it is the active microphone", async () => {
+    prepareCable();
+    mocks.selection = waitingForConnection(physicalMicrophone, physicalMicrophone);
+    mocks.selectMicrophone.mockImplementationOnce(async () => {
+      mocks.selection = waitingForConnection(cableMicrophone, physicalMicrophone);
+      return { ...mocks.selection };
+    });
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    const feedback = observeSelectionAnimation(wrapper);
+    await microphoneButton(wrapper, cableMicrophone.name).trigger("click");
+    await flushPromises();
+    expect(feedback.animate).toHaveBeenCalledOnce();
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("已选择");
+    expect(wrapper.get(".endpoint-list .microphone-active button").text()).toBe("使用中");
+    feedback.animations[0].finish();
+    await flushPromises();
+    expect(mocks.reportFrontendEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "microphone_selection_feedback", result: "passed", reason: "settled" }));
+    wrapper.unmount();
+    expect(feedback.animations[0].cancel).not.toHaveBeenCalled();
+  });
+
+  it("does not animate rejected, unconfirmed or late-after-unmount choices", async () => {
+    prepareCable();
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    const feedback = observeSelectionAnimation(wrapper);
+    mocks.selectMicrophone.mockRejectedValueOnce(new Error("microphone_settings_save_failed"));
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    await flushPromises();
+    mocks.selectMicrophone.mockResolvedValueOnce({ ...selected(cableMicrophone), phase: "failed" });
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    await flushPromises();
+    let resolveSelection!: (snapshot: MicrophoneSelectionSnapshot) => void;
+    mocks.selectMicrophone.mockImplementationOnce(() => new Promise(resolve => { resolveSelection = resolve; }));
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    wrapper.unmount();
+    resolveSelection(selected(physicalMicrophone));
+    await flushPromises();
+    expect(feedback.animate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the active other microphone selectable as a target with reduced motion", async () => {
+    prepareCable();
+    mocks.selection = waitingForConnection(cableMicrophone, physicalMicrophone);
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    const feedback = observeSelectionAnimation(wrapper);
+    await wrapper.get(".endpoint-list .microphone-active button").trigger("click");
+    await flushPromises();
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(physicalMicrophone.id);
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用中");
+    expect(feedback.animate).not.toHaveBeenCalled();
+    expect(mocks.reportFrontendEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "microphone_selection_feedback", result: "passed", reason: "reduced_motion" }));
+    wrapper.unmount();
+  });
 
   it("runs the CI microphone journey against the current page, including both capture choices", async () => {
     prepareCable();
@@ -237,7 +338,9 @@ describe("Connection and voice settings", () => {
     expect(card.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(card.get(".microphone-status").text()).toBe("已就绪");
     expect(card.findAll(".microphone-active")).toHaveLength(1);
-    expect(card.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
+    expect(card.get(".selected-microphone-row button").text()).toBe("使用中");
+    expect(card.get(".selected-microphone-row button").attributes("disabled")).toBeDefined();
+    expect(card.text()).not.toContain("当前生效");
     expect(card.text()).toContain("目标麦克风");
     expect(card.text()).toContain("连接遥控器后自动切换到所选麦克风，断开后恢复原设置");
     expect(card.text()).toContain("退出程序时也会尝试恢复");
@@ -265,10 +368,12 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.get(".microphone-current").text()).toContain(physicalMicrophone.name);
     expect(wrapper.get(".microphone-waiting").text()).toContain("目标已保存");
-    expect(wrapper.find(".selected-microphone-row .microphone-active-badge").exists()).toBe(false);
+    expect(wrapper.get(".selected-microphone-row").classes()).not.toContain("microphone-active");
     expect(wrapper.get(".endpoint-list .microphone-active strong").text()).toBe(physicalMicrophone.name);
     expect(wrapper.get(".microphone-waiting").text()).toContain("当前系统麦克风保持不变");
-    expect(wrapper.find(".selected-microphone-row button").exists()).toBe(false);
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("已选择");
+    expect(wrapper.get(".endpoint-list .microphone-active button").text()).toBe("使用中");
+    expect(wrapper.get(".endpoint-list .microphone-active button").attributes("disabled")).toBeUndefined();
     expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
     expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeUndefined();
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
@@ -311,7 +416,7 @@ describe("Connection and voice settings", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
     expect(wrapper.find(".microphone-waiting").exists()).toBe(false);
-    expect(wrapper.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用中");
     expect(wrapper.find(".endpoint-list .microphone-active").exists()).toBe(false);
     expect(wrapper.find(".microphone-current").exists()).toBe(false);
     expect(wrapper.get(".audio-route-details").text()).toContain("已记住本次连接前的默认麦克风，断开连接或退出时恢复");
@@ -457,8 +562,9 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get(".microphone-status").text()).toBe("系统麦克风已更改");
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.find(".microphone-current").exists()).toBe(false);
-    expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用这个麦克风");
-    expect(wrapper.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("重新应用");
+    expect(wrapper.get(".selected-microphone-row button").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get(".selected-microphone-row").classes()).toContain("microphone-active");
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -479,7 +585,7 @@ describe("Connection and voice settings", () => {
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
     expect(wrapper.get(".microphone-status").text()).toBe("当前麦克风待确认");
-    expect(wrapper.find(".microphone-active-badge").exists()).toBe(false);
+    expect(wrapper.find(".microphone-active").exists()).toBe(false);
     expect(wrapper.find(".microphone-current").exists()).toBe(false);
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();
@@ -512,9 +618,9 @@ describe("Connection and voice settings", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.get(".microphone-status").text()).toBe("状态待确认");
-    expect(wrapper.find(".microphone-active-badge").exists()).toBe(false);
+    expect(wrapper.find(".microphone-active").exists()).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(wrapper.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用中");
     expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();

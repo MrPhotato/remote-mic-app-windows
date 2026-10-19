@@ -4,6 +4,12 @@
 
 ## 当前生效麦克风高亮（2026-10-20）
 
+2026-10-20 用户回验修订：移除勾号徽标，改由行高亮及按钮“使用中”表达。选择确认后复用本仓库
+`--motion-slide` / `--ease-out-quint` 的一次性轻微回落，失败及轮询不触发。
+预先复核既有玻璃动效与 [Vue 状态过渡](https://vuejs.org/guide/built-ins/transition.html)、
+[MDN 减少动态效果](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion)；
+沿用公开 Web Animations API，取消旧动画和卸载清理，不引入动效库或改变选择／音频生命周期。
+
 - 复核本文件已记录的 SoundSwitch 与 EarTrumpet 默认设备来源及默认麦克风会话设计：保存目标与当前系统默认端点是不同状态，显示沿用现有宿主快照，不增加切换、录音或设备访问。
 - 参考 [Microsoft GetDefaultAudioEndpoint](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint) 的方向与角色语义，按当前 Capture / Console 端点标记；不使用可能过期的枚举默认标记，也不宣称代表每个应用独立选择的麦克风。
 - 参考 [W3C Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)，颜色之外同时提供勾号和“当前生效”文字。无法确认当前端点时取消高亮；仅在状态变化记录不含设备身份的展示类别日志。未复制外部实现。
