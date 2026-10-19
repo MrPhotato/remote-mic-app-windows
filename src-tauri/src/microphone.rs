@@ -55,6 +55,98 @@ impl MicrophoneApi for UnavailableMicrophone {
     }
 }
 
+// Only compiled into the explicit CI simulation build. It substitutes the
+// recording-device API while keeping host validation, render selection,
+// persistence, startup and shutdown on their normal paths.
+#[cfg(feature = "runtime-simulation")]
+struct SimulatedMicrophone {
+    state: Mutex<SimulatedMicrophoneState>,
+}
+
+#[cfg(feature = "runtime-simulation")]
+struct SimulatedMicrophoneState {
+    snapshot: MicrophoneSelectionSnapshot,
+    closed: bool,
+}
+
+#[cfg(feature = "runtime-simulation")]
+impl Default for SimulatedMicrophone {
+    fn default() -> Self {
+        let original = crate::platform::SimulatedPlatform::microphone_endpoints()
+            .into_iter()
+            .find(|endpoint| {
+                endpoint.id == crate::platform::SimulatedPlatform::PHYSICAL_MICROPHONE_ID
+            })
+            .expect("simulation original capture exists");
+        Self {
+            state: Mutex::new(SimulatedMicrophoneState {
+                snapshot: MicrophoneSelectionSnapshot {
+                    current_microphone_id: Some(original.id),
+                    current_microphone_name: Some(original.name),
+                    phase: "unconfigured".into(),
+                    ..Default::default()
+                },
+                closed: false,
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "runtime-simulation")]
+impl MicrophoneApi for SimulatedMicrophone {
+    fn select(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.closed {
+            return Err(PlatformError::Audio(
+                "CI simulation microphone is closed".into(),
+            ));
+        }
+        let endpoint = crate::platform::SimulatedPlatform::microphone_endpoints()
+            .into_iter()
+            .find(|endpoint| endpoint.id == id)
+            .ok_or_else(|| PlatformError::Audio("CI simulation capture is unknown".into()))?;
+        state.snapshot = MicrophoneSelectionSnapshot {
+            target_microphone_id: Some(endpoint.id.clone()),
+            target_microphone_name: Some(endpoint.name.clone()),
+            current_microphone_id: Some(endpoint.id),
+            current_microphone_name: Some(endpoint.name),
+            phase: "ready".into(),
+            restore_pending: true,
+            ..Default::default()
+        };
+        Ok(state.snapshot.clone())
+    }
+
+    fn snapshot(&self) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .snapshot
+            .clone())
+    }
+
+    fn restore(&self) -> Result<(), PlatformError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.closed = true;
+        let original = Self::default().snapshot()?;
+        state.snapshot.current_microphone_id = original.current_microphone_id;
+        state.snapshot.current_microphone_name = original.current_microphone_name;
+        if state.snapshot.target_microphone_id.is_some()
+            && state.snapshot.target_microphone_id != state.snapshot.current_microphone_id
+        {
+            state.snapshot.phase = "external".into();
+        }
+        state.snapshot.restore_pending = false;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "runtime-simulation")]
+fn simulation_runtime(requested: bool) -> Option<Arc<dyn MicrophoneApi>> {
+    requested.then(|| Arc::new(SimulatedMicrophone::default()) as Arc<dyn MicrophoneApi>)
+}
+
 trait CaptureRoutes {
     fn microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError>;
     fn audio(&self) -> AudioSnapshot;
@@ -86,6 +178,10 @@ pub struct MicrophoneController {
 
 impl MicrophoneController {
     pub fn new(settings: &SettingsStore, simulation: bool) -> Self {
+        #[cfg(feature = "runtime-simulation")]
+        if let Some(runtime) = simulation_runtime(simulation) {
+            return Self::with_runtime(runtime);
+        }
         let runtime: Arc<dyn MicrophoneApi> = if cfg!(windows) && !simulation {
             match sayall_windows::DefaultMicrophoneRuntime::new(settings.microphone_journal_path())
             {
@@ -513,6 +609,138 @@ mod tests {
         let api = Arc::new(FakeMicrophone::default());
         let controller = MicrophoneController::with_runtime(api.clone());
         (api, controller, store())
+    }
+
+    #[cfg(feature = "runtime-simulation")]
+    #[test]
+    fn simulation_startup_selects_and_persists_the_shared_cable_capture() {
+        use crate::platform::SimulatedPlatform;
+
+        let store = store();
+        let platform = SimulatedPlatform::default();
+        let controller = MicrophoneController::new(&store, true);
+        let before = controller.snapshot().unwrap();
+        assert_eq!(before.phase, "unconfigured");
+        assert_eq!(
+            before.current_microphone_id.as_deref(),
+            Some(SimulatedPlatform::PHYSICAL_MICROPHONE_ID)
+        );
+        controller.apply_startup(&platform, &store);
+        let selected = controller.snapshot().unwrap();
+        assert_eq!(selected.phase, "ready");
+        assert_eq!(
+            selected.target_microphone_id.as_deref(),
+            Some(SimulatedPlatform::CABLE_MICROPHONE_ID)
+        );
+        assert_eq!(
+            selected.current_microphone_id,
+            selected.target_microphone_id
+        );
+        assert!(selected.restore_pending);
+
+        let captures = platform.list_microphones().unwrap();
+        assert_eq!(captures.len(), 2);
+        let cable = captures
+            .iter()
+            .find(|capture| capture.id == SimulatedPlatform::CABLE_MICROPHONE_ID)
+            .unwrap();
+        assert_eq!(
+            selected.target_microphone_name.as_deref(),
+            Some(cable.name.as_str())
+        );
+        let audio = platform.audio_snapshot();
+        assert_eq!(audio.phase, AudioPhase::Ready);
+        assert!(cable
+            .render_endpoint_ids
+            .contains(audio.selected_endpoint_id.as_ref().unwrap()));
+        let saved = store.load().unwrap();
+        assert_eq!(saved.target_microphone_id, selected.target_microphone_id);
+        assert_eq!(
+            saved.target_microphone_name,
+            selected.target_microphone_name
+        );
+        assert_eq!(saved.audio_endpoint_id, audio.selected_endpoint_id);
+        assert!(!store.microphone_journal_path().exists());
+    }
+
+    #[cfg(feature = "runtime-simulation")]
+    #[test]
+    fn simulation_selects_physical_then_cable_and_restores_original_on_exit() {
+        use crate::platform::SimulatedPlatform;
+
+        let store = store();
+        let platform = SimulatedPlatform::default();
+        let controller = MicrophoneController::new(&store, true);
+        let original = controller.snapshot().unwrap();
+        controller.apply_startup(&platform, &store);
+        let render = platform.audio_snapshot();
+
+        for id in [
+            SimulatedPlatform::PHYSICAL_MICROPHONE_ID,
+            SimulatedPlatform::CABLE_MICROPHONE_ID,
+        ] {
+            let selected = controller.select(id.into(), &platform, &store).unwrap();
+            assert_eq!(selected.phase, "ready");
+            assert_eq!(selected.current_microphone_id.as_deref(), Some(id));
+            assert_eq!(selected.target_microphone_id.as_deref(), Some(id));
+            assert_eq!(
+                store.load().unwrap().target_microphone_id.as_deref(),
+                Some(id)
+            );
+            assert_eq!(
+                platform.audio_snapshot().selected_endpoint_id,
+                render.selected_endpoint_id
+            );
+        }
+
+        controller.restore().unwrap();
+        let restored = controller.snapshot().unwrap();
+        assert_eq!(
+            restored.current_microphone_id,
+            original.current_microphone_id
+        );
+        assert_eq!(
+            restored.current_microphone_name,
+            original.current_microphone_name
+        );
+        assert_eq!(restored.phase, "external");
+        assert!(!restored.restore_pending);
+        assert!(controller
+            .select(
+                SimulatedPlatform::CABLE_MICROPHONE_ID.into(),
+                &platform,
+                &store
+            )
+            .is_err());
+        // Even a Select already queued at the API boundary cannot reapply a
+        // target after restore, matching the real runtime's shutdown gate.
+        assert!(controller
+            .runtime
+            .select(SimulatedPlatform::CABLE_MICROPHONE_ID.into())
+            .is_err());
+        assert_eq!(
+            controller.snapshot().unwrap().current_microphone_id,
+            original.current_microphone_id
+        );
+        controller.restore().unwrap();
+        assert_eq!(
+            store.load().unwrap().target_microphone_id.as_deref(),
+            Some(SimulatedPlatform::CABLE_MICROPHONE_ID)
+        );
+        assert!(!store.microphone_journal_path().exists());
+    }
+
+    #[cfg(feature = "runtime-simulation")]
+    #[test]
+    fn simulation_runtime_requires_an_explicit_request_and_rejects_unknown_capture() {
+        assert!(simulation_runtime(false).is_none());
+        let runtime = simulation_runtime(true).unwrap();
+        let original = runtime.snapshot().unwrap();
+        assert!(runtime.select("not-a-simulated-capture".into()).is_err());
+        let after = runtime.snapshot().unwrap();
+        assert_eq!(after.current_microphone_id, original.current_microphone_id);
+        assert_eq!(after.phase, "unconfigured");
+        assert!(!after.restore_pending);
     }
 
     #[test]

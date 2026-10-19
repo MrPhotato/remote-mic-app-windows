@@ -274,6 +274,32 @@ mod simulation {
     }
 
     impl SimulatedPlatform {
+        pub(crate) const CABLE_MICROPHONE_ID: &str = "simulation-cable-capture";
+        pub(crate) const PHYSICAL_MICROPHONE_ID: &str = "simulation-physical-capture";
+
+        // Shared with the simulation-only microphone API. Capture identity and
+        // render pairing must match across the real host coordination path.
+        pub(crate) fn microphone_endpoints() -> Vec<MicrophoneEndpoint> {
+            vec![
+                MicrophoneEndpoint {
+                    id: Self::CABLE_MICROPHONE_ID.to_owned(),
+                    name: "CABLE Output (VB-Audio Virtual Cable)".to_owned(),
+                    is_virtual_cable_candidate: true,
+                    is_default: false,
+                    is_default_communications: false,
+                    render_endpoint_ids: vec![CABLE_ENDPOINT_ID.to_owned()],
+                },
+                MicrophoneEndpoint {
+                    id: Self::PHYSICAL_MICROPHONE_ID.to_owned(),
+                    name: "Microphone (CI Simulation)".to_owned(),
+                    is_virtual_cable_candidate: false,
+                    is_default: false,
+                    is_default_communications: false,
+                    render_endpoint_ids: Vec::new(),
+                },
+            ]
+        }
+
         fn paired_remotes() -> Vec<PairedRemote> {
             vec![
                 PairedRemote {
@@ -388,14 +414,7 @@ mod simulation {
         }
 
         fn list_microphones(&self) -> Result<Vec<MicrophoneEndpoint>, PlatformError> {
-            Ok(vec![MicrophoneEndpoint {
-                id: "simulation-cable-capture".to_owned(),
-                name: "CABLE Output (VB-Audio Virtual Cable)".to_owned(),
-                is_virtual_cable_candidate: true,
-                is_default: true,
-                is_default_communications: false,
-                render_endpoint_ids: vec![CABLE_ENDPOINT_ID.to_owned()],
-            }])
+            Ok(Self::microphone_endpoints())
         }
 
         fn retry_audio_endpoint(&self) -> Result<AudioSnapshot, PlatformError> {

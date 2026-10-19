@@ -4,6 +4,7 @@ import {
   disconnectRemote,
   getAudioSnapshot,
   getDiagnosticReport,
+  getMicrophoneSelection,
   getRawInputSnapshot,
   getRuntimeSnapshot,
   listAudioEndpoints,
@@ -13,6 +14,7 @@ import {
   stopRawInput,
   testButtonMapping,
   type PlatformSnapshot,
+  type MicrophoneEndpoint,
 } from "./lib/bridge";
 
 interface RuntimeSimulationReport {
@@ -64,6 +66,69 @@ async function openPage(label: string, heading = label): Promise<void> {
   );
 }
 
+// Shared with the component regression so the normal preflight executes the
+// same microphone journey as the native WebView/IPC smoke test.
+export async function runMicrophoneJourney(steps: string[]): Promise<void> {
+  const microphones = await listMicrophones();
+  assert(microphones.length === 2, "仿真麦克风应包含虚拟麦克风和普通麦克风");
+  const cable = microphones.find((microphone) => microphone.isVirtualCableCandidate);
+  const physical = microphones.find((microphone) => !microphone.isVirtualCableCandidate);
+  assert(cable && physical, "仿真录音端点缺少虚拟麦克风或普通麦克风");
+
+  const waitForTarget = async (microphone: MicrophoneEndpoint): Promise<void> => {
+    await waitFor(() => {
+      const card = document.querySelector(".audio-settings-card");
+      return card?.querySelector(".microphone-name")?.textContent?.trim() === microphone.name
+        && card.querySelector(".microphone-status")?.textContent?.trim() === "已就绪" ? true : null;
+    }, `目标麦克风“${microphone.name}”就绪`);
+    const selection = await getMicrophoneSelection();
+    assert(selection.targetMicrophoneId === microphone.id, "麦克风选择没有保存目标 Capture");
+    assert(selection.currentMicrophoneId === microphone.id && selection.phase === "ready", "默认录音端点与目标不一致");
+    assert(selection.restorePending, "选择后没有保留退出恢复状态");
+  };
+  await waitForTarget(cable);
+  const endpoints = await listAudioEndpoints();
+  assert(endpoints.length === 1, "仿真音频端点数量异常");
+  const audio = await getAudioSnapshot();
+  assert(audio.phase === "ready", "仿真音频端点没有进入 WASAPI 就绪");
+  assert(audio.selectedEndpointId === endpoints[0].id, "仿真 CABLE Input 没有被自动选择");
+  assert(cable.renderEndpointIds.includes(audio.selectedEndpointId), "仿真录音端点与传声线路不匹配");
+
+  const assertList = (target: MicrophoneEndpoint, other: MicrophoneEndpoint): void => {
+    const list = document.querySelector("#audio-endpoint-list");
+    const names = Array.from(list?.querySelectorAll("strong") ?? []).map((node) => node.textContent?.trim());
+    assert(names.includes(other.name), "其余麦克风列表没有平铺未选录音端点");
+    assert(!names.includes(target.name), "目标麦克风重复出现在其余列表");
+    assert(!endpoints.some((endpoint) => names.includes(endpoint.name)), "麦克风列表混入了播放端点");
+  };
+  assertList(cable, physical);
+  const details = document.querySelector<HTMLDetailsElement>(".audio-route-details");
+  assert(details && !details.open, "麦克风诊断详情没有默认收起");
+  const summary = details.querySelector("summary");
+  assert(summary, "缺少麦克风诊断详情入口");
+  summary.click();
+  await waitFor(() => details.open ? true : null, "麦克风诊断详情展开");
+  assert(details.textContent?.includes(endpoints[0].name), "诊断详情没有显示内部传声线路");
+  summary.click();
+  await waitFor(() => !details.open ? true : null, "麦克风诊断详情收起");
+  steps.push("麦克风平铺显示 Capture，内部 Render 线路仅在诊断详情中显示");
+
+  for (const microphone of [physical, cable]) {
+    const button = await waitFor(() => {
+      const row = Array.from(document.querySelectorAll("#audio-endpoint-list li")).find(
+        (item) => item.querySelector("strong")?.textContent?.trim() === microphone.name,
+      );
+      return row?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? null;
+    }, `选择“${microphone.name}”按钮可用`);
+    button.click();
+    await waitForTarget(microphone);
+    assertList(microphone, microphone === cable ? physical : cable);
+  }
+  const restoredRoute = await getAudioSnapshot();
+  assert(restoredRoute.phase === "ready" && restoredRoute.selectedEndpointId === audio.selectedEndpointId, "切回虚拟麦克风后传声线路不一致");
+  steps.push("普通麦克风与 CABLE 经选择按钮和 Tauri IPC 往返切换，保留退出恢复状态");
+}
+
 async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   // 先导航到连接与语音，避免依赖上次保存的默认页面。
   await openPage("连接与语音");
@@ -93,41 +158,7 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   assert(connection.capabilities?.sampleRate === 16_000, "RC001 仿真能力不是 16 kHz");
   steps.push("RC001 连接 command 返回 16 kHz ATVV 就绪状态");
 
-  assert(!document.querySelector("#advanced-audio-settings"), "音频高级设置没有默认收起");
-  const microphones = await listMicrophones();
-  assert(microphones.length === 1, "仿真麦克风数量异常");
-  await waitFor(
-    () => document.querySelector(".audio-settings-card .setting-row span")?.textContent === microphones[0].name ? true : null,
-    "真实录音端点名称",
-  );
-  await clickButton("高级设置");
-  await waitFor(
-    () => (document.querySelector("#advanced-audio-settings")?.textContent?.includes("CABLE Input (CI Simulation)") ? true : null),
-    "仿真音频端点",
-  );
-  // 麦克风选择使用 capture 端点；内部 render 线路单独显示。
-  await waitFor(
-    () =>
-      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).some((button) =>
-        button.textContent?.trim().includes("更换麦克风"),
-      )
-        ? true
-        : null,
-    "自动选择仿真 CABLE Input",
-  );
-  const endpoints = await listAudioEndpoints();
-  assert(endpoints.length === 1, "仿真音频端点数量异常");
-  const audio = await getAudioSnapshot();
-  assert(audio.phase === "ready", "仿真音频端点没有进入 WASAPI 就绪");
-  assert(audio.selectedEndpointId === endpoints[0].id, "仿真 CABLE Input 没有被自动选择");
-  assert(microphones[0].renderEndpointIds.includes(audio.selectedEndpointId), "仿真录音端点与传声线路不匹配");
-  await clickButton("更换麦克风");
-  const microphoneList = document.querySelector("#audio-endpoint-list")?.textContent ?? "";
-  assert(microphoneList.includes(microphones[0].name), "麦克风列表没有显示录音端点");
-  assert(!microphoneList.includes(endpoints[0].name), "麦克风列表混入了播放端点");
-  await clickButton("收起高级设置");
-  await waitFor(() => (!document.querySelector("#advanced-audio-settings") ? true : null), "音频高级设置收起");
-  steps.push("连接页面自动选择唯一仿真 CABLE Input，高级设置可展开和收起");
+  await runMicrophoneJourney(steps);
 
   await openPage("按键", "按键映射");
   await waitFor(
@@ -215,7 +246,7 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
     "深色外观应用",
   );
   assert(darkTheme.checked, "深色外观保存后没有保持选中");
-  assert(!document.querySelector('[role="alert"]'), "深色外观保存后显示错误");
+  assert(!document.querySelector('.appearance-card [role="alert"]'), "深色外观保存后显示错误");
 
   const systemTheme = await waitFor(
     () =>
@@ -224,7 +255,7 @@ async function runJourney(steps: string[]): Promise<PlatformSnapshot> {
   );
   systemTheme.click();
   await waitFor(() => (systemTheme.checked && !systemTheme.disabled ? true : null), "系统外观恢复");
-  assert(!document.querySelector('[role="alert"]'), "恢复系统外观后显示错误");
+  assert(!document.querySelector('.appearance-card [role="alert"]'), "恢复系统外观后显示错误");
   steps.push("关于页深色/系统外观经 Windows WebView、Tauri capability 与设置持久化闭环");
 
   await openPage("连接与语音");

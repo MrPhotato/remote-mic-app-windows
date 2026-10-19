@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AudioEndpoint, AudioSnapshot, ConnectionSnapshot, KeyChord, MicrophoneEndpoint, MicrophoneSelectionSnapshot, RuntimeSnapshot } from "../lib/bridge";
 import ConnectionPage from "./ConnectionPage.vue";
+import { runMicrophoneJourney } from "../runtime-simulation";
 
 const emptyConnection: ConnectionSnapshot = {
   phase: "idle",
@@ -187,6 +188,39 @@ describe("Connection and voice settings", () => {
   function microphoneButton(wrapper: ReturnType<typeof mount>, name: string) {
     return wrapper.findAll(".endpoint-list li").find((row) => row.text().includes(name))!.get("button");
   }
+
+  it("runs the CI microphone journey against the current page, including both capture choices", async () => {
+    prepareCable();
+    mocks.endpoints = [cableEndpoint];
+    const wrapper = mount(ConnectionPage, { props: { runtime }, attachTo: document.body });
+    try {
+      await flushPromises();
+      const steps: string[] = [];
+      await runMicrophoneJourney(steps);
+      expect(steps).toHaveLength(2);
+      expect(mocks.selectMicrophone.mock.calls).toEqual([[physicalMicrophone.id], [cableMicrophone.id]]);
+      expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+      expect(wrapper.get(".audio-route-details").attributes("open")).toBeUndefined();
+    } finally {
+      wrapper.unmount();
+      wrapper.element.remove();
+    }
+  });
+
+  it("fails the CI journey when the IPC selection disagrees with the ready UI", async () => {
+    prepareCable();
+    mocks.endpoints = [cableEndpoint];
+    const wrapper = mount(ConnectionPage, { props: { runtime }, attachTo: document.body });
+    try {
+      await flushPromises();
+      mocks.getMicrophoneSelection.mockResolvedValue({ ...mocks.selection, currentMicrophoneId: physicalMicrophone.id });
+      await expect(runMicrophoneJourney([])).rejects.toThrow("默认录音端点与目标不一致");
+      expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    } finally {
+      wrapper.unmount();
+      wrapper.element.remove();
+    }
+  });
 
   it("shows the saved virtual microphone and all other capture choices without automatically selecting", async () => {
     prepareCable();

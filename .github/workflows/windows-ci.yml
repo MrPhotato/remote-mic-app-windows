@@ -84,7 +84,10 @@ jobs:
         run: ./scripts/build-rc003-helper.ps1
 
       - name: Test Rust workspace
-        run: cargo test --workspace
+        run: |
+          cargo test --workspace
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p sayall-windows-app --features runtime-simulation microphone::tests::simulation_
 
       - name: Check Windows Tauri host
         run: cargo check --workspace
@@ -96,9 +99,22 @@ jobs:
           pnpm tauri build --no-bundle --features runtime-simulation
 
       - name: Test Windows Tauri WebView and IPC runtime simulation
+        id: runtime-simulation
         shell: pwsh
         timeout-minutes: 3
         run: ./scripts/test-windows-runtime-simulation.ps1
+
+      - name: Preserve failed runtime simulation report
+        if: failure() && steps.runtime-simulation.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-simulation-failure-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/sayall-runtime-simulation-*.json
+            ${{ runner.temp }}/sayall-runtime-simulation-*.stdout.log
+            ${{ runner.temp }}/sayall-runtime-simulation-*.stderr.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build predecessor NSIS upgrade fixture
         shell: pwsh
