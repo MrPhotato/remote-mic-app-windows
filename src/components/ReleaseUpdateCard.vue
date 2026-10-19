@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useReleaseCheck } from "../lib/release-check-state";
-const { checking, opening, result, error, check, openRelease } = useReleaseCheck();
+const { checking, opening, result, error, checkedAt, fromCache, check, openRelease } = useReleaseCheck();
+const lastCheckedText = computed(() => checkedAt.value === null ? "" : new Date(checkedAt.value).toLocaleString("zh-CN", {
+  month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+}));
 </script>
 
 <template>
@@ -8,7 +12,7 @@ const { checking, opening, result, error, check, openRelease } = useReleaseCheck
     <div class="card-title-row">
       <div>
         <h2>软件更新</h2>
-        <p class="muted">从 GitHub 检查新版本，包括预览版。</p>
+        <p class="muted">启动时检查新版本，包括预览版；不会自动下载安装。</p>
       </div>
       <button class="secondary-button" type="button" :disabled="checking || opening" @click="check">
         {{ checking ? "检查中…" : "检查更新" }}
@@ -20,10 +24,11 @@ const { checking, opening, result, error, check, openRelease } = useReleaseCheck
         发现新版本 {{ result.version }}<span v-if="result.prerelease">（预览版）</span>
         <span class="muted"> · 当前 {{ result.currentVersion }}</span>
       </template>
-      <template v-else-if="result?.status === 'up_to_date'">当前已是最新版本（{{ result.currentVersion }}）</template>
+      <template v-else-if="result?.status === 'up_to_date'">{{ fromCache ? "上次检查时已是最新版本" : "当前已是最新版本" }}（{{ result.currentVersion }}）</template>
       <template v-else-if="result?.status === 'no_release'">暂时没有已发布的版本。</template>
-      <template v-else-if="!error">点击检查更新，查看是否有新版本。</template>
+      <template v-else-if="!error">启动后会自动检查，也可点击检查更新。</template>
     </p>
+    <p v-if="lastCheckedText && !checking" class="muted checked-time">上次检查：{{ lastCheckedText }}</p>
     <p v-if="error" class="error-text" role="alert">{{ error }}</p>
     <template v-if="result?.status === 'available'">
       <details v-if="result.notes" class="release-notes">
@@ -43,6 +48,7 @@ const { checking, opening, result, error, check, openRelease } = useReleaseCheck
 .card-title-row .muted { margin: 4px 0 0; }
 .update-status { margin: 14px 0 10px; }
 .update-status:empty { display: none; }
+.checked-time { margin: 0 0 10px; font-size: 12px; }
 .release-notes { margin: 12px 0; }
 .release-notes summary { cursor: pointer; }
 .release-notes pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--text-secondary); }

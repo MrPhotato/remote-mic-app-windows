@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import Sidebar from "./components/Sidebar.vue";
-import { getButtonMappings, getRuntimeSnapshot, type ButtonMappings, type RuntimeSnapshot } from "./lib/bridge";
+import { getButtonMappings, getRuntimeSnapshot, isTauriRuntime, type ButtonMappings, type RuntimeSnapshot } from "./lib/bridge";
+import { useReleaseCheck } from "./lib/release-check-state";
 import { reportFrontendEvent } from "./lib/frontend-diagnostics";
 import {
   detectReloadRecovery,
@@ -19,6 +20,8 @@ import ConnectionPage from "./pages/ConnectionPage.vue";
 import PermissionsPage from "./pages/PermissionsPage.vue";
 
 const initialPage = loadPersistedPage() ?? "coding";
+const { result: releaseResult, checkAtStartup } = useReleaseCheck();
+let releaseStartupScheduled = false;
 const activePage = ref<PageId>(initialPage);
 const pageReady = ref(initialPage !== "buttons");
 const preparedMappings = ref<ButtonMappings | null>(null);
@@ -83,6 +86,10 @@ onMounted(async () => {
   const refreshRuntime = async () => {
     try {
       runtime.value = await getRuntimeSnapshot();
+      if (!releaseStartupScheduled && isTauriRuntime() && runtime.value?.appVersion) {
+        releaseStartupScheduled = true;
+        void checkAtStartup(runtime.value.appVersion);
+      }
       loadError.value = "";
       touchLiveness();
       if (!initialRuntimeReported) {
@@ -141,7 +148,7 @@ onUnmounted(() => {
   </div>
   <WindowTitlebar />
   <div class="app-shell">
-    <Sidebar :active-page="activePage" @select="navigate" />
+    <Sidebar :active-page="activePage" :update-available="releaseResult?.status === 'available'" @select="navigate" />
     <main class="content" :aria-busy="navigationPending">
       <div v-if="loadError" class="error-banner" role="alert">暂时读不到运行状态，正在重试：{{ loadError }}</div>
       <div v-if="navigationError" class="error-banner" role="alert">

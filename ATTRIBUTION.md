@@ -2,6 +2,15 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 应用内标题栏、自动检查和图标通知（2026-10-19）
+
+- 对照 [Tauri 自定义窗口](https://v2.tauri.app/learn/window-customization/) 与 [Window API](https://v2.tauri.app/reference/javascript/api/namespacewindow/)，使用 `decorations: false`、内置拖动区域和公开 minimize/toggleMaximize/close 接口；不自行实现窗口拖拽坐标或底层窗口钩子。液态玻璃外观沿用本仓库设计令牌。close 保持现有 CloseRequested → 托盘路径，未改动语音和连接清理。
+- 参考当前锁定 Tauri/tao 源码的 Windows 无框边缘命中与最大化处理，不另写 resize。依据 [微软 Snap 标题栏说明](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/ui/apply-snap-layout-menu)，HTML 最大化按钮不会自动获得原生悬停布局菜单，本轮不宣称此能力；多显示器/DPI/系统贴靠需单独验收。
+- 用户本次明确要求启动时自动检查，替代上一节的“仅手动”产品行为。沿用本仓库公开 GitHub Release 选择器，成功缓存 6 小时、失败或未完成冷却 15 分钟，安装版本变化和时钟回退重新检查，手动检查可绕过缓存；不启用上游自动安装器。关于页卡片使用统一 12px 间隔。
+- 已安装程序的七帧 PE 图标与仓库 ICO 原始资源一致，桌面快捷方式目标正确。依照 [Windows SHChangeNotify](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify) 使用 `SHCNE_UPDATEITEM` 和 Unicode 路径通知，只处理本应用 exe 及目标匹配的已有快捷方式；不清空全局图标缓存、不重启 Explorer、不创建已被用户删除的快捷方式。未复制第三方实现。
+
+验证边界见 [WindowsWindowChrome](Testing/WindowsWindowChrome.md)。
+
 ## 手动检查本仓库 Release（2026-10-19）
 
 参考 [GitHub 官方 Releases REST API](https://docs.github.com/en/rest/releases/releases#list-releases)：公开仓库可匿名读取，列表包含已发布预览版；`latest` 端点排除预览版，因此本功能读取分页列表并按 SemVer 选择最高版本。检查最高版本的发布页与 Windows 安装包归属、上传状态和大小，避免把发布不完整误报为已是最新。限流、网络和响应校验错误分别记录结构化诊断。

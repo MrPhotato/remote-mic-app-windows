@@ -387,7 +387,8 @@ pub async fn check_github_release(app: tauri::AppHandle) -> Result<GithubRelease
     let current = app.package_info().version.to_string();
     note(
         operation_id,
-        "phase=started source=manual repository=product_public include_prereleases=true".to_owned(),
+        "phase=started source=frontend repository=product_public include_prereleases=true"
+            .to_owned(),
     );
     match check_version(&current, operation_id).await {
         Ok(info) => {

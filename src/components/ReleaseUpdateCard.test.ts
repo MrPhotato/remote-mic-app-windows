@@ -3,9 +3,10 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ReleaseUpdateCard from "./ReleaseUpdateCard.vue";
 import { checkGithubRelease, openGithubRelease, type GithubReleaseCheck } from "../lib/github-release";
-import { useReleaseCheck } from "../lib/release-check-state";
+import { resetReleaseCheckForTests, useReleaseCheck } from "../lib/release-check-state";
 
 vi.mock("../lib/github-release", () => ({ checkGithubRelease: vi.fn(), openGithubRelease: vi.fn() }));
+vi.mock("../lib/frontend-diagnostics", () => ({ reportFrontendEvent: vi.fn() }));
 
 const available: GithubReleaseCheck = {
   currentVersion: "0.3.5", status: "available", version: "0.3.6", prerelease: true,
@@ -13,14 +14,11 @@ const available: GithubReleaseCheck = {
   notes: "修复说明\n<script>alert('untrusted')</script>", publishedAt: "2026-10-19T00:00:00Z",
 };
 
-describe("手动检查 Release", () => {
+describe("Release 更新卡片", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    const state = useReleaseCheck();
-    state.checking.value = false;
-    state.opening.value = false;
-    state.result.value = null;
-    state.error.value = "";
+    localStorage.clear();
+    resetReleaseCheckForTests();
   });
 
   it("检查期间切页回来复用请求，完成后再次进来也保留结果", async () => {
@@ -124,5 +122,27 @@ describe("手动检查 Release", () => {
     await flushPromises();
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     expect(openGithubRelease).toHaveBeenCalledTimes(2);
+  });
+
+  it("展示启动检查结果，切到关于页不会重复请求或自动打开下载", async () => {
+    vi.mocked(checkGithubRelease).mockResolvedValue(available);
+    await useReleaseCheck().checkAtStartup("0.3.5");
+    const wrapper = mount(ReleaseUpdateCard);
+    expect(wrapper.text()).toContain("启动时检查新版本");
+    expect(wrapper.text()).toContain("发现新版本 0.3.6");
+    expect(wrapper.text()).toContain("上次检查：");
+    expect(openGithubRelease).not.toHaveBeenCalled();
+    expect(checkGithubRelease).toHaveBeenCalledOnce();
+  });
+
+  it("缓存的最新结果明确标注为上次检查，不冒充本次实时检查", async () => {
+    vi.mocked(checkGithubRelease).mockResolvedValue({ ...available, status: "up_to_date" });
+    await useReleaseCheck().checkAtStartup("0.3.5");
+    resetReleaseCheckForTests();
+    await useReleaseCheck().checkAtStartup("0.3.5");
+    const wrapper = mount(ReleaseUpdateCard);
+    expect(wrapper.text()).toContain("上次检查时已是最新版本");
+    expect(wrapper.text()).not.toContain("当前已是最新版本");
+    expect(checkGithubRelease).toHaveBeenCalledOnce();
   });
 });
