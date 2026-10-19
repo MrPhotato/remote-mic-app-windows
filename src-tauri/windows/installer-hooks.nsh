@@ -5,6 +5,42 @@
 !define SAYALL_VB_CABLE_SERVICE_KEY "SYSTEM\CurrentControlSet\Services\VBAudioVACMME"
 !define SAYALL_VB_CABLE_DOWNLOAD_URL "https://vb-audio.com/Cable/"
 
+; Replacing an executable does not always refresh Explorer's cached shortcut icon.
+; Notify only this application's existing items; never clear the system icon cache.
+!define SAYALL_SHCNE_UPDATEITEM 0x00002000
+!define SAYALL_SHCNF_PATHW_FLUSHNOWAIT 0x00003005
+
+!macro SayAllNotifyOwnedShortcutIcon _shortcut
+  ${If} ${FileExists} "${_shortcut}"
+    !insertmacro IsShortcutTarget "${_shortcut}" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 1
+      System::Call 'shell32::SHChangeNotify(i ${SAYALL_SHCNE_UPDATEITEM}, i ${SAYALL_SHCNF_PATHW_FLUSHNOWAIT}, w "${_shortcut}", p 0)'
+      DetailPrint "SayAll shortcut icon refresh requested"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro SayAllRefreshInstalledIcons
+  ; IsShortcutTarget uses $0 through $3. Preserve the surrounding installer state.
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    System::Call 'shell32::SHChangeNotify(i ${SAYALL_SHCNE_UPDATEITEM}, i ${SAYALL_SHCNF_PATHW_FLUSHNOWAIT}, w "$INSTDIR\${MAINBINARYNAME}.exe", p 0)'
+    !insertmacro SayAllNotifyOwnedShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk"
+    ${If} $AppStartMenuFolder != ""
+      !insertmacro SayAllNotifyOwnedShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+    ${EndIf}
+    !insertmacro SayAllNotifyOwnedShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+  ${EndIf}
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
 ; ── 部署前先请应用优雅退出（2026-09-16）───────────────────────────────
 ;
 ; 背景：Tauri 默认模板的 `CheckIfAppIsRunning`（utils.nsh）在检测到应用正在
@@ -157,6 +193,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro SayAllRefreshInstalledIcons
   Push $R8
   ReadRegStr $R8 HKLM "${SAYALL_VB_CABLE_SERVICE_KEY}" "DisplayName"
   ${If} $R8 == ""
