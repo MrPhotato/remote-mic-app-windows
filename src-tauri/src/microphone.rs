@@ -13,6 +13,7 @@ pub const SETTINGS_SAVE_FAILED: &str = "microphone_settings_save_failed";
 
 trait MicrophoneApi: Send + Sync {
     fn select(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError>;
+    fn use_now(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError>;
     fn snapshot(&self) -> Result<MicrophoneSelectionSnapshot, PlatformError>;
     fn restore(&self) -> Result<(), PlatformError>;
     fn release_session(&self) -> Result<(), PlatformError>;
@@ -21,6 +22,9 @@ trait MicrophoneApi: Send + Sync {
 impl MicrophoneApi for sayall_windows::DefaultMicrophoneRuntime {
     fn select(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
         Self::select(self, id)
+    }
+    fn use_now(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+        Self::use_now(self, id)
     }
     fn snapshot(&self) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
         Self::snapshot(self)
@@ -42,6 +46,9 @@ impl MicrophoneApi for UnavailableMicrophone {
             .clone()
             .map(PlatformError::Audio)
             .unwrap_or(PlatformError::UnsupportedPlatform))
+    }
+    fn use_now(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+        self.select(id)
     }
     fn snapshot(&self) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
         Ok(MicrophoneSelectionSnapshot {
@@ -122,6 +129,17 @@ impl MicrophoneApi for SimulatedMicrophone {
             restore_pending: true,
             ..Default::default()
         };
+        Ok(state.snapshot.clone())
+    }
+
+    fn use_now(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+        self.select(id)?;
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.snapshot.target_microphone_id = None;
+        state.snapshot.target_microphone_name = None;
+        state.snapshot.phase = "external".into();
+        state.snapshot.external_change_observed = true;
+        state.snapshot.restore_pending = false;
         Ok(state.snapshot.clone())
     }
 
@@ -295,7 +313,158 @@ impl MicrophoneController {
         platform: &dyn PlatformRuntime,
         settings: &SettingsStore,
     ) -> Result<MicrophoneSelectionSnapshot, String> {
+        if !platform
+            .list_microphones()
+            .map_err(|error| error.to_string())?
+            .iter()
+            .any(|capture| capture.id == id && capture.is_virtual_cable_candidate)
+        {
+            note(
+                "validate",
+                "failed",
+                "remote_target_requires_virtual_capture",
+            );
+            return Err("遥控器目标需要选择虚拟麦克风；普通麦克风请直接使用。".into());
+        }
         self.select_with_routes(id, &PlatformRoutes(platform), settings)
+    }
+
+    pub fn use_now(
+        &self,
+        id: String,
+        platform: &dyn PlatformRuntime,
+        settings: &SettingsStore,
+    ) -> Result<MicrophoneSelectionSnapshot, String> {
+        self.use_now_with_routes(id, &PlatformRoutes(platform), settings)
+    }
+
+    fn use_now_with_routes(
+        &self,
+        id: String,
+        routes: &dyn CaptureRoutes,
+        settings: &SettingsStore,
+    ) -> Result<MicrophoneSelectionSnapshot, String> {
+        let started = Instant::now();
+        let _guard = self.selection.lock().unwrap_or_else(|e| e.into_inner());
+        let result = (|| {
+            self.check_open()?;
+            let captures = routes.microphones().map_err(|error| error.to_string())?;
+            if !captures
+                .iter()
+                .any(|capture| capture.id == id && !capture.is_virtual_cable_candidate)
+            {
+                note("use_now", "failed", "physical_capture_unavailable");
+                return Err("所选普通麦克风当前不可用，已保留原设置。".into());
+            }
+            if matches!(
+                routes.audio().phase,
+                AudioPhase::Streaming | AudioPhase::Draining
+            ) {
+                note("use_now", "failed", "audio_busy");
+                return Err(PlatformError::AudioBusy.to_string());
+            }
+            if !self.startup_claimed.load(Ordering::SeqCst) {
+                self.load_preference_locked(routes, settings)?;
+            }
+            self.check_open()?;
+            let selected = match self.runtime.use_now(id.clone()) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    // A committed manual choice can outlive a failed final
+                    // readback. Never let a reconnect reclaim an uncertain or
+                    // already relinquished choice after this explicit request.
+                    let observed = self.runtime.snapshot();
+                    if observed.as_ref().map_or(true, |snapshot| {
+                        snapshot.external_change_observed && !snapshot.restore_pending
+                    }) {
+                        self.external_override.store(true, Ordering::SeqCst);
+                        note("use_now", "unconfirmed", "manual_result_preserved");
+                    }
+                    return Err(error.to_string());
+                }
+            };
+            // Ok means the platform already committed the manual handoff.
+            // A later external change can make the final snapshot unconfirmed,
+            // but must not let the first ready connection reclaim the default.
+            self.external_override.store(true, Ordering::SeqCst);
+            if selected.current_microphone_id.as_deref() != Some(id.as_str())
+                || selected.restore_pending
+                || !selected.external_change_observed
+                || selected.phase != "external"
+            {
+                note("use_now", "failed", "manual_selection_unconfirmed");
+                return Err("麦克风切换未确认，请刷新后重试。".into());
+            }
+            *self.startup_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self
+                .connection_retry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            note(
+                "use_now",
+                "passed",
+                "manual_default_preserved_remote_target_unchanged",
+            );
+            self.snapshot().map_err(|error| error.to_string())
+        })();
+        terminal("use_now", result.is_ok(), started);
+        result
+    }
+
+    fn load_preference_locked(
+        &self,
+        routes: &dyn CaptureRoutes,
+        settings: &SettingsStore,
+    ) -> Result<(), String> {
+        let saved = settings.load().map_err(|error| {
+            note("load_preference", "failed", "settings_unavailable");
+            error
+        })?;
+        *self.saved_target.lock().unwrap_or_else(|e| e.into_inner()) = saved
+            .target_microphone_id
+            .clone()
+            .map(|id| (id, saved.target_microphone_name.clone()));
+        // Recover old leases before acquiring any new system default baseline.
+        if self
+            .runtime
+            .snapshot()
+            .map_err(|error| error.to_string())?
+            .restore_pending
+        {
+            self.release_locked()?;
+        }
+        let captures = routes.microphones().map_err(|error| error.to_string())?;
+        let legacy_physical = saved.target_microphone_id.as_ref().is_some_and(|id| {
+            captures
+                .iter()
+                .any(|capture| &capture.id == id && !capture.is_virtual_cable_candidate)
+        });
+        if legacy_physical {
+            // Do not present or auto-apply a known old physical target. Keep the
+            // persisted value until a uniquely verified virtual replacement can
+            // be saved, so missing/ambiguous hardware is never guessed.
+            *self.saved_target.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        if saved.target_microphone_id.is_none() || legacy_physical {
+            if let Some(id) = startup_capture(
+                &captures,
+                &routes.audio(),
+                saved.audio_endpoint_id.as_deref(),
+            ) {
+                self.save_waiting_preference(id, routes, settings)?;
+                if legacy_physical {
+                    note(
+                        "migrate_preference",
+                        "passed",
+                        "physical_target_replaced_by_verified_virtual",
+                    );
+                }
+            } else {
+                note("load_preference", "skipped", "no_unique_virtual_capture");
+            }
+        }
+        self.startup_claimed.store(true, Ordering::SeqCst);
+        Ok(())
     }
 
     fn select_with_routes(
@@ -384,6 +553,14 @@ impl MicrophoneController {
                 note("validate", "failed", "capture_unavailable");
                 "所选麦克风当前不可用，已保留原设置。".to_owned()
             })?;
+        if !microphone.is_virtual_cable_candidate {
+            note(
+                "validate",
+                "failed",
+                "remote_target_requires_virtual_capture",
+            );
+            return Err("遥控器目标需要选择虚拟麦克风；普通麦克风请直接使用。".into());
+        }
         let audio = routes.audio();
         if matches!(audio.phase, AudioPhase::Streaming | AudioPhase::Draining) {
             note("validate", "failed", "audio_busy");
@@ -481,6 +658,14 @@ impl MicrophoneController {
             .iter()
             .find(|capture| capture.id == id)
             .ok_or_else(|| "所选麦克风当前不可用，已保留原设置。".to_owned())?;
+        if !capture.is_virtual_cable_candidate {
+            note(
+                "save_preference",
+                "failed",
+                "remote_target_requires_virtual_capture",
+            );
+            return Err("遥控器目标需要选择虚拟麦克风；普通麦克风请直接使用。".into());
+        }
         if capture.is_virtual_cable_candidate
             && choose_verified_render(capture, &captures, &routes.audio()).is_none()
         {
@@ -564,35 +749,7 @@ impl MicrophoneController {
         let result = (|| {
             self.check_open()?;
             if initialize {
-                let saved = settings.load().map_err(|error| {
-                    note("load_preference", "failed", "settings_unavailable");
-                    error
-                })?;
-                *self.saved_target.lock().unwrap_or_else(|e| e.into_inner()) = saved
-                    .target_microphone_id
-                    .clone()
-                    .map(|id| (id, saved.target_microphone_name.clone()));
-                // Recover a crashed process's journal even if the remote is asleep.
-                // This release never applies a new target and leaves the worker open.
-                if self
-                    .runtime
-                    .snapshot()
-                    .map_err(|e| e.to_string())?
-                    .restore_pending
-                {
-                    self.release_locked()?;
-                }
-                if saved.target_microphone_id.is_none() {
-                    let microphones = routes.microphones().map_err(|error| error.to_string())?;
-                    if let Some(id) = startup_capture(
-                        &microphones,
-                        &routes.audio(),
-                        saved.audio_endpoint_id.as_deref(),
-                    ) {
-                        self.save_waiting_preference(id, routes, settings)?;
-                    }
-                }
-                self.startup_claimed.store(true, Ordering::SeqCst);
+                self.load_preference_locked(routes, settings)?;
             }
             if previous.is_some() && previous != connection {
                 note("connection", "changed", "previous_connection_ended");
@@ -793,6 +950,7 @@ mod tests {
         fail: AtomicBool,
         fail_snapshot: std::sync::atomic::AtomicUsize,
         fail_release: AtomicBool,
+        manual_external_current: Mutex<Option<String>>,
     }
 
     impl MicrophoneApi for FakeMicrophone {
@@ -812,6 +970,27 @@ mod tests {
             };
             *self.current.lock().unwrap() = selected.clone();
             Ok(selected)
+        }
+        fn use_now(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+            self.calls.lock().unwrap().push(format!("use_now:{id}"));
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(PlatformError::Audio("test selection failure".into()));
+            }
+            let id = self
+                .manual_external_current
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(id);
+            let snapshot = MicrophoneSelectionSnapshot {
+                current_microphone_id: Some(id.clone()),
+                current_microphone_name: Some(format!("Name {id}")),
+                phase: "external".into(),
+                external_change_observed: true,
+                ..Default::default()
+            };
+            *self.current.lock().unwrap() = snapshot.clone();
+            Ok(snapshot)
         }
         fn snapshot(&self) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
             if self
@@ -947,6 +1126,274 @@ mod tests {
         if let Some((_, deadline)) = controller.connection_retry.lock().unwrap().as_mut() {
             *deadline = Instant::now();
         }
+    }
+
+    #[test]
+    fn manual_physical_choice_keeps_virtual_target_and_is_not_reclaimed() {
+        for connected in [false, true] {
+            let (api, controller, store) = fixture();
+            store
+                .save_target_microphone("cable".into(), "Cable".into())
+                .unwrap();
+            let routes = FakeRoutes::new(vec![
+                capture("cable", &["render"]),
+                capture("physical", &[]),
+            ]);
+            if !connected {
+                routes.connection.lock().unwrap().phase = ConnectionPhase::Idle;
+            }
+            controller.reconcile_connection_with_routes(&routes, &store);
+            let selected = controller
+                .use_now_with_routes("physical".into(), &routes, &store)
+                .unwrap();
+            assert_eq!(selected.target_microphone_id.as_deref(), Some("cable"));
+            assert_eq!(selected.current_microphone_id.as_deref(), Some("physical"));
+            assert_eq!(selected.phase, "external");
+            assert!(!selected.restore_pending);
+            assert_eq!(
+                store.load().unwrap().target_microphone_id.as_deref(),
+                Some("cable")
+            );
+            api.calls.lock().unwrap().clear();
+            routes.connection.lock().unwrap().phase = ConnectionPhase::Disconnected;
+            controller.reconcile_connection_with_routes(&routes, &store);
+            routes.connection.lock().unwrap().phase = ConnectionPhase::Ready;
+            routes.connection.lock().unwrap().connection_generation += 1;
+            controller.reconcile_connection_with_routes(&routes, &store);
+            assert!(!api
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| call.starts_with("select:")));
+            assert_eq!(
+                controller
+                    .snapshot()
+                    .unwrap()
+                    .current_microphone_id
+                    .as_deref(),
+                Some("physical")
+            );
+            controller
+                .select_with_routes("cable".into(), &routes, &store)
+                .unwrap();
+            assert!(!controller.external_override.load(Ordering::SeqCst));
+            assert_eq!(
+                controller
+                    .snapshot()
+                    .unwrap()
+                    .current_microphone_id
+                    .as_deref(),
+                Some("cable")
+            );
+        }
+    }
+
+    #[test]
+    fn manual_choice_rejects_virtual_missing_busy_and_exiting_without_writing() {
+        for scenario in ["virtual", "missing", "busy", "exiting"] {
+            let (api, controller, store) = fixture();
+            let routes = FakeRoutes::new(vec![
+                capture("cable", &["render"]),
+                capture("physical", &[]),
+            ]);
+            if scenario == "busy" {
+                routes.current.lock().unwrap().phase = AudioPhase::Streaming;
+            }
+            if scenario == "exiting" {
+                controller.begin_exit();
+            }
+            let id = match scenario {
+                "virtual" => "cable",
+                "missing" => "missing",
+                _ => "physical",
+            };
+            assert!(controller
+                .use_now_with_routes(id.into(), &routes, &store)
+                .is_err());
+            assert!(api.calls.lock().unwrap().is_empty());
+            assert!(routes.opens.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn failed_manual_choice_keeps_saved_virtual_target_and_does_not_set_override() {
+        let (api, controller, store) = fixture();
+        store
+            .save_target_microphone("cable".into(), "Cable".into())
+            .unwrap();
+        let routes = FakeRoutes::new(vec![
+            capture("cable", &["render"]),
+            capture("physical", &[]),
+        ]);
+        routes.connection.lock().unwrap().phase = ConnectionPhase::Idle;
+        api.fail.store(true, Ordering::SeqCst);
+        assert!(controller
+            .use_now_with_routes("physical".into(), &routes, &store)
+            .is_err());
+        assert!(!controller.external_override.load(Ordering::SeqCst));
+        assert_eq!(
+            store.load().unwrap().target_microphone_id.as_deref(),
+            Some("cable")
+        );
+        assert_eq!(
+            controller
+                .snapshot()
+                .unwrap()
+                .target_microphone_id
+                .as_deref(),
+            Some("cable")
+        );
+    }
+
+    #[test]
+    fn committed_manual_choice_with_unconfirmed_readback_is_not_reclaimed_on_first_ready_or_reconnect(
+    ) {
+        let (api, controller, store) = fixture();
+        store
+            .save_target_microphone("cable".into(), "Cable".into())
+            .unwrap();
+        let routes = FakeRoutes::new(vec![
+            capture("cable", &["render"]),
+            capture("physical", &[]),
+        ]);
+        routes.connection.lock().unwrap().phase = ConnectionPhase::Idle;
+        *api.manual_external_current.lock().unwrap() = Some("external-after-commit".into());
+        assert!(controller
+            .use_now_with_routes("physical".into(), &routes, &store)
+            .is_err());
+        assert!(controller.external_override.load(Ordering::SeqCst));
+        assert_eq!(
+            store.load().unwrap().target_microphone_id.as_deref(),
+            Some("cable")
+        );
+        for phase in [
+            ConnectionPhase::Ready,
+            ConnectionPhase::Disconnected,
+            ConnectionPhase::Ready,
+        ] {
+            let mut connection = routes.connection.lock().unwrap();
+            connection.phase = phase;
+            connection.connection_generation += 1;
+            drop(connection);
+            controller.reconcile_connection_with_routes(&routes, &store);
+        }
+        assert!(api
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|call| !call.starts_with("select:")));
+        assert_eq!(
+            controller
+                .snapshot()
+                .unwrap()
+                .current_microphone_id
+                .as_deref(),
+            Some("external-after-commit")
+        );
+        assert!(routes.opens.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn legacy_physical_target_migrates_only_to_a_verified_unique_virtual_capture() {
+        let (api, controller, store) = fixture();
+        store
+            .save_target_microphone("physical".into(), "Physical".into())
+            .unwrap();
+        let routes = FakeRoutes::new(vec![
+            capture("physical", &[]),
+            capture("cable", &["render"]),
+        ]);
+        routes.connection.lock().unwrap().phase = ConnectionPhase::Idle;
+        controller.reconcile_connection_with_routes(&routes, &store);
+        assert!(api.calls.lock().unwrap().is_empty());
+        assert!(routes.opens.lock().unwrap().is_empty());
+        assert_eq!(
+            store.load().unwrap().target_microphone_id.as_deref(),
+            Some("cable")
+        );
+        assert_eq!(
+            controller
+                .snapshot()
+                .unwrap()
+                .target_microphone_id
+                .as_deref(),
+            Some("cable")
+        );
+        routes.connection.lock().unwrap().phase = ConnectionPhase::Ready;
+        controller.reconcile_connection_with_routes(&routes, &store);
+        assert_eq!(*api.calls.lock().unwrap(), ["select:cable"]);
+    }
+
+    #[test]
+    fn legacy_physical_target_is_not_auto_applied_when_virtual_capture_is_missing_or_ambiguous() {
+        for virtuals in [
+            vec![],
+            vec![
+                capture("one", &["render-one"]),
+                capture("two", &["render-two"]),
+            ],
+        ] {
+            let (api, controller, store) = fixture();
+            store
+                .save_target_microphone("physical".into(), "Physical".into())
+                .unwrap();
+            let mut captures = vec![capture("physical", &[])];
+            captures.extend(virtuals);
+            let routes = FakeRoutes::new(captures);
+            controller.reconcile_connection_with_routes(&routes, &store);
+            assert!(api.calls.lock().unwrap().is_empty());
+            assert!(routes.opens.lock().unwrap().is_empty());
+            assert!(controller
+                .snapshot()
+                .unwrap()
+                .target_microphone_id
+                .is_none());
+            assert_eq!(
+                store.load().unwrap().target_microphone_id.as_deref(),
+                Some("physical")
+            );
+            controller
+                .use_now_with_routes("physical".into(), &routes, &store)
+                .unwrap();
+            assert_eq!(
+                controller
+                    .snapshot()
+                    .unwrap()
+                    .current_microphone_id
+                    .as_deref(),
+                Some("physical")
+            );
+        }
+    }
+
+    #[test]
+    fn missing_legacy_physical_target_cannot_be_auto_applied_when_it_reappears() {
+        let (api, controller, store) = fixture();
+        store
+            .save_target_microphone("physical".into(), "Physical".into())
+            .unwrap();
+        let mut routes = FakeRoutes::new(vec![]);
+        controller.reconcile_connection_with_routes(&routes, &store);
+        routes.captures.push(capture("physical", &[]));
+        expire_retry(&controller);
+        controller.reconcile_connection_with_routes(&routes, &store);
+        assert!(api.calls.lock().unwrap().is_empty());
+        assert_eq!(controller.snapshot().unwrap().phase, "failed");
+        assert!(controller
+            .select_with_routes("physical".into(), &routes, &store)
+            .is_err());
+        routes.connection.lock().unwrap().phase = ConnectionPhase::Idle;
+        assert!(controller
+            .select_with_routes("physical".into(), &routes, &store)
+            .is_err());
+        assert!(api
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|call| call == "release"));
     }
 
     #[test]
@@ -1098,7 +1545,7 @@ mod tests {
     #[test]
     fn disconnect_during_system_selection_releases_before_reporting_waiting() {
         let (api, controller, store) = fixture();
-        let routes = FakeRoutes::new(vec![capture("physical", &[])]);
+        let routes = FakeRoutes::new(vec![capture("cable", &["render"])]);
         let ready = routes.connection();
         let disconnected = ConnectionSnapshot {
             phase: ConnectionPhase::Disconnected,
@@ -1112,10 +1559,10 @@ mod tests {
             disconnected,
         ]);
         let result = controller
-            .select_with_routes("physical".into(), &routes, &store)
+            .select_with_routes("cable".into(), &routes, &store)
             .unwrap();
         assert_eq!(result.phase, "waiting_connection");
-        assert_eq!(*api.calls.lock().unwrap(), ["select:physical", "release"]);
+        assert_eq!(*api.calls.lock().unwrap(), ["select:cable", "release"]);
         assert!(!result.restore_pending);
     }
 
@@ -1206,7 +1653,7 @@ mod tests {
             let id = if failure == "invalid" {
                 "missing"
             } else {
-                "physical"
+                "cable"
             };
             let result = controller.select_with_routes(id.into(), &routes, &store);
             assert!(result.is_err());
@@ -1260,7 +1707,10 @@ mod tests {
     #[test]
     fn applied_selection_with_save_failure_keeps_the_actual_target_truthful() {
         let (_, controller, store) = fixture();
-        let routes = FakeRoutes::new(vec![capture("first", &[]), capture("second", &[])]);
+        let routes = FakeRoutes::new(vec![
+            capture("first", &["render-first"]),
+            capture("second", &["render-second"]),
+        ]);
         controller
             .select_with_routes("first".into(), &routes, &store)
             .unwrap();
@@ -1369,13 +1819,21 @@ mod tests {
             SimulatedPlatform::PHYSICAL_MICROPHONE_ID,
             SimulatedPlatform::CABLE_MICROPHONE_ID,
         ] {
-            let selected = controller.select(id.into(), &platform, &store).unwrap();
-            assert_eq!(selected.phase, "ready");
+            let physical = id == SimulatedPlatform::PHYSICAL_MICROPHONE_ID;
+            let selected = if physical {
+                controller.use_now(id.into(), &platform, &store).unwrap()
+            } else {
+                controller.select(id.into(), &platform, &store).unwrap()
+            };
+            assert_eq!(selected.phase, if physical { "external" } else { "ready" });
             assert_eq!(selected.current_microphone_id.as_deref(), Some(id));
-            assert_eq!(selected.target_microphone_id.as_deref(), Some(id));
+            assert_eq!(
+                selected.target_microphone_id.as_deref(),
+                Some(SimulatedPlatform::CABLE_MICROPHONE_ID)
+            );
             assert_eq!(
                 store.load().unwrap().target_microphone_id.as_deref(),
-                Some(id)
+                Some(SimulatedPlatform::CABLE_MICROPHONE_ID)
             );
             assert_eq!(
                 platform.audio_snapshot().selected_endpoint_id,
@@ -1442,17 +1900,14 @@ mod tests {
             .unwrap();
         let routes = FakeRoutes::new(vec![capture("physical", &[])]);
         let selected = controller
-            .select_with_routes("physical".into(), &routes, &store)
+            .use_now_with_routes("physical".into(), &routes, &store)
             .unwrap();
-        assert_eq!(selected.phase, "ready");
-        assert_eq!(*api.calls.lock().unwrap(), ["select:physical"]);
+        assert_eq!(selected.phase, "external");
+        assert_eq!(*api.calls.lock().unwrap(), ["use_now:physical"]);
         assert!(routes.opens.lock().unwrap().is_empty());
         let saved = store.load().unwrap();
-        assert_eq!(saved.target_microphone_id.as_deref(), Some("physical"));
-        assert_eq!(
-            saved.target_microphone_name.as_deref(),
-            Some("Name physical")
-        );
+        assert!(saved.target_microphone_id.is_none());
+        assert!(saved.target_microphone_name.is_none());
         assert_eq!(saved.audio_endpoint_id.as_deref(), Some("existing-render"));
         assert!(saved.launch_at_login);
     }
@@ -1520,7 +1975,7 @@ mod tests {
                 .save_target_microphone("previous".into(), "Previous".into())
                 .unwrap();
             let routes = FakeRoutes::new(if busy {
-                vec![capture("physical", &[])]
+                vec![capture("cable", &["render"])]
             } else {
                 vec![]
             });
@@ -1528,7 +1983,7 @@ mod tests {
                 routes.current.lock().unwrap().phase = AudioPhase::Streaming;
             }
             assert!(controller
-                .select_with_routes("physical".into(), &routes, &store)
+                .select_with_routes("cable".into(), &routes, &store)
                 .is_err());
             assert!(api.calls.lock().unwrap().is_empty());
             assert_eq!(
@@ -1545,9 +2000,9 @@ mod tests {
         store
             .save_target_microphone("previous".into(), "Previous".into())
             .unwrap();
-        let routes = FakeRoutes::new(vec![capture("physical", &[])]);
+        let routes = FakeRoutes::new(vec![capture("cable", &["render"])]);
         assert!(controller
-            .select_with_routes("physical".into(), &routes, &store)
+            .select_with_routes("cable".into(), &routes, &store)
             .is_err());
         assert_eq!(
             store.load().unwrap().target_microphone_id.as_deref(),
@@ -1563,22 +2018,22 @@ mod tests {
             .with_file_name("blocked-settings.json");
         std::fs::create_dir(&path).unwrap();
         let blocked = SettingsStore::new(path);
-        let routes = FakeRoutes::new(vec![capture("physical", &[])]);
+        let routes = FakeRoutes::new(vec![capture("cable", &["render"])]);
         assert_eq!(
             controller
-                .select_with_routes("physical".into(), &routes, &blocked)
+                .select_with_routes("cable".into(), &routes, &blocked)
                 .unwrap_err(),
             SETTINGS_SAVE_FAILED
         );
         let snapshot = controller.snapshot().unwrap();
         assert_eq!(snapshot.phase, "ready");
-        assert_eq!(snapshot.target_microphone_id.as_deref(), Some("physical"));
+        assert_eq!(snapshot.target_microphone_id.as_deref(), Some("cable"));
     }
 
     #[test]
     fn external_default_change_never_overwrites_saved_target() {
         let (api, controller, store) = fixture();
-        let routes = FakeRoutes::new(vec![capture("target", &[])]);
+        let routes = FakeRoutes::new(vec![capture("target", &["render"])]);
         controller
             .select_with_routes("target".into(), &routes, &store)
             .unwrap();
@@ -1677,14 +2132,14 @@ mod tests {
         );
 
         controller
-            .select_with_routes("physical".into(), &routes, &store)
+            .use_now_with_routes("physical".into(), &routes, &store)
             .unwrap();
         let snapshot = controller.snapshot().unwrap();
-        assert_eq!(snapshot.phase, "ready");
-        assert_eq!(snapshot.target_microphone_id.as_deref(), Some("physical"));
+        assert_eq!(snapshot.phase, "external");
+        assert_eq!(snapshot.target_microphone_id.as_deref(), Some("cable"));
         assert_eq!(
             snapshot.target_microphone_name.as_deref(),
-            Some("Name physical")
+            Some("Saved cable")
         );
     }
 
@@ -1701,10 +2156,10 @@ mod tests {
 
         let (api, controller, store) = fixture();
         controller
-            .select_with_routes("physical".into(), &routes, &store)
+            .use_now_with_routes("physical".into(), &routes, &store)
             .unwrap();
         controller.reconcile_connection_with_routes(&routes, &store);
-        assert_eq!(*api.calls.lock().unwrap(), ["select:physical"]);
+        assert_eq!(*api.calls.lock().unwrap(), ["use_now:physical"]);
     }
 
     #[test]

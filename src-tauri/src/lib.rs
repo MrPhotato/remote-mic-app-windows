@@ -249,6 +249,21 @@ async fn select_microphone(
 }
 
 #[tauri::command]
+async fn use_microphone_now(
+    microphone_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<MicrophoneSelectionSnapshot, String> {
+    let microphone = Arc::clone(&state.microphone);
+    let platform = Arc::clone(&state.platform);
+    let settings = state.settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        microphone.use_now(microphone_id, platform.as_ref(), &settings)
+    })
+    .await
+    .map_err(|_| "切换当前麦克风失败".to_owned())?
+}
+
+#[tauri::command]
 async fn retry_audio_endpoint(state: tauri::State<'_, AppState>) -> Result<AudioSnapshot, String> {
     let platform = Arc::clone(&state.platform);
     let settings = state.settings.clone();
@@ -1491,6 +1506,7 @@ pub fn run() {
         list_microphones,
         get_microphone_selection,
         select_microphone,
+        use_microphone_now,
         retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
@@ -1542,6 +1558,7 @@ pub fn run() {
         list_microphones,
         get_microphone_selection,
         select_microphone,
+        use_microphone_now,
         retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
