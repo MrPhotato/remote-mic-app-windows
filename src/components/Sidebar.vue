@@ -4,7 +4,7 @@ import { useSlidingIndicator } from "../lib/sliding-indicator";
 import type { NavIcon, PageId } from "../navigation";
 import { navigationItems } from "../navigation";
 
-const props = defineProps<{ activePage: PageId }>();
+const props = defineProps<{ activePage: PageId; updateAvailable?: boolean }>();
 const emit = defineEmits<{ select: [page: PageId] }>();
 
 // 选中玻璃在侧栏项之间滑动（样式见 styles.css 的 nav.sliding-indicator）。
@@ -60,6 +60,7 @@ const ICON_PATHS: Record<NavIcon, { strokes: string[]; fills?: string[] }> = {
         class="nav-item"
         :class="{ active: activePage === item.id }"
         :aria-current="activePage === item.id ? 'page' : undefined"
+        :title="item.id === 'about' && updateAvailable ? '有新版本，前往查看' : undefined"
         type="button"
         @click="emit('select', item.id)"
       >
@@ -83,6 +84,7 @@ const ICON_PATHS: Record<NavIcon, { strokes: string[]; fills?: string[] }> = {
           />
         </svg>
         <span>{{ item.label }}</span>
+        <span v-if="item.id === 'about' && updateAvailable" class="nav-update-dot" aria-label="有新版本"></span>
       </button>
     </nav>
   </aside>

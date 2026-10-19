@@ -97,6 +97,49 @@ pub(crate) fn list_microphones() -> Result<Vec<MicrophoneEndpoint>, PlatformErro
     result
 }
 
+/// An occupied render interface may have one peer feeding the exact same
+/// verified recording device. Never substitute another microphone or infer
+/// this relationship from friendly names.
+pub(crate) fn alternate_render_for_same_microphone(
+    selected_id: &str,
+) -> Result<Option<String>, PlatformError> {
+    let enumerator = enumerator()?;
+    let captures = active_endpoints(&enumerator, eCapture)?;
+    let renders = active_endpoints(&enumerator, eRender)?;
+    let (alternate, reason) = choose_alternate_render(selected_id, &captures, &renders);
+    crate::ble::gatt_note(format!(
+        "audio_route action=alternate_interface terminal_result={} reason={reason}",
+        if alternate.is_some() {
+            "passed"
+        } else {
+            "unresolved"
+        },
+    ));
+    Ok(alternate)
+}
+
+fn choose_alternate_render(
+    selected_id: &str,
+    captures: &[Endpoint],
+    renders: &[Endpoint],
+) -> (Option<String>, &'static str) {
+    if has_unverified_virtual_endpoint(captures, renders) {
+        return (None, "unverified_virtual_identity");
+    }
+    let mut matching_pairs = captures.iter().filter_map(|capture| {
+        let paired = paired_render_ids(capture, captures, renders);
+        paired.iter().any(|id| id == selected_id).then_some(paired)
+    });
+    let Some(pair) = matching_pairs.next() else {
+        return (None, "selected_capture_pair_unverified");
+    };
+    if matching_pairs.next().is_some() || pair.len() != 2 {
+        return (None, "alternate_interface_ambiguous_or_absent");
+    }
+    let alternate = pair.into_iter().find(|id| id != selected_id);
+    (alternate, "same_verified_capture_unique_peer")
+}
+
 /// Finds a replacement only for an unavailable instance of the known base
 /// VB-CABLE driver. No default device, PnP state or audio stream is changed here.
 /// A disabled endpoint, an unknown old identity or ambiguous alternatives must
@@ -560,6 +603,79 @@ mod tests {
             paired_render_ids(&captures[0], &captures, &renders),
             vec!["render-16", "render-normal"]
         );
+    }
+
+    #[test]
+    fn busy_render_can_use_only_its_same_verified_capture_peer() {
+        let (mut captures, mut renders) = healthy_route();
+        captures.push(endpoint(
+            "other-capture",
+            "other-parent",
+            true,
+            "CABLE Output",
+            2,
+        ));
+        renders.push(endpoint(
+            "other-render",
+            "other-parent",
+            false,
+            "CABLE Input",
+            1,
+        ));
+        assert_eq!(
+            choose_alternate_render("render-16", &captures, &renders)
+                .0
+                .as_deref(),
+            Some("render-normal")
+        );
+        assert_eq!(
+            choose_alternate_render("render-normal", &captures, &renders)
+                .0
+                .as_deref(),
+            Some("render-16")
+        );
+        assert!(choose_alternate_render("other-render", &captures, &renders)
+            .0
+            .is_none());
+        assert!(choose_alternate_render("unknown", &captures, &renders)
+            .0
+            .is_none());
+    }
+
+    #[test]
+    fn busy_render_never_uses_missing_ambiguous_or_unverified_peers() {
+        let (captures, mut renders) = healthy_route();
+        renders.pop();
+        assert!(choose_alternate_render("render-16", &captures, &renders)
+            .0
+            .is_none());
+        let (captures, mut renders) = healthy_route();
+        renders.push(endpoint(
+            "third-render",
+            "new-parent",
+            false,
+            "CABLE Input",
+            1,
+        ));
+        assert!(choose_alternate_render("render-16", &captures, &renders)
+            .0
+            .is_none());
+        let (mut captures, renders) = healthy_route();
+        captures.push(endpoint(
+            "duplicate-capture",
+            "new-parent",
+            true,
+            "CABLE Output",
+            2,
+        ));
+        assert!(choose_alternate_render("render-16", &captures, &renders)
+            .0
+            .is_none());
+        let (captures, mut renders) = healthy_route();
+        renders[1].cable_parent = None;
+        assert!(choose_alternate_render("render-16", &captures, &renders)
+            .0
+            .is_none());
     }
 
     #[test]

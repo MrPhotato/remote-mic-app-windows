@@ -376,8 +376,9 @@ fn worker_loop(
                         .unwrap_or_default();
                     match AudioSink::open(&endpoint_id, attempt_id) {
                         Ok(opened) => {
-                            let kind = endpoint_kind(&endpoint_id, &opened.name);
-                            let snapshot = ready_snapshot(endpoint_id, opened.name.clone());
+                            let kind = endpoint_kind(&opened.endpoint_id, &opened.name);
+                            let snapshot =
+                                ready_snapshot(opened.endpoint_id.clone(), opened.name.clone());
                             sink = Some(opened);
                             *lock(&state) = snapshot.clone();
                             crate::ble::gatt_note(format!(
@@ -965,12 +966,13 @@ fn restore_endpoint(
 
     match AudioSink::open(&restored.id, attempt_id) {
         Ok(opened) => {
-            let kind = endpoint_kind(&restored.id, &opened.name);
-            let snapshot = ready_snapshot(restored.id, opened.name.clone());
+            let kind = endpoint_kind(&opened.endpoint_id, &opened.name);
+            let interface_fallback = opened.endpoint_id != restored.id;
+            let snapshot = ready_snapshot(opened.endpoint_id.clone(), opened.name.clone());
             *sink = Some(opened);
             *lock(state) = snapshot.clone();
             crate::ble::gatt_note(format!(
-                "audio_endpoint attempt_id={attempt_id} action=restore phase=completed terminal_result=passed endpoint_kind={kind} rebound={} friendly_name_changed={} elapsed_ms={}",
+                "audio_endpoint attempt_id={attempt_id} action=restore phase=completed terminal_result=passed endpoint_kind={kind} rebound={} friendly_name_changed={} interface_fallback={interface_fallback} elapsed_ms={}",
                 restored.replaced, restored.renamed,
                 started.elapsed().as_millis()
             ));
@@ -1201,25 +1203,108 @@ struct AudioSink {
     last_session_mute_check: Instant,
 }
 
-impl AudioSink {
+struct InitializedAudioClient {
+    endpoint_id: String,
+    name: String,
+    client: AudioClient,
+    is_virtual_cable: bool,
+}
+
+struct AudioClientOpenFailure {
+    error: PlatformError,
+    occupied_at_initialize: bool,
+}
+
+fn client_open_failure(
+    attempt_id: u64,
+    stage: &'static str,
+    operation: &'static str,
+    error: wasapi::WasapiError,
+) -> AudioClientOpenFailure {
+    let hresult = match &error {
+        wasapi::WasapiError::Windows(error) => Some(error.code().0 as u32),
+        _ => None,
+    };
+    let occupied_at_initialize = stage == "client_initialize"
+        && hresult == Some(windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_IN_USE.0 as u32);
+    crate::ble::gatt_note(format!(
+        "audio_endpoint attempt_id={attempt_id} action=open phase=completed terminal_result=failed stage={stage} error_domain=wasapi hresult={} alternate_eligible={occupied_at_initialize}",
+        hresult.map(|code| format!("0x{code:08X}")).unwrap_or_else(|| "unavailable".to_owned()),
+    ));
+    AudioClientOpenFailure {
+        error: audio_error(operation, error),
+        occupied_at_initialize,
+    }
+}
+
+fn open_with_verified_alternate<T>(
+    endpoint_id: &str,
+    attempt_id: u64,
+    mut open: impl FnMut(&str) -> Result<T, AudioClientOpenFailure>,
+    resolve: impl FnOnce(&str) -> Result<Option<String>, PlatformError>,
+) -> Result<T, PlatformError> {
+    let original = match open(endpoint_id) {
+        Ok(opened) => return Ok(opened),
+        Err(error) if error.occupied_at_initialize => error,
+        Err(error) => return Err(error.error),
+    };
+    let alternate = match resolve(endpoint_id) {
+        Ok(Some(alternate)) if alternate != endpoint_id => alternate,
+        result => {
+            crate::ble::gatt_note(format!(
+                "audio_endpoint attempt_id={attempt_id} action=alternate_interface phase=completed terminal_result=unresolved reason={}",
+                if result.is_err() { "inventory_failed" } else { "no_verified_peer" },
+            ));
+            return Err(original.error);
+        }
+    };
+    // A single attempt at the sole verified peer. Never recurse, loop over
+    // devices, or release another application's audio client.
+    match open(&alternate) {
+        Ok(opened) => {
+            crate::ble::gatt_note(format!(
+                "audio_endpoint attempt_id={attempt_id} action=alternate_interface phase=completed terminal_result=passed reason=same_microphone_peer_opened"
+            ));
+            Ok(opened)
+        }
+        Err(_) => {
+            crate::ble::gatt_note(format!(
+                "audio_endpoint attempt_id={attempt_id} action=alternate_interface phase=completed terminal_result=failed reason=peer_open_failed original_selection_preserved=true"
+            ));
+            Err(original.error)
+        }
+    }
+}
+
+impl InitializedAudioClient {
+    // Only initializes a shared stream. No Start, PCM, volume or mute changes.
     fn open(endpoint_id: &str, attempt_id: u64) -> Result<Self, PlatformError> {
-        let enumerator =
-            DeviceEnumerator::new().map_err(|error| audio_error("创建端点枚举器", error))?;
-        let device = enumerator
-            .get_device(endpoint_id)
-            .map_err(|error| audio_error("打开所选输出端点", error))?;
-        let name = device
-            .get_friendlyname()
-            .map_err(|error| audio_error("读取所选端点名称", error))?;
+        open_with_verified_alternate(
+            endpoint_id,
+            attempt_id,
+            |id| Self::open_once(id, attempt_id),
+            crate::audio_devices::alternate_render_for_same_microphone,
+        )
+    }
+
+    fn open_once(endpoint_id: &str, attempt_id: u64) -> Result<Self, AudioClientOpenFailure> {
+        let enumerator = DeviceEnumerator::new().map_err(|error| {
+            client_open_failure(attempt_id, "enumerator", "创建端点枚举器", error)
+        })?;
+        let device = enumerator.get_device(endpoint_id).map_err(|error| {
+            client_open_failure(attempt_id, "device_lookup", "打开所选输出端点", error)
+        })?;
+        let name = device.get_friendlyname().map_err(|error| {
+            client_open_failure(attempt_id, "device_name", "读取所选端点名称", error)
+        })?;
         let is_virtual_cable = crate::is_virtual_cable_output_name(&name);
         crate::ble::gatt_note(format!(
             "audio_endpoint attempt_id={attempt_id} action=open phase=properties_read result=passed endpoint_kind={} virtual_cable={is_virtual_cable}",
             endpoint_kind(endpoint_id, &name)
         ));
-        ensure_cable_endpoint_unmuted(endpoint_id, is_virtual_cable, "open")?;
-        let mut client = device
-            .get_iaudioclient()
-            .map_err(|error| audio_error("创建 WASAPI 客户端", error))?;
+        let mut client = device.get_iaudioclient().map_err(|error| {
+            client_open_failure(attempt_id, "client_activate", "创建 WASAPI 客户端", error)
+        })?;
         let format = WaveFormat::new(
             16,
             16,
@@ -1228,9 +1313,9 @@ impl AudioSink {
             SOURCE_CHANNELS,
             None,
         );
-        let (default_period, _) = client
-            .get_device_period()
-            .map_err(|error| audio_error("读取 WASAPI 设备周期", error))?;
+        let (default_period, _) = client.get_device_period().map_err(|error| {
+            client_open_failure(attempt_id, "device_period", "读取 WASAPI 设备周期", error)
+        })?;
         client
             .initialize_client(
                 &format,
@@ -1240,24 +1325,58 @@ impl AudioSink {
                     buffer_duration_hns: default_period,
                 },
             )
-            .map_err(|error| audio_error("初始化 16 kHz WASAPI 输出", error))?;
+            .map_err(|error| {
+                client_open_failure(
+                    attempt_id,
+                    "client_initialize",
+                    "初始化 16 kHz WASAPI 输出",
+                    error,
+                )
+            })?;
         crate::ble::gatt_note(format!(
             "audio_endpoint attempt_id={attempt_id} action=open phase=client_initialized result=passed share_mode=shared autoconvert=true requested_sample_rate=16000 requested_channels=1 buffer_period_hns={default_period}"
         ));
+        Ok(Self {
+            endpoint_id: endpoint_id.to_owned(),
+            name,
+            client,
+            is_virtual_cable,
+        })
+    }
+}
+
+impl AudioSink {
+    fn open(endpoint_id: &str, attempt_id: u64) -> Result<Self, PlatformError> {
+        let InitializedAudioClient {
+            endpoint_id,
+            name,
+            client,
+            is_virtual_cable,
+        } = InitializedAudioClient::open(endpoint_id, attempt_id)?;
+        // Do not adjust the occupied interface that could not be initialized.
+        ensure_cable_endpoint_unmuted(&endpoint_id, is_virtual_cable, "open")?;
         if is_virtual_cable {
             client
                 .get_audiosessioncontrol()
                 .and_then(|control| control.set_ducking_preference(true))
-                .map_err(|error| audio_error("关闭 SayAll 会话的系统通信自动静音", error))?;
+                .map_err(|error| {
+                    client_open_failure(
+                        attempt_id,
+                        "ducking_preference",
+                        "关闭 SayAll 会话的系统通信自动静音",
+                        error,
+                    )
+                    .error
+                })?;
             crate::ble::gatt_note(
                 "session_ducking_optout checkpoint=open result=ok enabled=true".to_owned(),
             );
         }
-        let render_client = client
-            .get_audiorenderclient()
-            .map_err(|error| audio_error("创建 WASAPI 渲染客户端", error))?;
+        let render_client = client.get_audiorenderclient().map_err(|error| {
+            client_open_failure(attempt_id, "render_client", "创建 WASAPI 渲染客户端", error).error
+        })?;
         let mut sink = Self {
-            endpoint_id: endpoint_id.to_owned(),
+            endpoint_id,
             name,
             client,
             render_client,
@@ -1556,6 +1675,165 @@ impl Drop for WasapiApartment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn occupied_open_failure() -> AudioClientOpenFailure {
+        client_open_failure(
+            0,
+            "client_initialize",
+            "测试初始化",
+            wasapi::WasapiError::Windows(windows::core::Error::from_hresult(
+                windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_IN_USE,
+            )),
+        )
+    }
+
+    #[test]
+    fn alternate_is_eligible_only_for_initialize_device_in_use() {
+        assert!(occupied_open_failure().occupied_at_initialize);
+        for stage in ["client_activate", "device_period", "ducking_preference"] {
+            assert!(
+                !client_open_failure(
+                    0,
+                    stage,
+                    "测试",
+                    wasapi::WasapiError::Windows(windows::core::Error::from_hresult(
+                        windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_IN_USE
+                    ))
+                )
+                .occupied_at_initialize
+            );
+        }
+        for error in [
+            wasapi::WasapiError::UnsupportedFormat,
+            wasapi::WasapiError::Windows(windows::core::Error::from_hresult(
+                windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED,
+            )),
+        ] {
+            assert!(
+                !client_open_failure(0, "client_initialize", "测试", error).occupied_at_initialize
+            );
+        }
+    }
+
+    #[test]
+    fn occupied_route_opens_one_verified_peer_and_returns_actual_identity() {
+        let mut calls = Vec::new();
+        let actual = open_with_verified_alternate(
+            "selected",
+            0,
+            |id| {
+                calls.push(id.to_owned());
+                if id == "selected" {
+                    Err(occupied_open_failure())
+                } else {
+                    Ok(id.to_owned())
+                }
+            },
+            |_| Ok(Some("paired".to_owned())),
+        )
+        .unwrap();
+        assert_eq!(calls, ["selected", "paired"]);
+        assert_eq!(actual, "paired");
+        assert_eq!(
+            ready_snapshot(actual, "CABLE Input".to_owned())
+                .selected_endpoint_id
+                .as_deref(),
+            Some("paired")
+        );
+    }
+
+    #[test]
+    fn occupied_peer_failure_stops_after_one_try_and_keeps_original_failure() {
+        let mut calls = Vec::new();
+        let result: Result<(), _> = open_with_verified_alternate(
+            "selected",
+            0,
+            |id| {
+                calls.push(id.to_owned());
+                Err(if id == "selected" {
+                    occupied_open_failure()
+                } else {
+                    AudioClientOpenFailure {
+                        error: PlatformError::Audio("peer failure".to_owned()),
+                        occupied_at_initialize: true,
+                    }
+                })
+            },
+            |_| Ok(Some("paired".to_owned())),
+        );
+        assert_eq!(calls, ["selected", "paired"]);
+        assert!(result.unwrap_err().to_string().contains("测试初始化"));
+    }
+
+    #[test]
+    fn unavailable_verified_peer_does_not_try_other_devices() {
+        for resolved in [
+            Ok(None),
+            Ok(Some("selected".to_owned())),
+            Err(PlatformError::Audio("inventory".to_owned())),
+        ] {
+            let mut calls = 0;
+            let result: Result<(), _> = open_with_verified_alternate(
+                "selected",
+                0,
+                |_| {
+                    calls += 1;
+                    Err(occupied_open_failure())
+                },
+                |_| resolved,
+            );
+            assert!(result.is_err());
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
+    fn healthy_or_other_failed_route_never_resolves_an_alternate() {
+        let result = open_with_verified_alternate(
+            "selected",
+            0,
+            |_| Ok("ready"),
+            |_| panic!("healthy route must not enumerate peers"),
+        );
+        assert_eq!(result.unwrap(), "ready");
+        let result: Result<(), _> = open_with_verified_alternate(
+            "selected",
+            0,
+            |_| {
+                Err(AudioClientOpenFailure {
+                    error: PlatformError::Audio("not occupied".to_owned()),
+                    occupied_at_initialize: false,
+                })
+            },
+            |_| panic!("unrelated failure must not enumerate peers"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[ignore = "Local occupied virtual route required; initializes only, no playback or volume writes"]
+    fn shared_virtual_peer_recovery_live() {
+        wasapi::initialize_mta().ok().expect("COM MTA");
+        let _apartment = WasapiApartment;
+        let path = std::env::var("SAYALL_AUDIO_PROBE_SETTINGS")
+            .expect("explicit private settings fixture required");
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).expect("settings readable"))
+                .expect("settings JSON");
+        let saved = settings["audio_endpoint_id"].as_str().expect("saved route");
+        let paired = crate::audio_devices::alternate_render_for_same_microphone(saved)
+            .expect("verified inventory")
+            .expect("exactly one same-microphone peer required");
+        let failure = match InitializedAudioClient::open_once(saved, 0) {
+            Ok(_) => panic!("saved route must currently reproduce DEVICE_IN_USE"),
+            Err(failure) => failure,
+        };
+        assert!(failure.occupied_at_initialize);
+        let opened = InitializedAudioClient::open(saved, 0).expect("production shared fallback");
+        assert_eq!(opened.endpoint_id, paired);
+        assert_ne!(opened.endpoint_id, saved);
+        println!("audio_peer_probe original_initialize=device_in_use recovered=true same_verified_microphone=true actual_route_is_peer=true stream_started=false pcm_written=false volume_changed=false selection_persisted=false");
+    }
 
     #[cfg(windows)]
     struct RestoreEndpointMute {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import ReleaseUpdateCard from "../components/ReleaseUpdateCard.vue";
 import type { RuntimeSnapshot, ThemePreference } from "../lib/bridge";
 import {
   formatDiagnosticReport,
@@ -120,7 +121,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section>
+  <section class="about-page">
     <header class="page-header">
       <div>
         <h1>关于</h1>
@@ -135,6 +136,8 @@ onMounted(() => {
         <span class="version-chip">版本 {{ runtime?.appVersion ?? "0.1.0" }}</span>
       </div>
     </article>
+
+    <ReleaseUpdateCard />
 
     <article class="card appearance-card">
       <h2>外观</h2>
@@ -235,6 +238,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.about-page { display: grid; gap: 12px; }
+.about-page > * { margin-top: 0; margin-bottom: 0; }
 /* 启动行为与许可都是一两行的小卡，并排放置省出一屏高度 */
 .about-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .about-grid .card > .muted { margin: 3px 0 12px; font-size: 13.5px; }

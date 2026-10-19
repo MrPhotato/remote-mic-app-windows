@@ -204,9 +204,9 @@ describe("app update shared state", () => {
 
   it("进度文案：带总长显示双值，无总长只显示已下载", () => {
     expect(
-      appUpdateProgressText({ downloaded: 1_048_576, contentLength: 4_194_304, finished: false }),
+      appUpdateProgressText({ phase: "downloading", downloaded: 1_048_576, contentLength: 4_194_304, finished: false }),
     ).toBe("1.0 MB / 4.0 MB");
-    expect(appUpdateProgressText({ downloaded: 524_288, contentLength: null, finished: false })).toBe(
+    expect(appUpdateProgressText({ phase: "downloading", downloaded: 524_288, contentLength: null, finished: false })).toBe(
       "0.5 MB",
     );
   });

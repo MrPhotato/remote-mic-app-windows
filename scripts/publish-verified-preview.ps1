@@ -37,5 +37,5 @@ $result = [ordered]@{result='passed'; release_id=$published.id; url=$published.h
     installer_sha256=$metadata.installer_sha256; authenticode_status=$authenticode;
     assets=@($published.assets | Select-Object id,name,size,digest)}
 $result | ConvertTo-Json -Depth 6 | Set-Content artifacts/release-verification.json -Encoding utf8
-"## Preview 已发布`n`n$($published.html_url)`n`nSource: $source`n`n安装器 SHA256: $($metadata.installer_sha256)`n`n6 个远端附件、来源、SHA256 和独立 minisign 验证 passed。应用内自动更新关闭。" >> $env:GITHUB_STEP_SUMMARY
+"## Preview 已发布`n`n$($published.html_url)`n`nSource: $source`n`n安装器 SHA256: $($metadata.installer_sha256)`n`n6 个远端附件、来源、SHA256 和独立 minisign 验证 passed。客户端更新方式见版本说明。" >> $env:GITHUB_STEP_SUMMARY
 Write-Host "Published and verified ${Tag}: $($published.html_url)"

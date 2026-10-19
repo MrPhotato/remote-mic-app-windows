@@ -5,6 +5,124 @@
 !define SAYALL_VB_CABLE_SERVICE_KEY "SYSTEM\CurrentControlSet\Services\VBAudioVACMME"
 !define SAYALL_VB_CABLE_DOWNLOAD_URL "https://vb-audio.com/Cable/"
 
+; A content-versioned icon path avoids reusing the executable's cached Shell icon.
+; Keep in sync with bundle.resources; the suffix is the ICO's SHA-256 prefix.
+!define SAYALL_SHORTCUT_ICON "sayall-shortcut-532a10a81c7d.ico"
+!define SAYALL_SHCNE_UPDATEITEM 0x00002000
+!define SAYALL_SHCNF_PATHW_FLUSHNOWAIT 0x00003005
+
+; Load the existing link and change only its default icon. Do not rebuild links:
+; arguments, working directory, hotkey, description, show mode and other stored
+; properties belong to the user. An explicit custom icon is left untouched.
+Function SayAllRefreshShortcutIcon
+  Exch $5
+  Exch
+  Exch $6
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  StrCpy $0 0
+  StrCpy $1 0
+  StrCpy $4 0
+  IfFileExists "$5" 0 sayall_icon_done
+  IfFileExists "$INSTDIR\${SAYALL_SHORTCUT_ICON}" 0 sayall_icon_missing
+  !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
+  ${If} $0 P= 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  ${IUnknown::QueryInterface} $0 '("${IID_IPersistFile}",.r1).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  ${IPersistFile::Load} $1 '("$5", ${STGM_READWRITE}).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  ${IShellLink::GetPath} $0 '(.r2, ${NSIS_MAX_STRLEN}, 0, ${SLGP_RAWPATH}).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  StrCmp $2 "$6" 0 sayall_icon_wrong_target
+  ${IShellLink::GetIconLocation} $0 '(.r2, ${NSIS_MAX_STRLEN},.r3).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  StrCmp $3 0 0 sayall_icon_custom
+  StrCmp $2 "$INSTDIR\${SAYALL_SHORTCUT_ICON}" sayall_icon_notify
+  StrCmp $2 "" sayall_icon_set
+  StrCmp $2 "$6" sayall_icon_set sayall_icon_custom
+sayall_icon_set:
+  ${IShellLink::SetIconLocation} $0 '("$INSTDIR\${SAYALL_SHORTCUT_ICON}",0).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_write_failed
+  ${EndIf}
+  ${IPersistFile::Save} $1 '("$5",1).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_write_failed
+  ${EndIf}
+  DetailPrint "SayAll shortcut_icon result=updated"
+sayall_icon_notify:
+  System::Call 'shell32::SHChangeNotify(i ${SAYALL_SHCNE_UPDATEITEM}, i ${SAYALL_SHCNF_PATHW_FLUSHNOWAIT}, w "$5", p 0)'
+  DetailPrint "SayAll shortcut_icon result=refresh_requested"
+  Goto sayall_icon_done
+sayall_icon_missing:
+  DetailPrint "SayAll shortcut_icon result=skipped reason=resource_missing"
+  Goto sayall_icon_done
+sayall_icon_wrong_target:
+  DetailPrint "SayAll shortcut_icon result=skipped reason=target_mismatch"
+  Goto sayall_icon_done
+sayall_icon_custom:
+  DetailPrint "SayAll shortcut_icon result=skipped reason=custom_icon"
+  Goto sayall_icon_done
+sayall_icon_read_failed:
+  DetailPrint "SayAll shortcut_icon result=failed reason=read hr=$4"
+  Goto sayall_icon_done
+sayall_icon_write_failed:
+  DetailPrint "SayAll shortcut_icon result=failed reason=write hr=$4"
+sayall_icon_done:
+  ${If} $1 P<> 0
+    ${IUnknown::Release} $1 ""
+  ${EndIf}
+  ${If} $0 P<> 0
+    ${IUnknown::Release} $0 ""
+  ${EndIf}
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+  Pop $6
+  Pop $5
+FunctionEnd
+
+!macro SayAllNotifyOwnedShortcutIcon _shortcut
+  Push "$INSTDIR\${MAINBINARYNAME}.exe"
+  Push "${_shortcut}"
+  Call SayAllRefreshShortcutIcon
+!macroend
+
+!macro SayAllRefreshInstalledIcons
+  ; Preserve the surrounding installer state as the scoped link helper is called.
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    System::Call 'shell32::SHChangeNotify(i ${SAYALL_SHCNE_UPDATEITEM}, i ${SAYALL_SHCNF_PATHW_FLUSHNOWAIT}, w "$INSTDIR\${MAINBINARYNAME}.exe", p 0)'
+    !insertmacro SayAllNotifyOwnedShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk"
+    ${If} $AppStartMenuFolder != ""
+      !insertmacro SayAllNotifyOwnedShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+    ${EndIf}
+    !insertmacro SayAllNotifyOwnedShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+  ${EndIf}
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
 ; ── 部署前先请应用优雅退出（2026-09-16）───────────────────────────────
 ;
 ; 背景：Tauri 默认模板的 `CheckIfAppIsRunning`（utils.nsh）在检测到应用正在
@@ -35,7 +153,7 @@
 ;
 ; 本宏在 `NSIS_HOOK_PREINSTALL` / `NSIS_HOOK_PREUNINSTALL` 中执行，而 Tauri 的
 ; `CheckIfAppIsRunning` 在 `Section Install` 里**紧随其后**才跑。因此应用只要能
-; 在这段宽限期内自行退出，后续检测自然落空、连弹窗都不会出现；超时才落回原有行为。
+; 在这段宽限期内自行退出，后续检测自然落空；超时则中止，禁止落入强杀分支。
 ;
 ; 信号用**会话内**命名事件：非提权进程没有 `SeCreateGlobalPrivilege`，无法创建
 ; `Global\` 命名对象；而安装器与应用同处一个登录会话，`Local\` 命名空间对两者
@@ -58,6 +176,7 @@
 !define SAYALL_EVENT_MODIFY_STATE 0x0002
 ; 旧版（无监听线程）正在运行时的退出码：不装、不杀，交给应用内更新。
 !define SAYALL_LEGACY_RUNNING_ERROR_LEVEL 1639
+!define SAYALL_EXIT_TIMEOUT_ERROR_LEVEL 1640
 
 !macro SayAllRequestGracefulExit _uid
   Push $R8
@@ -101,6 +220,13 @@
         ${If} $R9 > 0
           Goto sayall_wait_${_uid}
         ${EndIf}
+        ; Do not reach Tauri's process termination fallback when cleanup stalls.
+        DetailPrint "SayAll graceful_exit result=failed reason=timeout operation=${_uid}"
+        SetErrorLevel ${SAYALL_EXIT_TIMEOUT_ERROR_LEVEL}
+        ${IfNot} ${Silent}
+          MessageBox MB_ICONEXCLAMATION|MB_OK "无线麦尚未完成退出，本次安装已停止。请稍后重试。$\r$\n$\r$\nSayAll has not finished closing. Installation stopped; please try again later."
+        ${EndIf}
+        Abort
       sayall_done_${_uid}:
     ${Else}
       ; 进程在跑但事件打不开 = 运行的是没有监听线程的旧版（0.2.10 及更早）。
@@ -157,6 +283,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro SayAllRefreshInstalledIcons
   Push $R8
   ReadRegStr $R8 HKLM "${SAYALL_VB_CABLE_SERVICE_KEY}" "DisplayName"
   ${If} $R8 == ""

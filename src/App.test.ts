@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import App from "./App.vue";
-import { getButtonMappings, type ButtonMappings } from "./lib/bridge";
+import { getButtonMappings, getRuntimeSnapshot, isTauriRuntime, type ButtonMappings, type RuntimeSnapshot } from "./lib/bridge";
+const startupCheck = vi.hoisted(() => vi.fn());
+vi.mock("./lib/release-check-state", () => ({ useReleaseCheck: () => ({ result: { value: null }, checkAtStartup: startupCheck }) }));
+vi.mock("./lib/frontend-diagnostics", () => ({ reportFrontendEvent: vi.fn() }));
 
 vi.mock("./lib/bridge", async (original) => ({
   ...await original<typeof import("./lib/bridge")>(),
   getRuntimeSnapshot: vi.fn(async () => null),
   getButtonMappings: vi.fn(),
+  isTauriRuntime: vi.fn(() => false),
 }));
 
 const saved: ButtonMappings = { enabled: true, actions: { ok: {
@@ -16,6 +20,7 @@ const saved: ButtonMappings = { enabled: true, actions: { ok: {
 let wrapper: VueWrapper | undefined;
 function mountApp() {
   wrapper = mount(App, { global: { stubs: {
+    WindowTitlebar: true,
     CodingPage: { template: '<section data-page="coding">Current page</section>' },
     AboutPage: { template: '<section data-page="about">About</section>' },
     ButtonsPage: { props: ["initialMappings"], template: '<section data-page="buttons">{{ initialMappings.actions.ok.single.chord.keys[0] }}</section>' },
@@ -33,10 +38,25 @@ function deferRead() {
 beforeEach(() => {
   localStorage.clear();
   vi.mocked(getButtonMappings).mockReset().mockResolvedValue(saved);
+  vi.mocked(getRuntimeSnapshot).mockReset().mockResolvedValue(null as unknown as RuntimeSnapshot);
+  vi.mocked(isTauriRuntime).mockReturnValue(false);
+  startupCheck.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => { wrapper?.unmount(); wrapper = undefined; });
 
 describe("prepared mapping page navigation", () => {
+  it("仅在原生运行状态就绪后自动检查一次，切页不重复查询", async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true);
+    vi.mocked(getRuntimeSnapshot).mockResolvedValue({ appVersion: "0.3.7", platform: { connection: { voiceState: "idle" } } } as RuntimeSnapshot);
+    mountApp(); await flushPromises();
+    expect(startupCheck).toHaveBeenCalledExactlyOnceWith("0.3.7");
+    await select("关于"); await select("按键"); await flushPromises();
+    expect(startupCheck).toHaveBeenCalledOnce();
+  });
+  it("浏览器预览不会启动后台查询", async () => {
+    mountApp(); await flushPromises();
+    expect(startupCheck).not.toHaveBeenCalled();
+  });
   it("keeps the current page until a complete configuration can be shown", async () => {
     const resolve = deferRead();
     mountApp();

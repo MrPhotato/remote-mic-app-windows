@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Remote Coding",
-  "version": "0.3.5",
+  "version": "0.3.11",
   "identifier": "local.remote-coding.windows",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -17,7 +17,7 @@
         "height": 732,
         "minWidth": 1029,
         "minHeight": 732,
-        "decorations": true,
+        "decorations": false,
         "resizable": true,
         "center": true
       }
@@ -42,6 +42,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "icons/icon.ico": "sayall-shortcut-532a10a81c7d.ico"
+    },
     "windows": {
       "allowDowngrades": false,
       "webviewInstallMode": {

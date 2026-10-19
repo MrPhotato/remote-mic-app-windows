@@ -44,6 +44,16 @@ export interface MicrophoneEndpoint {
   renderEndpointIds: string[];
 }
 
+export interface MicrophoneSelectionSnapshot {
+  targetMicrophoneId: string | null;
+  targetMicrophoneName: string | null;
+  currentMicrophoneId: string | null;
+  currentMicrophoneName: string | null;
+  phase: "unconfigured" | "ready" | "failed" | "external";
+  lastError: string | null;
+  restorePending: boolean;
+}
+
 export interface AudioSnapshot {
   phase: AudioPhase;
   selectedEndpointId: string | null;
@@ -303,6 +313,7 @@ export async function setLaunchAtLogin(enabled: boolean): Promise<boolean> {
 }
 
 export interface AppUpdateProgress {
+  phase: "preparing" | "downloading" | "verifying" | "installing";
   downloaded: number;
   contentLength: number | null;
   finished: boolean;
@@ -490,16 +501,58 @@ export async function disconnectRemote(): Promise<ConnectionSnapshot> {
 
 export async function listAudioEndpoints(): Promise<AudioEndpoint[]> {
   if (!isTauriRuntime()) {
-    throw new Error("当前是浏览器预览，无法读取音频设备");
+    return [{ id: "preview-cable-input", name: "CABLE Input (VB-Audio Virtual Cable)", isVirtualCableCandidate: true }];
   }
   return invoke<AudioEndpoint[]>("list_audio_endpoints");
 }
 
 export async function listMicrophones(): Promise<MicrophoneEndpoint[]> {
   if (!isTauriRuntime()) {
-    throw new Error("当前是浏览器预览，无法读取麦克风");
+    return browserMicrophones.map((microphone) => ({
+      ...microphone,
+      renderEndpointIds: [...microphone.renderEndpointIds],
+      isDefault: microphone.id === browserMicrophoneSelection.currentMicrophoneId,
+    }));
   }
   return invoke<MicrophoneEndpoint[]>("list_microphones");
+}
+
+const browserMicrophones: MicrophoneEndpoint[] = [
+  { id: "preview-cable", name: "CABLE Output (VB-Audio Virtual Cable)", isVirtualCableCandidate: true, isDefault: false, isDefaultCommunications: false, renderEndpointIds: ["preview-cable-input"] },
+  { id: "preview-microphone", name: "Microphone Array (Realtek Audio)", isVirtualCableCandidate: false, isDefault: true, isDefaultCommunications: false, renderEndpointIds: [] },
+];
+let browserMicrophoneSelection: MicrophoneSelectionSnapshot = {
+  targetMicrophoneId: "preview-microphone", targetMicrophoneName: "Microphone Array (Realtek Audio)",
+  currentMicrophoneId: "preview-microphone", currentMicrophoneName: "Microphone Array (Realtek Audio)",
+  phase: "ready", lastError: null, restorePending: false,
+};
+
+export async function getMicrophoneSelection(): Promise<MicrophoneSelectionSnapshot> {
+  if (!isTauriRuntime()) return { ...browserMicrophoneSelection };
+  return invoke<MicrophoneSelectionSnapshot>("get_microphone_selection");
+}
+
+export async function selectMicrophone(microphoneId: string): Promise<MicrophoneSelectionSnapshot> {
+  if (!isTauriRuntime()) {
+    const microphone = browserMicrophones.find((item) => item.id === microphoneId);
+    if (!microphone) throw new Error("麦克风暂不可用");
+    browserMicrophoneSelection = {
+      targetMicrophoneId: microphone.id, targetMicrophoneName: microphone.name,
+      currentMicrophoneId: microphone.id, currentMicrophoneName: microphone.name,
+      phase: "ready", lastError: null, restorePending: false,
+    };
+    if (microphone.isVirtualCableCandidate) {
+      browserSnapshot.platform.audio = {
+        ...browserSnapshot.platform.audio,
+        phase: "ready",
+        selectedEndpointId: microphone.renderEndpointIds[0] ?? null,
+        selectedEndpointName: "CABLE Input (VB-Audio Virtual Cable)",
+        lastError: null,
+      };
+    }
+    return { ...browserMicrophoneSelection };
+  }
+  return invoke<MicrophoneSelectionSnapshot>("select_microphone", { microphoneId });
 }
 
 export async function retryAudioEndpoint(): Promise<AudioSnapshot> {
@@ -772,11 +825,11 @@ export async function reportThemeResult(report: ThemeResultReport): Promise<void
 }
 
 /** 下载并安装已检查到的更新（Windows 上安装成功时应用会退出并由安装器重启）。 */
-export async function installAppUpdate(): Promise<void> {
+export async function installAppUpdate(expectedVersion: string): Promise<void> {
   if (!isTauriRuntime()) {
     throw new Error("当前是浏览器预览，无法安装更新");
   }
-  await invoke("install_app_update");
+  await invoke("install_app_update", { expectedVersion });
 }
 
 /** 订阅更新下载进度；浏览器预览下为空订阅。 */

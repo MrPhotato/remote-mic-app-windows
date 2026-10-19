@@ -2,6 +2,25 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 应用内标题栏、自动检查和图标通知（2026-10-19）
+
+- 对照 [Tauri 自定义窗口](https://v2.tauri.app/learn/window-customization/) 与 [Window API](https://v2.tauri.app/reference/javascript/api/namespacewindow/)，使用 `decorations: false`、内置拖动区域和公开 minimize/toggleMaximize/close 接口；不自行实现窗口拖拽坐标或底层窗口钩子。液态玻璃外观沿用本仓库设计令牌。close 保持现有 CloseRequested → 托盘路径，未改动语音和连接清理。
+- 参考当前锁定 Tauri/tao 源码的 Windows 无框边缘命中与最大化处理，不另写 resize。依据 [微软 Snap 标题栏说明](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/ui/apply-snap-layout-menu)，HTML 最大化按钮不会自动获得原生悬停布局菜单，本轮不宣称此能力；多显示器/DPI/系统贴靠需单独验收。
+- 用户本次明确要求启动时自动检查，替代上一节的“仅手动”产品行为。沿用本仓库公开 GitHub Release 选择器，成功缓存 6 小时、失败或未完成冷却 15 分钟，安装版本变化和时钟回退重新检查，手动检查可绕过缓存；不启用上游自动安装器。关于页卡片使用统一 12px 间隔。
+- 已安装程序的七帧 PE 图标与仓库 ICO 原始资源一致，桌面快捷方式目标正确。依照 [Windows SHChangeNotify](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify) 使用 `SHCNE_UPDATEITEM` 和 Unicode 路径通知，只处理本应用 exe 及目标匹配的已有快捷方式；不清空全局图标缓存、不重启 Explorer、不创建已被用户删除的快捷方式。未复制第三方实现。
+
+验证边界见 [WindowsWindowChrome](Testing/WindowsWindowChrome.md)。
+
+2026-10-19 回验后的布局修正沿用本仓库 Vue 状态/卡片结构：保留状态和时间位置，复查期间只替换状态文字、保留上次时间及说明，失败清除旧结果；不新增请求调度或动画依赖。仅布局验证使用可控响应，真实 GitHub API 行为沿用原有证据。
+
+用户确认桌面仍显示旧图后，依据 [Tauri 资源映射](https://v2.tauri.app/develop/resources/)、Windows [IShellLinkW.SetIconLocation](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishelllinkw-seticonlocation) 和 [IPersistFile.Save](https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save)，将同一 ICO 打包为带内容哈希的独立文件，加载已有链接后只保存图标位置，再定向通知。使用 NSIS 自带公开 COM 接口声明，不引入额外插件。目标不匹配、自定义图标、损坏链接、资源缺失均跳过；保留用户链接属性。已有链接升级及静默/被动安装适用；全新交互安装在完成页首次创建桌面链接，仍使用 exe 的新图标。未来更新 ICO 应显式迁移已知旧资源文件，不能以任意文件名前缀覆盖自定义图标。见 [桌面图标回验记录](Bugs/2026-10-19-desktop-icon-cache.md)。
+
+## 手动检查本仓库 Release（2026-10-19）
+
+参考 [GitHub 官方 Releases REST API](https://docs.github.com/en/rest/releases/releases#list-releases)：公开仓库可匿名读取，列表包含已发布预览版；`latest` 端点排除预览版，因此本功能读取分页列表并按 SemVer 选择最高版本。检查最高版本的发布页与 Windows 安装包归属、上传状态和大小，避免把发布不完整误报为已是最新。限流、网络和响应校验错误分别记录结构化诊断。
+
+对照既有 `src-tauri/src/updater.rs`，保留上游更新与自动安装禁用；新增独立手动检查，仅指向 `MrPhotato/remote-mic-app-windows`，不增加启动检查、后台轮询或下载。依据 [Tauri 官方 Opener 权限文档](https://v2.tauri.app/plugin/opener/)，仅允许打开本仓库版本发布页；发布说明按纯文本显示。未复制外部实现，验证见 [WindowsReleaseCheck](Testing/WindowsReleaseCheck.md)。
+
 ## 2026-10-14 按键目录、历史与默认配置
 
 - 0.2.15 修正上述五页签方案的布局回归：沿用现有可滚动列表，统一可视高度并为分类说明保留一行，使内容数量与搜索结果不改变下方工具入口位置；仅调整布局，不新增依赖或复制外部实现。
@@ -268,6 +287,8 @@
 
 ## 应用内更新（tauri-plugin-updater + GitHub Releases）调研来源（2026-09-05）
 
+2026-10-19 一键升级复核：[Tauri 官方 updater 文档](https://v2.tauri.app/plugin/updater/) 及本机锁定的 `tauri-plugin-updater 2.11.0`、Tauri NSIS 模板。复用 `download()` 的固定公钥验签和 `install()` 的 `/P /UPDATE /R`，不复制签名算法。签名通过后先执行本项目完整收尾，严格核实麦克风恢复与平台关闭；安装器只负责在同目录更新并启动一次。NSIS `/D=` 最后传入原安装目录，退出等待超时主动中止。运行时端点仅取用户点击的本仓库已发布版本，不使用环境变量覆盖或上游仓库通道；测试与真机边界见 [一键升级验证](Testing/WindowsOneClickUpdate.md)。
+
 场景：Windows 应用内"检查更新 + 下载安装"（GitHub-only、零自建服务器）。关键行为均以插件源码/官方文档原文核对，非推测：
 
 - **官方 updater 插件文档**（`v2.tauri.app/plugin/updater/`，免费开源，MIT/Apache-2.0）：静态 JSON 端点模式官方示例即 `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`（GitHub 302 到最新**稳定** Release 的资产，草稿/prerelease 不参与 latest）；`latest.json` 必需字段 `version`/`platforms.<target>.url`/`platforms.<target>.signature`，`signature` 为 `.sig` 文件**内容**（非路径）；签名强制不可关闭，私钥丢失即无法再向存量用户推送更新。
@@ -463,6 +484,20 @@ PKEY_Device_InstanceId，改用公开拓扑查询适配器属性；这是只读�
 本机只读检查已验证正常虚拟录音端和双播放接口、旧 Code 10 端点的替代关系；安装版
 与遥控器端到端边界见 [验证记录](Testing/WindowsAudioRecovery.md)。
 
+### 同一虚拟麦克风的占用入口恢复（2026-10-19）
+
+先复核本仓库 2026-10-14 的公开拓扑配对、有界恢复和保存逻辑，再核对
+[VB-CABLE 参考手册](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf) 第 6–7 页：
+同一 CABLE 提供 speaker 与 16ch 两个播放接口，两者不能同时使用。
+微软 [IAudioClient::Initialize](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient-initialize)
+说明 `AUDCLNT_E_DEVICE_IN_USE`；本机锁定的 windows-rs 常量确认为 `0x8889000A`。
+现场用相同 shared/autoconvert、16 kHz 单声道格式验证多通道接口失败、同一 Capture 的标准接口成功。
+
+恢复仅尝试同一已验证录音端的唯一其他播放入口，按类型化 HRESULT 判断，不解析错误文本或仅凭名称换设备。
+界面继续显示 Capture，内部 Render 仅在诊断区显示。列表暂时失败保留上次结果并禁用过期选择。
+沿用现有工作线程、重试节奏与公开 API，不复制外部实现、不增加依赖、不改变系统默认设备或蓝牙。
+具体证据与未验证边界见 [故障记录](Bugs/2026-10-19-cable-interface-in-use.md)。
+
 ## GitHub Preview CD（2026-10-15）
 
 参考 GitHub 官方 [Auto-merge](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request)、
@@ -497,3 +532,25 @@ ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实
 顶部电源/语音按钮、左侧返回/主页/菜单及右侧音量摇杆/TV 键。图标全部由几何代码重绘，
 不嵌入照片像素；加宽机身、缩短底部留白，保留第一版底色与无线声波。
 对新资源重复执行 PNG/ICO 校验、深浅背景小尺寸预览和前端构建，结果 passed；原生安装外观仍 deferred。
+
+## 默认麦克风选择与会话恢复（2026-10-19）
+
+先核对 SoundSwitch 与 EarTrumpet 的默认设备切换做法。Windows 公开 Core Audio 接口提供
+[默认端点读取](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint)
+和 [默认端点变更通知](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immnotificationclient-ondefaultdevicechanged)，
+这两个参考项目通过未公开的 PolicyConfig 设置默认设备。用户明确授权的范围仅限默认录音设备切换及恢复，
+见 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
+
+Rust 的最小 ABI 声明参考
+[SoundSwitch IPolicyConfig.cs](https://github.com/Belphemur/SoundSwitch/blob/6ce0c4d80849fe4654ec36a0db0556eee8555f26/SoundSwitch.Audio.Manager/Interop/Interface/Policy/IPolicyConfig.cs)，
+固定提交 `6ce0c4d80849fe4654ec36a0db0556eee8555f26`，仅采用接口 IID、类 CLSID 与方法顺序。
+该提交 [LICENSE.txt](https://github.com/Belphemur/SoundSwitch/blob/6ce0c4d80849fe4654ec36a0db0556eee8555f26/LICENSE.txt)
+为 GNU GPL v3，与本仓库 GPL-3.0-only 边界相容。
+EarTrumpet 固定提交 `0321205ad775a91967cf439576b52909e146149b` 的
+`DataModel/WindowsAudio/Internal/AudioDeviceManager.cs` 与 `Interop/MMDeviceAPI/IPolicyConfig.cs`
+仅作行为交叉核对，未复制实现；其许可含额外排除条款，不将其标注为标准 MIT。
+
+逐角色恢复资格、原子恢复记录、失败回滚、通知处理及 COM 工作线程均独立实现。
+读取与通知使用公开 API，写入入口只接受重新验证为 active Capture 的端点；不写 Render 默认设备，
+不访问第三方应用设置，也不新增驱动、提权或蓝牙操作。真实设备与安装版验收分别记录于
+[Windows 默认麦克风验证](Testing/WindowsDefaultMicrophone.md)。

@@ -154,7 +154,7 @@ describe("about page update panel", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("开源许可");
     expect(wrapper.text()).toContain("GPL-3.0");
-    expect(wrapper.text()).not.toContain("检查更新");
+    expect(wrapper.text()).toContain("检查更新");
     expect(wrapper.text()).not.toContain("下载并安装");
     expect(check).not.toHaveBeenCalled();
     expect(loadUpdatePreferences).not.toHaveBeenCalled();

@@ -32,7 +32,7 @@ function Write-SimulationProcessLogs {
 }
 
 try {
-    $appProcess = Start-Process -FilePath $appExecutable -PassThru `
+    $appProcess = Start-Process -FilePath $appExecutable -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
     $deadline = [DateTime]::UtcNow.AddSeconds(60)
     while (-not $appProcess.HasExited -and [DateTime]::UtcNow -lt $deadline) {
@@ -49,8 +49,12 @@ try {
     }
 
     $report = Get-Content -Raw -Encoding UTF8 -LiteralPath $reportPath | ConvertFrom-Json
-    if ($appProcess.ExitCode -ne 0) {
+    if ($report.passed -ne $true -or $appProcess.ExitCode -ne 0) {
+        Write-Host "Runtime simulation report: $reportPath"
+        foreach ($step in @($report.steps)) { Write-Host "Completed: $step" }
         Write-SimulationProcessLogs
+    }
+    if ($appProcess.ExitCode -ne 0) {
         throw "Windows runtime simulation exited with code $($appProcess.ExitCode): $($report.error)"
     }
     if ($report.passed -ne $true) {
@@ -75,6 +79,7 @@ try {
 - actual Windows WebView JavaScript → Tauri IPC → Rust command path: passed
 - RC001/RC003 scan and RC001 16 kHz connection state: passed
 - explicit simulated audio endpoint and Raw Input state: passed
+- flat capture list and virtual/physical microphone switching through real IPC: passed
 - mapping persistence and non-injecting SendInput recorder: passed
 - connection, buttons, permissions, about pages and diagnostics rendering: passed
 - first `STREAM_START → 40+80 AUDIO → STREAM_STOP → DRAIN`: 240 samples passed

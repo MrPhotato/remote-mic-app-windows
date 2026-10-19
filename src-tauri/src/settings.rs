@@ -118,6 +118,17 @@ impl SettingsStore {
         })
     }
 
+    pub fn save_target_microphone(&self, id: String, name: String) -> Result<(), String> {
+        self.update("保存目标麦克风", move |settings| {
+            settings.target_microphone_id = Some(id);
+            settings.target_microphone_name = Some(name);
+        })
+    }
+
+    pub fn microphone_journal_path(&self) -> PathBuf {
+        self.path.with_file_name("microphone-restore.json")
+    }
+
     pub fn save_check_prerelease_updates(&self, enabled: bool) -> Result<(), String> {
         self.update("保存预览版更新设置", move |settings| {
             settings.check_prerelease_updates = enabled;
@@ -449,6 +460,9 @@ mod tests {
     fn audio_sync_persists_only_ready_routes_and_preserves_other_preferences() {
         let store = mapping_transaction_store();
         store.save_launch_at_login(true).unwrap();
+        store
+            .save_target_microphone("capture-id".into(), "Capture name".into())
+            .unwrap();
         let mut snapshot = AudioSnapshot {
             phase: AudioPhase::Ready,
             selected_endpoint_id: Some("old-route".to_owned()),
@@ -471,6 +485,11 @@ mod tests {
         assert_eq!(saved.audio_endpoint_id.as_deref(), Some("healthy-route"));
         assert_eq!(saved.audio_endpoint_name.as_deref(), Some("Healthy cable"));
         assert!(saved.launch_at_login);
+        assert_eq!(saved.target_microphone_id.as_deref(), Some("capture-id"));
+        assert_eq!(
+            saved.target_microphone_name.as_deref(),
+            Some("Capture name")
+        );
         // A successful repeated read must not rewrite unchanged settings.
         let modified = fs::metadata(&store.path).unwrap().modified().unwrap();
         store.sync_audio_endpoint(|| snapshot.clone()).unwrap();

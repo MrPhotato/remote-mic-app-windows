@@ -10,6 +10,7 @@
 
 /* ---- 设计令牌：浅色 ---- */
 :root {
+  --titlebar-height: 40px;
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
   color: var(--text-primary);
   background: var(--surface-canvas);
@@ -225,6 +226,7 @@ html[data-theme="dark"] {
 
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 940px; min-height: 100%; margin: 0; }
+html, body { height: 100%; overflow: hidden; }
 
 /* ---- 背景光场（App.vue 的 .ambient） ----
    三枚光斑分别取品牌靛蓝、图标薄荷与紫罗兰，是玻璃唯一"折射"的东西。
@@ -417,12 +419,15 @@ body {
   z-index: 2;
   display: grid;
   grid-template-columns: 108px minmax(0, 1fr);
-  min-height: 100vh;
+  height: calc(100vh - var(--titlebar-height));
+  min-height: 0;
 }
 .sidebar {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 10px 6px;
@@ -492,6 +497,7 @@ nav.sliding-indicator::before {
   .nav-item.active { border-color: Highlight; }
 }
 .nav-icon { width: 21px; height: 21px; display: block; }
+.nav-update-dot { position: absolute; top: 12px; right: 22px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-canvas); }
 .sidebar-footer {
   margin-top: auto;
   padding: 10px 4px;
@@ -504,6 +510,7 @@ nav.sliding-indicator::before {
 
 .content {
   min-width: 0;
+  min-height: 0;
   padding: 24px clamp(22px, 3vw, 40px) 28px;
   overflow: auto;
   scrollbar-width: none;
@@ -1025,7 +1032,7 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   height: 570px;
   margin-bottom: calc(-570px * (1 - var(--map-scale)));
   flex: 0 0 auto;
-  --map-scale: min(1, (100vw - 152px) / 800px, 100vh / 640px);
+  --map-scale: min(1, (100vw - 152px) / 800px, (100vh - var(--titlebar-height)) / 640px);
   transform: scale(var(--map-scale));
   transform-origin: top left;
 }
