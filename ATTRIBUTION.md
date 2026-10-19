@@ -2,6 +2,12 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 手动检查本仓库 Release（2026-10-19）
+
+参考 [GitHub 官方 Releases REST API](https://docs.github.com/en/rest/releases/releases#list-releases)：公开仓库可匿名读取，列表包含已发布预览版；`latest` 端点排除预览版，因此本功能读取分页列表并按 SemVer 选择最高版本。检查最高版本的发布页与 Windows 安装包归属、上传状态和大小，避免把发布不完整误报为已是最新。限流、网络和响应校验错误分别记录结构化诊断。
+
+对照既有 `src-tauri/src/updater.rs`，保留上游更新与自动安装禁用；新增独立手动检查，仅指向 `MrPhotato/remote-mic-app-windows`，不增加启动检查、后台轮询或下载。依据 [Tauri 官方 Opener 权限文档](https://v2.tauri.app/plugin/opener/)，仅允许打开本仓库版本发布页；发布说明按纯文本显示。未复制外部实现，验证见 [WindowsReleaseCheck](Testing/WindowsReleaseCheck.md)。
+
 ## 2026-10-14 按键目录、历史与默认配置
 
 - 0.2.15 修正上述五页签方案的布局回归：沿用现有可滚动列表，统一可视高度并为分类说明保留一行，使内容数量与搜索结果不改变下方工具入口位置；仅调整布局，不新增依赖或复制外部实现。

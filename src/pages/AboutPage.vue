@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import ReleaseUpdateCard from "../components/ReleaseUpdateCard.vue";
 import type { RuntimeSnapshot, ThemePreference } from "../lib/bridge";
 import {
   formatDiagnosticReport,
@@ -135,6 +136,8 @@ onMounted(() => {
         <span class="version-chip">版本 {{ runtime?.appVersion ?? "0.1.0" }}</span>
       </div>
     </article>
+
+    <ReleaseUpdateCard />
 
     <article class="card appearance-card">
       <h2>外观</h2>

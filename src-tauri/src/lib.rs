@@ -15,12 +15,14 @@ use tauri::{Emitter, Manager};
 
 mod diagnostics;
 mod platform;
+mod release_check;
 mod settings;
 mod startup;
 mod updater;
 
 use diagnostics::DiagnosticReport;
 use platform::PlatformRuntime;
+use release_check::check_github_release;
 use sayall_core::ThemePreference;
 use updater::{
     check_app_update, get_app_update_preferences, install_app_update, set_app_update_preferences,
@@ -1485,6 +1487,7 @@ pub fn run() {
         get_app_update_preferences,
         set_app_update_preferences,
         check_app_update,
+        check_github_release,
         install_app_update,
         report_frontend_event,
         run_runtime_simulation_voice_session,
@@ -1533,6 +1536,7 @@ pub fn run() {
         get_app_update_preferences,
         set_app_update_preferences,
         check_app_update,
+        check_github_release,
         install_app_update,
         report_frontend_event
     ]);
