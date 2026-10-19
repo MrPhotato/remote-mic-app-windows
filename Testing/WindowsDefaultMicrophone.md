@@ -17,7 +17,8 @@
 | 等待连接、离线保存、状态刷新及失败文案 | passed | 44 项 ConnectionPage 测试；类型检查通过。返回目标不一致或保存失败不显示成功，浏览器预览不伪造系统切换 |
 | 1030×734 深浅主题布局 | passed | 两主题各一张截图并目视复核；卡片约 508px 高，说明、设备名与选择按钮无裁切、溢出或遮挡，无页面错误。原生最低 1029×732，不测试手机尺寸 |
 | Windows 真实接口释放／重选往返 | passed | 当前物理 Capture→release_session→基线恢复，再选已验证 CABLE→释放→恢复；重复释放正常，最终 restore 关闭后拒绝新选择。每步独立 COM 读取三个 Capture，三个 Render 全程不变；scope_cleanup=true，耗时 0.47s |
-| 安装版离线启动、目标保存、实体连接后切换 | deferred | 新包安装及实际遥控器验收尚未执行 |
+| 安装版离线启动 | passed | 2026-10-20 完整安装 0.3.12 后，日志确认 remote_not_ready、等待连接；独立读取三个 Capture 与三个 Render，均与升级前基线一致 |
+| 安装版目标保存、实体连接后切换 | deferred | 仍需实际遥控器就绪后验收；不以离线启动通过替代 |
 | 安装版实体断开／重连、退出兜底及听写 | deferred | 须在实际安装版观察系统 Capture；不能用接口往返或组件模拟替代，RC001／RC003 分别验收 |
 
 本次浏览器证据：`target/microphone-connection-ui/layout-check.json`（含对应源码 SHA-256）及同目录深浅截图；
