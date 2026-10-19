@@ -14,11 +14,24 @@
 | --- | --- | --- |
 | 目标／其余当前设备、连接／断连轮询、外部变化、未知值与读取失败恢复 | passed | 44 项 ConnectionPage 测试；沿用防止迟到读取覆盖新选择的机制；类型检查与前端构建通过 |
 | 1030×734 深浅主题、目标／其余四组布局 | passed | 实际 Edge 渲染，截图目视复核，单一高亮、名称换行、按钮可见、卡片无裁切与页面无错误 |
-| 本机安装版实际默认设备高亮 | deferred | 待本次本地包升级及界面验收 |
+| 本机安装版实际默认设备高亮 | passed | 0.3.12 本地更新后，通过原生窗口截图及辅助功能树确认：当前物理麦在其余列表绿色高亮且仅有一个“当前生效”，保存的 CABLE 目标保持中性 |
+| 安装升级及配置／默认音频保留 | passed | 应用自有事件正常退出，静默安装返回 0，主程序除 NSIS 标记外完全匹配构建；96 个 Helper 文件及清单核对，三份配置哈希相同，三个 Capture 与三个 Render 默认值均与升级前相同 |
 
 本地证据为 `target/microphone-connection-ui/highlight-tests.log`、`highlight-build.log`、
 `highlight-layout.json`（含界面源文件摘要）及 `highlight-*.png`，均不提交设备身份或个人配置。
 展示类别变化记录 `microphone_active_display`，只记录 target／other／not_listed／unconfirmed，不记录端点 ID 或名称。
+
+本地构建源 `77afbffa3efc365835e1877386f66b33e133ccab`，保持 0.3.12 本地版本，未推送或发布；
+原安装包已保留在忽略的证据目录。新安装包 SHA-256：
+`71A45B257D244FC0F65B1F25AE5F980A34F67B15D492BF64D4C053B750B46382`。
+实际安装／启动回执 `installed-highlight.json`、原生验收 `native-highlight-check.json`，
+生产日志已观察到 `microphone_active_display ... system_default_other`。
+实体遥控器连接触发的默认设备切换仍沿用下一节的 deferred 边界，本次没有用界面高亮替代连接／断连实测。
+
+验证命令：`npm test -- src/pages/ConnectionPage.test.ts --maxWorkers=2 --minWorkers=1`、
+`npm run build`、`cargo fmt --all -- --check`；本地完整包用
+`scripts/build-local.ps1 -Installer -SkipTests -SkipHelperBuild`，未变化的 Helper 复用既有验证，
+并重新执行 `scripts/verify-rc003-helper-bundle.ps1` 核对最终主程序内嵌清单和完整载荷。
 
 ## 2026-10-19 连接触发生命周期
 
