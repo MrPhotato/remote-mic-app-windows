@@ -236,6 +236,8 @@ describe("Connection and voice settings", () => {
     const card = wrapper.get(".audio-settings-card");
     expect(card.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(card.get(".microphone-status").text()).toBe("已就绪");
+    expect(card.findAll(".microphone-active")).toHaveLength(1);
+    expect(card.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
     expect(card.text()).toContain("目标麦克风");
     expect(card.text()).toContain("连接遥控器后自动切换到所选麦克风，断开后恢复原设置");
     expect(card.text()).toContain("退出程序时也会尝试恢复");
@@ -263,6 +265,8 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.get(".microphone-current").text()).toContain(physicalMicrophone.name);
     expect(wrapper.get(".microphone-waiting").text()).toContain("目标已保存");
+    expect(wrapper.find(".selected-microphone-row .microphone-active-badge").exists()).toBe(false);
+    expect(wrapper.get(".endpoint-list .microphone-active strong").text()).toBe(physicalMicrophone.name);
     expect(wrapper.get(".microphone-waiting").text()).toContain("当前系统麦克风保持不变");
     expect(wrapper.find(".selected-microphone-row button").exists()).toBe(false);
     expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
@@ -301,11 +305,14 @@ describe("Connection and voice settings", () => {
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
     expect(wrapper.get(".microphone-status").text()).toBe("等待遥控器连接");
+    expect(wrapper.get(".endpoint-list .microphone-active strong").text()).toBe(physicalMicrophone.name);
     mocks.getConnectionSnapshot.mockResolvedValue({ ...emptyConnection, phase: "ready" });
     mocks.selection = selected(cableMicrophone);
     await vi.advanceTimersByTimeAsync(1000);
     expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
     expect(wrapper.find(".microphone-waiting").exists()).toBe(false);
+    expect(wrapper.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
+    expect(wrapper.find(".endpoint-list .microphone-active").exists()).toBe(false);
     expect(wrapper.find(".microphone-current").exists()).toBe(false);
     expect(wrapper.get(".audio-route-details").text()).toContain("已记住本次连接前的默认麦克风，断开连接或退出时恢复");
     mocks.getConnectionSnapshot.mockResolvedValue({ ...emptyConnection, phase: "disconnected" });
@@ -314,6 +321,7 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get(".microphone-status").text()).toBe("等待遥控器连接");
     expect(wrapper.get(".microphone-current").text()).toContain(physicalMicrophone.name);
     expect(wrapper.get(".audio-route-details").text()).not.toContain("已记住本次连接前");
+    expect(wrapper.get(".endpoint-list .microphone-active strong").text()).toBe(physicalMicrophone.name);
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -431,6 +439,7 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.get(".microphone-current").text()).toContain(physicalMicrophone.name);
     expect(wrapper.get(".microphone-status").text()).toBe("系统麦克风已更改");
+    expect(wrapper.get(".endpoint-list .microphone-active strong").text()).toBe(physicalMicrophone.name);
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     await wrapper.get(".selected-microphone-row button").trigger("click");
     await flushPromises();
@@ -449,6 +458,7 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.find(".microphone-current").exists()).toBe(false);
     expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用这个麦克风");
+    expect(wrapper.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -469,6 +479,7 @@ describe("Connection and voice settings", () => {
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
     expect(wrapper.get(".microphone-status").text()).toBe("当前麦克风待确认");
+    expect(wrapper.find(".microphone-active-badge").exists()).toBe(false);
     expect(wrapper.find(".microphone-current").exists()).toBe(false);
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();
@@ -501,7 +512,9 @@ describe("Connection and voice settings", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
     expect(wrapper.get(".microphone-status").text()).toBe("状态待确认");
+    expect(wrapper.find(".microphone-active-badge").exists()).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
+    expect(wrapper.get(".selected-microphone-row .microphone-active-badge").text()).toContain("当前生效");
     expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
     expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     wrapper.unmount();

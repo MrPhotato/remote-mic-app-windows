@@ -4,6 +4,22 @@
 - 状态：连接触发版本的自动化、浏览器布局与真实接口释放／重选往返 passed；安装版实体连接、断开与重连 deferred。下方保留 0.3.10 的历史验收，不将旧启动触发结果当作新生命周期通过。
 - 授权：仅默认录音设备切换与恢复，见 [ADR 0004](../docs/decisions/0004-default-microphone-session.md)。
 
+## 2026-10-20 当前生效麦克风高亮
+
+按宿主实时快照的当前系统默认 Capture / Console 端点显示绿色底色、边框与“✓ 当前生效”，
+目标区和其余列表采用同一规则。保存目标、等待连接和其他录音角色的状态不替代当前默认端点；
+读取失败、未知或正在选择时不猜测。只改变展示，不执行设备切换或录音；不代表每个应用独立选择的输入。
+
+| 项目 | 状态 | 证据或边界 |
+| --- | --- | --- |
+| 目标／其余当前设备、连接／断连轮询、外部变化、未知值与读取失败恢复 | passed | 44 项 ConnectionPage 测试；沿用防止迟到读取覆盖新选择的机制；类型检查与前端构建通过 |
+| 1030×734 深浅主题、目标／其余四组布局 | passed | 实际 Edge 渲染，截图目视复核，单一高亮、名称换行、按钮可见、卡片无裁切与页面无错误 |
+| 本机安装版实际默认设备高亮 | deferred | 待本次本地包升级及界面验收 |
+
+本地证据为 `target/microphone-connection-ui/highlight-tests.log`、`highlight-build.log`、
+`highlight-layout.json`（含界面源文件摘要）及 `highlight-*.png`，均不提交设备身份或个人配置。
+展示类别变化记录 `microphone_active_display`，只记录 target／other／not_listed／unconfirmed，不记录端点 ID 或名称。
+
 ## 2026-10-19 连接触发生命周期
 
 仅在所选遥控器同一 `connection_generation` 的 `Ready`、`Streaming`、`Draining` 阶段持有默认麦克风切换；

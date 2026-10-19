@@ -216,6 +216,15 @@ const selectedMicrophone = computed(() =>
 );
 const selectedVirtualCable = computed(() => selectedMicrophone.value?.isVirtualCableCandidate === true);
 const otherMicrophones = computed(() => microphones.value.filter((microphone) => microphone.id !== microphoneSelection.value.targetMicrophoneId));
+const activeMicrophoneId = computed(() => microphoneSelectionLoaded.value
+  && !microphoneSelectionReadError.value && !selectingMicrophoneId.value
+  ? microphoneSelection.value.currentMicrophoneId : null);
+const activeMicrophoneLocation = computed(() => !activeMicrophoneId.value ? "unconfirmed"
+  : activeMicrophoneId.value === microphoneSelection.value.targetMicrophoneId ? "target"
+    : otherMicrophones.value.some((microphone) => microphone.id === activeMicrophoneId.value) ? "other" : "not_listed");
+watch([activeMicrophoneId, activeMicrophoneLocation], () => {
+  reportFrontendEvent({ event: "microphone_active_display", phase: "completed", result: activeMicrophoneId.value ? "passed" : "unknown", reason: `system_default_${activeMicrophoneLocation.value}` });
+});
 const microphoneName = computed(() => microphoneSelection.value.targetMicrophoneName
   ?? selectedMicrophone.value?.name
   ?? (microphoneSelectionReadError.value ? "读取失败" : !microphoneSelectionLoaded.value ? "正在读取…" : "尚未选择"));
@@ -634,8 +643,11 @@ onUnmounted(() => {
             <strong>目标麦克风</strong>
             <span class="microphone-status muted">{{ audioStatus }}</span>
           </div>
-          <div class="selected-microphone-row">
-            <strong class="microphone-name">{{ microphoneName }}</strong>
+          <div class="selected-microphone-row" :class="{ 'microphone-active': activeMicrophoneLocation === 'target' }">
+            <div class="microphone-identity">
+              <strong class="microphone-name">{{ microphoneName }}</strong>
+              <span v-if="activeMicrophoneLocation === 'target'" class="badge success microphone-active-badge" title="当前系统默认麦克风"><span aria-hidden="true">✓</span> 当前生效</span>
+            </div>
             <button
               v-if="selectedMicrophone && !audioSettingsUnsaved && !audioVisibleError && !defaultMatchesTarget && !microphoneWaitingConnection"
               class="secondary-button"
@@ -657,9 +669,12 @@ onUnmounted(() => {
         <section class="microphone-options" aria-labelledby="other-microphones-heading">
           <h3 id="other-microphones-heading">其余麦克风选择</h3>
           <ul v-if="otherMicrophones.length" id="audio-endpoint-list" class="device-list endpoint-list">
-            <li v-for="microphone in otherMicrophones" :key="microphone.id">
+            <li v-for="microphone in otherMicrophones" :key="microphone.id" :class="{ 'microphone-active': microphone.id === activeMicrophoneId }">
               <div>
-                <strong>{{ microphone.name }}</strong>
+                <div class="microphone-identity">
+                  <strong>{{ microphone.name }}</strong>
+                  <span v-if="microphone.id === activeMicrophoneId" class="badge success microphone-active-badge" title="当前系统默认麦克风"><span aria-hidden="true">✓</span> 当前生效</span>
+                </div>
                 <small>{{ microphoneDetail(microphone) }}</small>
               </div>
               <button
@@ -742,6 +757,21 @@ onUnmounted(() => {
 .microphone-name,
 .endpoint-list strong {
   overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.microphone-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.microphone-active-badge {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .selected-microphone-row button,
@@ -769,6 +799,19 @@ onUnmounted(() => {
 
 .endpoint-list {
   margin: 0;
+}
+
+.endpoint-list li {
+  margin-top: 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.selected-microphone-row.microphone-active,
+.endpoint-list li.microphone-active {
+  border-color: var(--dot-success);
+  background: var(--success-surface);
 }
 
 .endpoint-list li > div {

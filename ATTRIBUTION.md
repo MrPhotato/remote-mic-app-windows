@@ -2,6 +2,12 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 当前生效麦克风高亮（2026-10-20）
+
+- 复核本文件已记录的 SoundSwitch 与 EarTrumpet 默认设备来源及默认麦克风会话设计：保存目标与当前系统默认端点是不同状态，显示沿用现有宿主快照，不增加切换、录音或设备访问。
+- 参考 [Microsoft GetDefaultAudioEndpoint](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint) 的方向与角色语义，按当前 Capture / Console 端点标记；不使用可能过期的枚举默认标记，也不宣称代表每个应用独立选择的麦克风。
+- 参考 [W3C Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)，颜色之外同时提供勾号和“当前生效”文字。无法确认当前端点时取消高亮；仅在状态变化记录不含设备身份的展示类别日志。未复制外部实现。
+
 ## 运行窗口任务栏图标（2026-10-19）
 
 - 核对锁定的 Tauri 2.11.5 / tauri-runtime-wry 2.11.4 / Tao 0.35.3：默认窗口图标经 `set_window_icon` 设置 `ICON_SMALL`，独立 `taskbar_icon` 默认空。0.3.11 本机窗口的 `ICON_BIG` 和类大图标均为空，已有小图标有效；不将安装资源正确视为任务栏显示通过。
