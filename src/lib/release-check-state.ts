@@ -68,9 +68,9 @@ function saveCache(value: GithubReleaseCheck | null): void {
 async function runCheck(source: "startup" | "manual"): Promise<void> {
   if (checking.value || opening.value) return;
   checking.value = true;
-  result.value = null;
+  // Retain the previous details and timestamp while rechecking so the card does
+  // not collapse. The UI shows progress and disables download until completion.
   error.value = "";
-  checkedAt.value = null;
   fromCache.value = false;
   const started = performance.now();
   reportFrontendEvent({ event: "release_check", phase: "started", result: "unknown", reason: `${source}_requested` });
@@ -83,6 +83,7 @@ async function runCheck(source: "startup" | "manual"): Promise<void> {
     saveCache(result.value);
     reportFrontendEvent({ event: "release_check", phase: "completed", result: "passed", reason: `${source}_${result.value.status}`, elapsedMs: Math.round(performance.now() - started) });
   } catch (failure) {
+    result.value = null;
     error.value = failure instanceof Error ? failure.message : String(failure);
     saveCache(null);
     reportFrontendEvent({ event: "release_check", phase: "completed", result: "failed", reason: `${source}_check_failed`, elapsedMs: Math.round(performance.now() - started) });

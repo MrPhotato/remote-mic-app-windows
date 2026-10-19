@@ -11,6 +11,8 @@
 
 验证边界见 [WindowsWindowChrome](Testing/WindowsWindowChrome.md)。
 
+2026-10-19 回验后的布局修正沿用本仓库 Vue 状态/卡片结构：保留状态和时间位置，复查期间只替换状态文字、保留上次时间及说明，失败清除旧结果；不新增请求调度或动画依赖。仅布局验证使用可控响应，真实 GitHub API 行为沿用原有证据。
+
 ## 手动检查本仓库 Release（2026-10-19）
 
 参考 [GitHub 官方 Releases REST API](https://docs.github.com/en/rest/releases/releases#list-releases)：公开仓库可匿名读取，列表包含已发布预览版；`latest` 端点排除预览版，因此本功能读取分页列表并按 SemVer 选择最高版本。检查最高版本的发布页与 Windows 安装包归属、上传状态和大小，避免把发布不完整误报为已是最新。限流、网络和响应校验错误分别记录结构化诊断。

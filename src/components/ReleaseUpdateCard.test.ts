@@ -109,6 +109,26 @@ describe("Release 更新卡片", () => {
     expect(wrapper.get('[role="alert"]').text()).toBe("GitHub 暂时不可用");
   });
 
+  it("重新检查时保留上次时间和更新说明，但不能打开旧下载结果", async () => {
+    let finish!: (value: GithubReleaseCheck) => void;
+    vi.mocked(checkGithubRelease).mockResolvedValueOnce(available)
+      .mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const wrapper = mount(ReleaseUpdateCard);
+    await wrapper.get(".secondary-button").trigger("click");
+    await flushPromises();
+    const time = wrapper.get(".checked-time").text();
+    await wrapper.get(".secondary-button").trigger("click");
+    expect(wrapper.get('[role="status"]').text()).toContain("正在查询");
+    expect(wrapper.get(".checked-time").text()).toBe(time);
+    expect(wrapper.get("pre").text()).toBe(available.notes);
+    expect(wrapper.get(".primary-button").attributes("disabled")).toBeDefined();
+    await wrapper.get(".primary-button").trigger("click");
+    expect(openGithubRelease).not.toHaveBeenCalled();
+    finish({ ...available, status: "up_to_date" });
+    await flushPromises();
+    expect(wrapper.find(".primary-button").exists()).toBe(false);
+  });
+
   it("打开发布页失败会明确提示且可重试", async () => {
     vi.mocked(checkGithubRelease).mockResolvedValue(available);
     vi.mocked(openGithubRelease).mockRejectedValueOnce(new Error("opener failure")).mockResolvedValueOnce();

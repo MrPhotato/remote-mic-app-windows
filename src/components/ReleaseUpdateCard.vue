@@ -18,8 +18,9 @@ const lastCheckedText = computed(() => checkedAt.value === null ? "" : new Date(
         {{ checking ? "检查中…" : "检查更新" }}
       </button>
     </div>
-    <p class="update-status" role="status" aria-live="polite">
+    <p class="update-status" :class="{ 'error-text': error }" :role="error ? 'alert' : 'status'" aria-live="polite">
       <template v-if="checking">正在查询最新发布…</template>
+      <template v-else-if="error">{{ error }}</template>
       <template v-else-if="result?.status === 'available'">
         发现新版本 {{ result.version }}<span v-if="result.prerelease">（预览版）</span>
         <span class="muted"> · 当前 {{ result.currentVersion }}</span>
@@ -28,8 +29,10 @@ const lastCheckedText = computed(() => checkedAt.value === null ? "" : new Date(
       <template v-else-if="result?.status === 'no_release'">暂时没有已发布的版本。</template>
       <template v-else-if="!error">启动后会自动检查，也可点击检查更新。</template>
     </p>
-    <p v-if="lastCheckedText && !checking" class="muted checked-time">上次检查：{{ lastCheckedText }}</p>
-    <p v-if="error" class="error-text" role="alert">{{ error }}</p>
+    <p class="muted checked-time" :aria-hidden="!lastCheckedText">
+      <template v-if="lastCheckedText">上次检查：{{ lastCheckedText }}</template>
+      <template v-else>&nbsp;</template>
+    </p>
     <template v-if="result?.status === 'available'">
       <details v-if="result.notes" class="release-notes">
         <summary>更新内容</summary>
@@ -46,9 +49,9 @@ const lastCheckedText = computed(() => checkedAt.value === null ? "" : new Date(
 <style scoped>
 .card-title-row { flex-wrap: wrap; gap: 12px; }
 .card-title-row .muted { margin: 4px 0 0; }
-.update-status { margin: 14px 0 10px; }
-.update-status:empty { display: none; }
-.checked-time { margin: 0 0 10px; font-size: 12px; }
+.card-title-row .secondary-button { min-width: 88px; }
+.update-status { margin: 14px 0 10px; min-height: 1.5em; line-height: 1.5; font-size: inherit; overflow-wrap: anywhere; }
+.checked-time { margin: 0 0 10px; min-height: 1.5em; line-height: 1.5; font-size: 12px; }
 .release-notes { margin: 12px 0; }
 .release-notes summary { cursor: pointer; }
 .release-notes pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--text-secondary); }
