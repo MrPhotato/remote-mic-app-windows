@@ -73,6 +73,12 @@ jobs:
         shell: pwsh
         run: ./scripts/test-release-source-gates.ps1
 
+      - name: Test preview release request and asset gates
+        shell: pwsh
+        run: |
+          ./scripts/test-preview-release-request.ps1
+          ./scripts/test-release-cd.ps1
+
       - name: Build and test RC003 helper
         shell: pwsh
         run: ./scripts/build-rc003-helper.ps1
