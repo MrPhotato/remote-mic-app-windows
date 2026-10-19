@@ -1,99 +1,171 @@
-# 无线麦 SayAll Windows 版 · Codex 遥控
+<p align="center">
+  <img src="docs/assets/readme-hero.svg" alt="无线麦 SayAll Windows 版：说出想法，按下下一步。按住说话、切换会话、自由映射。" width="100%" />
+</p>
 
-把小米蓝牙遥控器用于 Windows 语音输入、文字修改和 Codex 快捷键操作。
+<h1 align="center">无线麦 SayAll Windows 版</h1>
+<p align="center"><b>一只蓝牙遥控器，接住你的想法，也接管常用操作。</b><br />为 Windows 上的语音输入与 Codex 工作流而做。</p>
 
-这是独立维护的 Codex 定制版本，基于 [SayAll Windows](https://github.com/GetSayAll/remote-mic-app-windows) 的 `451e5f9ced0deecd31eb0147c0a578a22924492d` 开发；产品与协议参考源自 [无线麦 SayAll](https://github.com/HD838A/remote-mic-app)。本项目不是 SayAll 或 OpenAI 的官方发行版。
+<p align="center">
+  <a href="https://github.com/MrPhotato/remote-mic-app-windows/releases"><img src="https://img.shields.io/github/v/release/MrPhotato/remote-mic-app-windows?include_prereleases&amp;label=Preview&amp;color=9690ff" alt="最新 Preview 版本" /></a>
+  <a href="https://github.com/MrPhotato/remote-mic-app-windows/actions/workflows/windows-ci.yml"><img src="https://github.com/MrPhotato/remote-mic-app-windows/actions/workflows/windows-ci.yml/badge.svg?event=pull_request" alt="Windows CI 状态" /></a>
+  <img src="https://img.shields.io/badge/Windows-x64-76dcc0" alt="Windows x64" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-9690ff" alt="GPL-3.0-only" /></a>
+  <img src="https://img.shields.io/badge/Rust_%2B_Tauri_2_%2B_Vue_3-202636" alt="Rust、Tauri 2 与 Vue 3" />
+</p>
 
-## 功能
+<p align="center">
+  <a href="https://github.com/MrPhotato/remote-mic-app-windows/releases"><b>下载 Windows 版</b></a> ·
+  <a href="#快速上手">快速上手</a> ·
+  <a href="#默认按键">默认按键</a> ·
+  <a href="#兼容性与当前边界">兼容性</a> ·
+  <a href="https://github.com/MrPhotato/remote-mic-app-windows/issues">反馈问题</a>
+</p>
 
-- Codex 操作页：连接状态、语音配置入口和一键日常按键方案。
-- Codex 快捷键栏目：73 个 Windows 默认动作，可分类、搜索和自定义绑定。
-- 普通退格：单按删除，按住按 Windows 键盘重复设置连续删除。
-- RC003 可选三键增强：补齐返回和音量＋/－，遥控器图例上方显式开关，独立 Helper 需要管理员权限。
-- 可选双击按标点删除：保留光标前最近的标点，默认关闭。
-- 可选择 Codex 按住听写快捷键，沿用遥控器按下开始、松开结束的语音流程。
-- 每次应用方案前备份当前按键配置，同时保留首次备份；可分别恢复。
-- 独立应用身份、配置和图标；不接收上游官方版的自动更新。
+---
 
-底层 BLE、ATVV 音频解码、虚拟声卡输出和按键映射来自 Windows 上游。开发使用 Vue 3、Tauri 2 和 Rust。
+**按住语音键说出需求，松开后检查文字；再用遥控器发送、修改、切换聊天。** 无线麦把遥控器的声音与按键接入 Windows，你可以直接用内置方案，也可以把每个常用操作改成自己的习惯。
 
-## 使用前准备
+本项目基于 [SayAll Windows](https://github.com/GetSayAll/remote-mic-app-windows) 独立维护，产品与协议源自 [无线麦 SayAll macOS 原版](https://github.com/HD838A/remote-mic-app)。这是社区派生版本，不是 SayAll 或 OpenAI 的官方发行版。
 
-安装器下载：[本项目 GitHub Releases](https://github.com/MrPhotato/remote-mic-app-windows/releases)。选择 `SayAll-Windows-<版本号>-x64-setup.exe`，具体验证范围与已知限制以该 Preview 的说明为准。
+> [!NOTE]
+> 当前以 **Preview** 提供。RC003 已有本机语音、按键和麦克风切换验收记录；RC001 与不同系统环境仍需分别验证。具体范围以 [发布说明](https://github.com/MrPhotato/remote-mic-app-windows/releases) 为准。
 
-- Windows x64、WebView2，以及已在 Windows 中配对的小米蓝牙遥控器。
-- 支持目标为小米蓝牙遥控器 2 / RC001 和 2 Pro / RC003，实际兼容性与固件、系统输入上报有关。
-- 使用遥控器麦克风需要另行安装 [VB-CABLE](https://vb-audio.com/Cable/)；只用普通按键不需要它。
-- 安装 Codex，并确认所需快捷键在当前版本可用。
+## 用起来是什么感觉
 
-启动 `remote-coding.exe` 后，在“连接与语音”连接遥控器，再到“Codex 遥控”查看并应用日常方案。快捷键发送给当前前台窗口；先用主页键打开 Codex，再点击输入框。关闭主窗口会收进托盘，在托盘菜单选择“退出”才会结束程序。
+| 🎙️ 说话录入 | 🎛️ 一手操作 | 🧩 按你的习惯来 |
+| --- | --- | --- |
+| 按住语音键开始，松开结束。配合 Codex 听写、微信输入法或自定义按住说话快捷键。 | 切换聊天、移动光标、退格、撤销、发送，把高频操作放到遥控器上。 | 普通按键可配置单击、双击和长按；提供快捷键、打开应用、鼠标及滚动动作。 |
 
-## 日常按键方案
+- **有一套能直接上手的方案。** Codex 操作页集中展示默认按键；重新应用前保留备份，升级保留已有自定义。
+- **麦克风选择更直接。** CABLE 与普通麦克风平铺显示。启动时切到保存的目标，真正退出时尝试恢复；运行中手动改过的默认值不会被覆盖。
+- **RC003 按键补全。** 显式开启可选增强后，补齐返回、音量＋/－，并抑制 TV 映射附带的原生字符。
+- **更新不用再翻仓库。** 「关于」检查本仓库新版本；点击「更新并重启」后下载、验签、正常退出并安装。检查更新不会自动下载安装。
+- **Windows 原生宿主。** Rust + Tauri 2 + Vue 3，支持深浅主题、托盘驻留和可选登录启动。
+
+<p align="center">
+  <img src="docs/assets/sayall-about-v0.3.11.jpg" alt="无线麦 0.3.11 实际 Windows 界面：软件更新、深浅主题、登录启动与开源许可" width="920" />
+</p>
+<p align="center"><sub>0.3.11 安装版实际界面 · 新图标、玻璃质感窗口与更新入口</sub></p>
+
+## 快速上手
+
+### 1 · 准备好遥控器和软件
+
+| 需要什么 | 说明 |
+| --- | --- |
+| Windows | Windows 10 1809 或更新版本 / Windows 11，x64，具备 WebView2。 |
+| 小米蓝牙遥控器 | 支持目标为遥控器 2 / **RC001** 和遥控器 2 Pro / **RC003**；先在 Windows 设置中完成配对。 |
+| 无线麦安装包 | 到 [Releases](https://github.com/MrPhotato/remote-mic-app-windows/releases) 下载 `SayAll-Windows-<版本号>-x64-setup.exe`。 |
+| 遥控器语音所需的虚拟声卡 | 另行安装 [VB-CABLE](https://vb-audio.com/Cable/)。只使用普通按键不需要它。 |
+| 语音输入工具 | Codex 听写、微信输入法或支持相应快捷键的工具；语音识别由目标工具完成。 |
+
+### 2 · 连接与选择麦克风
+
+打开无线麦的 **「连接与语音」**，扫描已配对设备，选择遥控器并等待就绪。要使用遥控器麦克风，在麦克风列表选择 **CABLE Output**，确认目标与传声线路就绪。
+
+让目标语音工具使用 **系统默认麦克风**，便可跟随无线麦的选择；如果工具固定选择了其他设备，需要在该工具中改为系统默认或 CABLE Output。使用普通麦克风时，直接在无线麦中选择对应设备。
+
+### 3 · 按住说话，再确认发送
+
+选择与目标工具一致的「按住说话快捷键」，例如 **Codex 听写 · Ctrl + Shift + D**。切到文本框后，按住语音键说话，松开结束；检查识别文字，再按确认键。
+
+到 **「Codex 遥控」** 查看内置方案，或到 **「按键」** 自定义。RC003 的返回和音量键需先显式启用页面上方的按键增强，按一次方向键并松开，等待增强就绪。
+
+> [!TIP]
+> 关闭窗口会继续驻留托盘。需要结束语音连接并恢复原默认麦克风时，从托盘菜单选择 **「退出」**。详细步骤见 [安装与配置](docs/installation-and-configuration.md)。
+
+## 声音怎么到达输入框
+
+<img src="docs/assets/voice-flow.svg" alt="遥控器经蓝牙把声音送给 SayAll，写入 VB-CABLE 的 CABLE Input，目标语音工具从 CABLE Output 录音；快捷键另行发送到前台窗口。" width="100%" />
+
+**CABLE Input 是写入端，CABLE Output 是录音端。** 无线麦负责接收、解码和传送音频，并发送你配置的快捷键；识别与文字上屏由目标工具完成。它不会把遥控器直接变成 Windows 原生麦克风，也不捆绑 VB-CABLE 驱动。
+
+语音键始终是「按下开始、释放结束」，没有双击等待或长按阈值。切换快捷键预设不替代音频路径；关闭快捷键注入后，遥控器语音仍可继续输出。
+
+## 默认按键
+
+下表对应当前源码的 [默认配置](src/lib/default-button-mappings.json)。**升级不会覆盖已有映射**；以应用中显示的「当前」配置为准，想切换到新方案可手动应用并保留备份。
 
 | 按键 | 单击 | 双击 | 长按 |
 | --- | --- | --- | --- |
-| 主页 | 打开或恢复 Codex | 新建任务 | 打开设置 |
-| 上下左右 | 光标移动或界面导航 | 不另设 | 连续移动 |
-| 确认 | Enter：发送或确认 | 不另设 | 不另设 |
-| 返回 | Backspace，快按逐次删除 | 默认关闭 | 连续删除，松开停止 |
-| 菜单 | 命令菜单 `Ctrl+Shift+P` | 选择模型 `Ctrl+Shift+M` | 下一个待处理任务 `Ctrl+Alt+A` |
-| TV | 改动审查面板 `Ctrl+Alt+B` | 侧边栏 `Ctrl+B` | 撤销 `Ctrl+Z` |
-| 电源 | Esc：关闭弹层或退出当前操作 | 不另设 | 不另设 |
-| 音量＋/－ | 上一项／下一项 `Ctrl+PageUp`／`Ctrl+PageDown` | 不另设 | 连续切换 |
-| 语音 | 按住开始，松开结束；单独配置听写工具 | — | — |
+| 主页 | 打开或恢复 Codex | 新聊天 `Ctrl+N` | 待处理项 `Ctrl+Alt+A` |
+| 方向键 | 光标移动 / 界面导航 | — | 连续移动 |
+| 确认 | `Enter` | — | — |
+| 返回 | 普通退格 `Backspace` | 默认关闭 | 连续删除，松开停止 |
+| 菜单 | 撤销 `Ctrl+Z` | — | 重做 `Ctrl+Y` |
+| TV | 切换聊天与标签页 `Ctrl+Alt+B` | 侧边栏 `Ctrl+Shift+S` | 底部面板 `Ctrl+J` |
+| 电源 | `Esc` | — | 插队 / 排队 `Ctrl+Enter` |
+| 音量＋ | 上一个聊天 `Ctrl+Shift+[` | — | 每次按下切换一次 |
+| 音量－ | 下一个聊天 `Ctrl+Shift+]` | — | 每次按下切换一次 |
+| 语音 | 按住开始、松开结束，单独配置快捷键 | — | — |
 
-主页、菜单和 TV 配有双击，单击松开后等待约 0.3 秒；独立长按动作约 0.55 秒触发一次。确认和默认退格没有双击等待。Enter 在审批框中可能批准请求，在输入框中可能发送文字，请留意当前焦点。
+主页和 TV 配有双击，单击松开后等待约 0.3 秒；独立长按动作约 0.55 秒触发。默认退格与方向键支持按住重复。聊天切换范围由 Codex 自身决定，可能经过已打开的标签页；旧的 `Ctrl+PageUp/PageDown` 配置可以继续保留或自行调整。
 
-音量默认切换 Codex 聊天或标签页；范围由 Codex 自身决定。Ctrl+Z 及其他快捷键都可以换到其他按键的单击、双击或长按，也可以禁用。按键页的“恢复基础配置”只恢复返回退格、其余保持原样，与这里的日常方案不同。
+快捷键作用于**当前前台窗口**。`Enter` 在输入框中可能发送内容，在审批框中可能批准请求。内置动作按 [快捷键目录](src/lib/codex-shortcuts.ts) 整理，目标软件版本、键盘布局和自定义快捷键都可能影响结果。
 
-RC003 的返回和音量键需要先显式开启三键增强。它不修改系统驱动，也不要求关闭 Secure Boot；这是使用 Frida 的实验性管理员 Helper，需要首次真实按键释放完成初始化。基础语音和原本可用的普通按键不依赖该增强。兼容性边界见 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。
+<details>
+<summary><b>可选：双击按标点删除</b></summary>
 
-快捷键依据 [OpenAI 官方命令参考](https://learn.chatgpt.com/docs/reference/commands) 整理。Codex 版本、自定义快捷键、键盘布局和当前界面都可能影响结果。
+可以把双击返回改成「删到上一个标点（保留标点）」：`你好，今天天气很好｜` → `你好，｜`。默认关闭，普通退格优先即时执行。识别双击后，仅在焦点和文本校验成功时补偿首击并执行删除。
 
-## Codex 听写
+它通过公开 Windows UI Automation 文本范围工作，不使用剪贴板。选区、密码或只读输入框、焦点变化、超时以及不支持文本范围的编辑器会拒绝操作；曾出现闲置首用未响应，不能保证所有编辑器兼容。当前段落无标点时删到段首，光标紧跟标点时不删除。
 
-1. 在“连接与语音”选择“Codex 听写 · Ctrl + Shift + D”。
-2. 确认“麦克风”卡片显示语音来源为“遥控器麦克风”、声音传送已就绪，再让 Codex 使用 `CABLE Output` 麦克风。此处是设置提示，不会替你修改 Codex 的麦克风。
-3. 切到 Codex 并点击输入框，按住遥控器语音键说话，松开结束。
-4. 检查文字后，再按确认键发送。
+</details>
 
-尚未配置且只检测到一个虚拟声卡时，程序会自动准备声音传送；已保存的设备选择会保留。需要手动调整时展开“高级设置”：内部使用 `CABLE Input` 接收遥控器声音，目标应用从 `CABLE Output` 录音。普通扬声器也保留在高级列表中供试听或自定义传送，不会被自动选中。
+## 兼容性与当前边界
 
-切换听写快捷键不会改变音频来源；遥控器不会因此变成 Windows 原生麦克风。电脑扬声器保持原有设置，程序不捆绑第三方声卡驱动，也不自动更改系统默认音频设备。更多音频配置见 [安装与配置说明](docs/installation-and-configuration.md)。
+| 项目 | 当前状态 |
+| --- | --- |
+| Windows x64 构建、自动测试与发布校验 | 已有通过记录；每版的云端结果见 [Windows CI](https://github.com/MrPhotato/remote-mic-app-windows/actions/workflows/windows-ci.yml)。 |
+| RC003 连接、三键、普通删除与语音 | 已有本机验收记录；0.3.10 的麦克风选择、听写和正常退出恢复由用户确认。 |
+| RC001 | 支持目标，完整 Windows 真机验收仍待完成。 |
+| 一键升级 | 已实现下载、固定公钥验签与安全退出交接；完整自动升级闭环的验收范围见 [验证记录](Testing/WindowsOneClickUpdate.md)。 |
+| 连续语音、睡眠、热插拔、异常恢复 | 仍有待复测场景；社区反馈的连续语音中断问题仍在调查。 |
+| 第三方应用 | 依赖其公开快捷键与音频输入能力，不保证所有输入框和软件版本兼容。 |
 
-## 可选的按标点删除
+<details>
+<summary><b>权限、签名与音频恢复说明</b></summary>
 
-双击返回可以设置为“删到上一个标点（保留标点）”：`你好，今天天气很好｜` → `你好，｜`。当前段落没有标点时删到段首，光标紧跟标点时不删除。开启后首击先尝试普通退格，不等待双击窗口；识别到双击时，只有焦点和文本仍能校验才补偿首击并执行按标点删除。保护性检查也可能取消操作，不保证所有编辑器都能即时响应；按住仍会连续退格。
+- 主程序以普通用户权限运行。基础语音和原本可用的普通按键不依赖 Frida、管理员权限或虚拟 HID 驱动。
+- RC003 按键增强是显式开启的实验性管理员 Helper，使用 Frida，依赖 Windows 实现细节。每次启动需手动开启；不要求关闭 Secure Boot，也不安装按键驱动。边界见 [ADR 0003](docs/decisions/0003-rc003-optional-input-helper.md)。
+- 默认录音设备切换使用 Windows 未公开音频策略接口，限定已验证的录音设备；不改变扬声器默认值。正常退出会恢复，崩溃、断电或设备消失不能保证立即恢复。边界见 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
+- Preview 安装包提供 minisign 签名和 SHA256，应用内更新使用固定公钥验签；尚无 Windows Authenticode 签名，系统可能显示未知发布者。
+- 应用只处理所选遥控器的连接恢复，不自动开关整机蓝牙、不自动重启蓝牙适配器。
 
-此功能使用公开的 Windows UI Automation 文本范围，不使用剪贴板。已有选区、密码或只读输入框、焦点变化、超时，以及不支持文本范围读取的输入框都会拒绝操作。它默认关闭，目标编辑器兼容性仍需实际验证。
+</details>
 
-## 已验证范围与限制
+## 参与与反馈
 
-- 已完成 Windows x64 构建、前端与 Rust 自动测试，以及原生界面和配置保存检查。
-- RC003 的 BLE 连接与 ATVV 握手已验证；这不等于语音识别和所有按键均已验证。
-- 本机 RC003 三键输入、高亮、普通返回快按与按住删除、增强开启／关闭、基础语音到虚拟声卡输出已有真机通过记录。最终默认方案的全部 Codex 动作、最终返回配置的严格闲置首用、睡眠／崩溃恢复、RC001 和识别文字端到端仍待验证。
-- 按标点删除通过了独立测试输入框的多种边界验证，但曾出现闲置后首次操作未响应；Codex 输入框的兼容性和稳定性仍待验证。
-- Windows 可能拒绝后台程序切换前台窗口；应用发现成功不等于一定能够夺取焦点。
-- 普通键盘的 Home、反引号及 Shift＋反引号保持原生输入；主页、TV 映射只接收已识别遥控器的事件。因为不再全局拦截这两键，遥控器的主页、TV 可能同时带出原生 Home 或反引号，包括按住时的重复输入。
+遇到问题时，在「关于 → 诊断摘要」生成摘要，检查后随 [Issue](https://github.com/MrPhotato/remote-mic-app-windows/issues) 提交：应用版本、Windows 版本、遥控器型号、复现步骤和预期结果。请勿附带真实蓝牙地址、语音内容或完整个人配置。
 
-验证记录位于 [Testing](Testing)。历史记录中的设备和构建结论仅适用于其列出的环境，不代表所有 Windows 版本或遥控器型号均已通过。
+| 想做什么 | 从这里开始 |
+| --- | --- |
+| 安装、配置与排障 | [安装与配置说明](docs/installation-and-configuration.md) |
+| 查看计划与已知问题 | [路线图](TODO.md) · [Bug 记录](Bugs/README.md) |
+| 了解实际验证范围 | [测试记录](Testing) · [一键升级](Testing/WindowsOneClickUpdate.md) · [麦克风恢复](Testing/WindowsDefaultMicrophone.md) |
+| 贡献代码 | [开发约定](AGENTS.md) · [分支管理](BRANCH_MANAGEMENT.md) · [发布流程](RELEASING.md) |
 
-## 从源码构建
+### 从源码构建
 
-需要 Node.js、Python 3.11.9、Rust MSVC 工具链、Microsoft C++ Build Tools、Windows SDK 和 WebView2。构建脚本同时生成完整的三键增强 Helper。
+需要 Node.js、Python 3.11.9、Rust MSVC 工具链、Microsoft C++ Build Tools、Windows SDK 和 WebView2。
 
 ```powershell
 git clone https://github.com/MrPhotato/remote-mic-app-windows.git
 cd remote-mic-app-windows
-./scripts/build-local.ps1
+./scripts/build-local.ps1 -Installer
 ```
 
-脚本安装锁定的前端依赖，执行前端编译、自动测试和 Rust 格式检查，再构建 `target/release/remote-coding.exe`。已有验证结果、只需重新构建时可加 `-SkipTests`；生成 NSIS 安装包可加 `-Installer`。使用便携工具链时，可通过 `-ToolchainScript '你的工具链目录/activate.ps1'` 加载其环境。
+脚本构建前端、Rust 宿主和完整 RC003 Helper，执行测试与格式检查，输出 `target/release/remote-coding.exe` 及 NSIS 安装包。已具备同源码验证结果时可加 `-SkipTests`；便携工具链可用 `-ToolchainScript`。构建不会安装驱动或发布 Release。
 
-构建完成后可运行 `Start Remote Coding.cmd`。构建脚本不安装声卡驱动、不更改系统默认音频，也不发布 GitHub Release。
+## 开源与致谢
 
-## 许可证与来源
+**项目代码按 GPL-3.0-only 开源。** 欢迎研究、修改与贡献；分发时请遵守 [LICENSE](LICENSE)，第三方组件与来源见 [ATTRIBUTION.md](ATTRIBUTION.md)。
 
-本项目作为 SayAll Windows 的派生作品，继续使用 **GPL-3.0-only**，见 [LICENSE](LICENSE)。保留上游版权和来源记录，见 [ATTRIBUTION.md](ATTRIBUTION.md)。
+- [无线麦 SayAll · macOS 原版](https://github.com/HD838A/remote-mic-app)：产品理念与协议参考。
+- [SayAll Windows 上游](https://github.com/GetSayAll/remote-mic-app-windows)：BLE、ATVV 音频、虚拟声卡与 Windows 按键能力的基础。
+- 本仓库继续完善 Codex 默认方案、自定义操作、RC003 可选增强、麦克风管理与版本升级体验。
+- **该 Windows 版本由 GPT-6 Astra Ultra 协同制作。**
 
-当前应用图标为独立绘制的几何图形，按 GPL-3.0-only 提供；没有使用上游保留版权的品牌 Logo。上游品牌资产的历史许可说明见 [LOGO-LICENSE.md](LOGO-LICENSE.md)。Codex、SayAll 等名称仅用于准确说明兼容目标和项目来源，不表示官方认可。
+新应用图标与 README 插画为独立绘制，按 GPL-3.0-only 提供；历史品牌许可见 [LOGO-LICENSE.md](LOGO-LICENSE.md)。SayAll、Codex 等名称用于说明项目来源和兼容目标，不表示官方认可。
+
+<p align="center"><sub>把想法留在对话里，把常用操作放在手边。</sub></p>

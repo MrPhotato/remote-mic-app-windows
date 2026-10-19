@@ -2,6 +2,12 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## README 展示资源（2026-10-19）
+
+- `docs/assets/readme-hero.svg` 与 `voice-flow.svg` 为本项目原创矢量图，沿用新应用图标的银灰遥控器及靛紫、薄荷绿配色，按 GPL-3.0-only 提供；未复制第三方插画、模板或代码。截图来自本机已安装的 0.3.11 应用，展示更新及外观设置，无设备身份或个人路径。
+- 对照 [GitHub Flavored Markdown 规范](https://github.github.com/gfm/#disallowed-raw-html-extension-)：README 过滤 iframe，不能直接使用 B 站或抖音网页播放器。GitHub 支持的 [视频附件](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files) 是另一种方案；依用户要求，本次暂缓视频，不提交完整媒体或占位链接。
+- 徽章只展示本仓库公开 Release、Actions 状态、目标平台、许可证和技术栈；不宣称未完成的真机兼容性。安装及版面验证见 [ReadmeShowcase](Testing/ReadmeShowcase.md)，资源清单见 [docs/assets](docs/assets/README.md)。
+
 ## 应用内标题栏、自动检查和图标通知（2026-10-19）
 
 - 对照 [Tauri 自定义窗口](https://v2.tauri.app/learn/window-customization/) 与 [Window API](https://v2.tauri.app/reference/javascript/api/namespacewindow/)，使用 `decorations: false`、内置拖动区域和公开 minimize/toggleMaximize/close 接口；不自行实现窗口拖拽坐标或底层窗口钩子。液态玻璃外观沿用本仓库设计令牌。close 保持现有 CloseRequested → 托盘路径，未改动语音和连接清理。
