@@ -17,11 +17,17 @@
 
 - 48 项 ConnectionPage 测试、类型检查、前端生产构建与格式检查 passed。
 - 深浅主题 × 正常／减少动画四组浏览器逐帧检查 passed：正常动效 320ms 后稳定、连选取消前次、减少动画零位移，首次／轮询不播放成功反馈。1030×734 布局无溢出或裁切，截图目视通过，收据记录源码摘要。
-- 修订版本机静默升级、实际按钮与动效回验：deferred，待本次本地包安装。
+- 修订版本机静默升级、实际按钮与动效回验 passed：正常退出后安装返回 0，主程序字节仅 NSIS 标记不同、96 个 Helper 文件完整；原生页面截图和辅助功能树确认无额外徽标、按钮“使用中”／“已选择”正确。
+- 本机实际点击当前物理麦设为目标，再选回 CABLE：两次选择保存成功，日志均记录反馈 requested→settled（各约 336ms），页面状态对应实际结果。测试后原三份配置哈希完全一致，三个 Capture 与三个 Render 默认值全部与安装前相同。实体连接／断连及硬件听写仍沿用下方 deferred 边界。
 
 本次测试日志在 `target/microphone-connection-ui/motion-tests.log`、`motion-build.log`；
 浏览器证据放在 `target/microphone-selection-motion`，本机包及安装证据放在 `target/microphone-button-feedback`。
 沿用下方本地构建／验证命令；未变化的设备生命周期和 Helper 复用已有证据。
+
+修订构建源 `6f60df75f8163205d3372661acdf82534e5f6a22`；仍为 0.3.12 本地包，未推送、发布或上传。
+安装包 SHA-256：`40915FA71B87D3A8335A6A1731F88159CF5D003444AF99139F8CA430118F2DBF`。
+本机证据：`installed-highlight.json`、`installed-highlight.log`、`native-ui-check.json`、`interaction-preservation.json`，
+均位于 `target/microphone-button-feedback`，不提交个人设备身份及配置。
 
 ## 2026-10-20 首版高亮的历史验收
 
