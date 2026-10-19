@@ -42,6 +42,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "icons/icon.ico": "sayall-shortcut-532a10a81c7d.ico"
+    },
     "windows": {
       "allowDowngrades": false,
       "webviewInstallMode": {

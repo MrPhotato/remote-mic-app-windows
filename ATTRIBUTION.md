@@ -13,6 +13,8 @@
 
 2026-10-19 回验后的布局修正沿用本仓库 Vue 状态/卡片结构：保留状态和时间位置，复查期间只替换状态文字、保留上次时间及说明，失败清除旧结果；不新增请求调度或动画依赖。仅布局验证使用可控响应，真实 GitHub API 行为沿用原有证据。
 
+用户确认桌面仍显示旧图后，依据 [Tauri 资源映射](https://v2.tauri.app/develop/resources/)、Windows [IShellLinkW.SetIconLocation](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishelllinkw-seticonlocation) 和 [IPersistFile.Save](https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save)，将同一 ICO 打包为带内容哈希的独立文件，加载已有链接后只保存图标位置，再定向通知。使用 NSIS 自带公开 COM 接口声明，不引入额外插件。目标不匹配、自定义图标、损坏链接、资源缺失均跳过；保留用户链接属性。已有链接升级及静默/被动安装适用；全新交互安装在完成页首次创建桌面链接，仍使用 exe 的新图标。未来更新 ICO 应显式迁移已知旧资源文件，不能以任意文件名前缀覆盖自定义图标。见 [桌面图标回验记录](Bugs/2026-10-19-desktop-icon-cache.md)。
+
 ## 手动检查本仓库 Release（2026-10-19）
 
 参考 [GitHub 官方 Releases REST API](https://docs.github.com/en/rest/releases/releases#list-releases)：公开仓库可匿名读取，列表包含已发布预览版；`latest` 端点排除预览版，因此本功能读取分页列表并按 SemVer 选择最高版本。检查最高版本的发布页与 Windows 安装包归属、上传状态和大小，避免把发布不完整误报为已是最新。限流、网络和响应校验错误分别记录结构化诊断。

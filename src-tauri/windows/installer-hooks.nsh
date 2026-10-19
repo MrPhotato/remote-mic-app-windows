@@ -5,24 +5,106 @@
 !define SAYALL_VB_CABLE_SERVICE_KEY "SYSTEM\CurrentControlSet\Services\VBAudioVACMME"
 !define SAYALL_VB_CABLE_DOWNLOAD_URL "https://vb-audio.com/Cable/"
 
-; Replacing an executable does not always refresh Explorer's cached shortcut icon.
-; Notify only this application's existing items; never clear the system icon cache.
+; A content-versioned icon path avoids reusing the executable's cached Shell icon.
+; Keep in sync with bundle.resources; the suffix is the ICO's SHA-256 prefix.
+!define SAYALL_SHORTCUT_ICON "sayall-shortcut-532a10a81c7d.ico"
 !define SAYALL_SHCNE_UPDATEITEM 0x00002000
 !define SAYALL_SHCNF_PATHW_FLUSHNOWAIT 0x00003005
 
-!macro SayAllNotifyOwnedShortcutIcon _shortcut
-  ${If} ${FileExists} "${_shortcut}"
-    !insertmacro IsShortcutTarget "${_shortcut}" "$INSTDIR\${MAINBINARYNAME}.exe"
-    Pop $0
-    ${If} $0 = 1
-      System::Call 'shell32::SHChangeNotify(i ${SAYALL_SHCNE_UPDATEITEM}, i ${SAYALL_SHCNF_PATHW_FLUSHNOWAIT}, w "${_shortcut}", p 0)'
-      DetailPrint "SayAll shortcut icon refresh requested"
-    ${EndIf}
+; Load the existing link and change only its default icon. Do not rebuild links:
+; arguments, working directory, hotkey, description, show mode and other stored
+; properties belong to the user. An explicit custom icon is left untouched.
+Function SayAllRefreshShortcutIcon
+  Exch $5
+  Exch
+  Exch $6
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  StrCpy $0 0
+  StrCpy $1 0
+  StrCpy $4 0
+  IfFileExists "$5" 0 sayall_icon_done
+  IfFileExists "$INSTDIR\${SAYALL_SHORTCUT_ICON}" 0 sayall_icon_missing
+  !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
+  ${If} $0 P= 0
+    Goto sayall_icon_read_failed
   ${EndIf}
+  ${IUnknown::QueryInterface} $0 '("${IID_IPersistFile}",.r1).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  ${IPersistFile::Load} $1 '("$5", ${STGM_READWRITE}).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  ${IShellLink::GetPath} $0 '(.r2, ${NSIS_MAX_STRLEN}, 0, ${SLGP_RAWPATH}).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  StrCmp $2 "$6" 0 sayall_icon_wrong_target
+  ${IShellLink::GetIconLocation} $0 '(.r2, ${NSIS_MAX_STRLEN},.r3).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_read_failed
+  ${EndIf}
+  StrCmp $3 0 0 sayall_icon_custom
+  StrCmp $2 "$INSTDIR\${SAYALL_SHORTCUT_ICON}" sayall_icon_notify
+  StrCmp $2 "" sayall_icon_set
+  StrCmp $2 "$6" sayall_icon_set sayall_icon_custom
+sayall_icon_set:
+  ${IShellLink::SetIconLocation} $0 '("$INSTDIR\${SAYALL_SHORTCUT_ICON}",0).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_write_failed
+  ${EndIf}
+  ${IPersistFile::Save} $1 '("$5",1).r4'
+  ${If} $4 != 0
+    Goto sayall_icon_write_failed
+  ${EndIf}
+  DetailPrint "SayAll shortcut_icon result=updated"
+sayall_icon_notify:
+  System::Call 'shell32::SHChangeNotify(i ${SAYALL_SHCNE_UPDATEITEM}, i ${SAYALL_SHCNF_PATHW_FLUSHNOWAIT}, w "$5", p 0)'
+  DetailPrint "SayAll shortcut_icon result=refresh_requested"
+  Goto sayall_icon_done
+sayall_icon_missing:
+  DetailPrint "SayAll shortcut_icon result=skipped reason=resource_missing"
+  Goto sayall_icon_done
+sayall_icon_wrong_target:
+  DetailPrint "SayAll shortcut_icon result=skipped reason=target_mismatch"
+  Goto sayall_icon_done
+sayall_icon_custom:
+  DetailPrint "SayAll shortcut_icon result=skipped reason=custom_icon"
+  Goto sayall_icon_done
+sayall_icon_read_failed:
+  DetailPrint "SayAll shortcut_icon result=failed reason=read hr=$4"
+  Goto sayall_icon_done
+sayall_icon_write_failed:
+  DetailPrint "SayAll shortcut_icon result=failed reason=write hr=$4"
+sayall_icon_done:
+  ${If} $1 P<> 0
+    ${IUnknown::Release} $1 ""
+  ${EndIf}
+  ${If} $0 P<> 0
+    ${IUnknown::Release} $0 ""
+  ${EndIf}
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+  Pop $6
+  Pop $5
+FunctionEnd
+
+!macro SayAllNotifyOwnedShortcutIcon _shortcut
+  Push "$INSTDIR\${MAINBINARYNAME}.exe"
+  Push "${_shortcut}"
+  Call SayAllRefreshShortcutIcon
 !macroend
 
 !macro SayAllRefreshInstalledIcons
-  ; IsShortcutTarget uses $0 through $3. Preserve the surrounding installer state.
+  ; Preserve the surrounding installer state as the scoped link helper is called.
   Push $0
   Push $1
   Push $2
