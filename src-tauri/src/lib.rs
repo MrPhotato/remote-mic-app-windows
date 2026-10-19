@@ -4,16 +4,17 @@ use sayall_windows::send_input::{
     ButtonAction, ButtonMappings, ButtonTrigger, KeyChord, SendInputSnapshot,
 };
 use sayall_windows::{
-    AudioEndpoint, AudioSnapshot, ConnectionSnapshot, MicrophoneEndpoint, PairedRemote,
-    PlatformSnapshot, WindowsPlatform,
+    AudioEndpoint, AudioSnapshot, ConnectionSnapshot, MicrophoneEndpoint,
+    MicrophoneSelectionSnapshot, PairedRemote, PlatformSnapshot, WindowsPlatform,
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::{Emitter, Manager};
 
 mod diagnostics;
+mod exit_cleanup;
+mod microphone;
 mod platform;
 mod release_check;
 mod settings;
@@ -39,6 +40,7 @@ struct RuntimeSnapshot {
 struct AppState {
     platform: Arc<dyn PlatformRuntime>,
     settings: SettingsStore,
+    microphone: Arc<microphone::MicrophoneController>,
     /// check_app_update 暂存的待安装更新（install_app_update 取走）。
     /// tauri_plugin_updater::Update 未实现 Debug，用手写 impl 只呈现存在性。
     pending_update: std::sync::Mutex<Option<tauri_plugin_updater::Update>>,
@@ -233,6 +235,33 @@ async fn list_microphones(
         .await
         .map_err(|_| "读取麦克风列表失败".to_owned())?
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_microphone_selection(
+    state: tauri::State<'_, AppState>,
+) -> Result<MicrophoneSelectionSnapshot, String> {
+    let microphone = Arc::clone(&state.microphone);
+    tauri::async_runtime::spawn_blocking(move || {
+        microphone.snapshot().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|_| "读取麦克风选择失败".to_owned())?
+}
+
+#[tauri::command]
+async fn select_microphone(
+    microphone_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<MicrophoneSelectionSnapshot, String> {
+    let microphone = Arc::clone(&state.microphone);
+    let platform = Arc::clone(&state.platform);
+    let settings = state.settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        microphone.select(microphone_id, platform.as_ref(), &settings)
+    })
+    .await
+    .map_err(|_| "选择麦克风失败".to_owned())?
 }
 
 #[tauri::command]
@@ -1023,68 +1052,49 @@ fn runtime_simulation_requested() -> bool {
 /// 退出前收尾的宽限期（2026-09-16）。必须有界——超时是常态路径之一，
 /// 不是错误路径（AGENTS.md「偶发迟到要按必然事件设计」）。
 ///
-/// 必须明显小于安装器侧的总宽限：`installer-hooks.nsh` 先固定静默 1.5s，若进程
-/// 仍在再补 6.5s（`SAYALL_GRACEFUL_EXIT_SETTLE_MS` + `SAYALL_GRACEFUL_EXIT_TAIL_MS`），
-/// 合计 8 秒；留足余量才能保证应用在被强杀之前完成清理。
+/// BLE 清理最多 5 秒；随后麦克风恢复请求最多 10 秒。安装器当前提供
+/// 20 秒轮询预算，重复退出请求等待同一次清理，不能把“已开始”当“已完成”。
 const GRACEFUL_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// 退出收尾的一次性守卫（见 `claim_exit_shutdown` 的说明）。
-static EXIT_SHUTDOWN_DONE: AtomicBool = AtomicBool::new(false);
-
-/// 退出收尾的一次性守卫：调用一次即置位；返回 `true` 表示本次调用"认领"了收尾。
-///
-/// 为什么需要：退出收尾有**两条**入口会走到同一段代码——安装器请求退出的后台
-/// 线程（它必须自己先收尾，因为不能依赖主线程事件循环及时响应，见
-/// `spawn_installer_graceful_exit_watcher`），以及 `RunEvent::ExitRequested`
-/// （`AppHandle::exit` 会触发它，`tauri/src/app.rs` 文档："Exits the app by
-/// triggering `RunEvent::ExitRequested` and `RunEvent::Exit`"）。工作线程在第一
-/// 次收尾后已经关闭，第二次只会拿到 `worker_unavailable` 并落一条**误导性的
-/// failed 日志**——查日志的人会以为退出收尾失败了。收尾一次即够，故显式只做一次。
-///
-/// 抽成不落日志的纯函数，是为了让单测只验"只执行一次"这条不变量而不去写全局
-/// 诊断日志（`gatt_sink()` 是 `OnceLock`，首次调用即固定，测试里抢先用它会把
-/// 同进程其它日志测试钉死，见 `sayall_windows::gatt_note` 的注释）。
-fn claim_exit_shutdown(done: &AtomicBool) -> bool {
-    !done.swap(true, Ordering::SeqCst)
-}
+const EXIT_CLEANUP_WAIT: std::time::Duration = std::time::Duration::from_secs(18);
+static EXIT_CLEANUP: exit_cleanup::ExitCleanup = exit_cleanup::ExitCleanup::new();
 
 /// 退出前收尾：关闭 BLE 会话并**等待其完成**（`ble_session_cleanup` 落盘）。
 ///
-/// 所有退出入口（托盘"退出"、更新器安装完成后的退出、安装器请求的退出）都会经过
-/// 这里，因此统一收尾即可覆盖全部路径。
+/// 托盘退出和安装器请求统一经过此处；旧自动安装更新器当前禁用。
 ///
 /// 为什么必须显式做：Tauri v2 的 `App::run()` 收尾是 `std::process::exit`
 /// （`tauri/src/app.rs` 文档原文），而它**不执行 Rust 析构**——`BleRuntime::drop`
 /// 里的清理从不出现在进程结束路径上（现场证据：全日志 21 条
 /// `ble_session_cleanup` 无一条位于进程结束处）。
-fn shutdown_platform_for_exit(app: &tauri::AppHandle) {
-    if !claim_exit_shutdown(&EXIT_SHUTDOWN_DONE) {
-        sayall_windows::gatt_note(
-            "app_exit platform_shutdown phase=completed terminal_result=passed reason=already_shutdown elapsed_ms=0"
-                .to_owned(),
-        );
-        return;
-    }
-    let started = std::time::Instant::now();
-    let platform = app.state::<AppState>().platform.clone();
-    if app
-        .state::<AppState>()
-        .settings
-        .sync_audio_endpoint(|| platform.audio_snapshot())
-        .is_err()
-    {
-        sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=failed error_domain=settings error_code=write_failed reason=exit_sync retryable=true".to_owned());
-    }
-    match platform.shutdown_for_exit(GRACEFUL_EXIT_TIMEOUT) {
-        Ok(()) => sayall_windows::gatt_note(format!(
-            "app_exit platform_shutdown phase=completed terminal_result=passed reason=session_cleanup_acked elapsed_ms={}",
-            started.elapsed().as_millis()
-        )),
-        Err(error) => sayall_windows::gatt_note(format!(
-            "app_exit platform_shutdown phase=completed terminal_result=failed error_domain=platform error_code=shutdown_failed retryable=false reason=session_cleanup_unconfirmed elapsed_ms={} detail={error}",
-            started.elapsed().as_millis()
-        )),
-    }
+fn shutdown_platform_for_exit(app: &tauri::AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    state.microphone.begin_exit();
+    EXIT_CLEANUP.run(EXIT_CLEANUP_WAIT, || {
+        let started = std::time::Instant::now();
+        let platform = state.platform.clone();
+        if state
+            .settings
+            .sync_audio_endpoint(|| platform.audio_snapshot())
+            .is_err()
+        {
+            sayall_windows::gatt_note("audio_route action=persist phase=completed terminal_result=failed error_domain=settings error_code=write_failed reason=exit_sync retryable=true".to_owned());
+        }
+        match platform.shutdown_for_exit(GRACEFUL_EXIT_TIMEOUT) {
+            Ok(()) => sayall_windows::gatt_note(format!(
+                "app_exit platform_shutdown phase=completed terminal_result=passed reason=session_cleanup_acked elapsed_ms={}",
+                started.elapsed().as_millis()
+            )),
+            Err(error) => sayall_windows::gatt_note(format!(
+                "app_exit platform_shutdown phase=completed terminal_result=failed error_domain=platform error_code=shutdown_failed retryable=false reason=session_cleanup_unconfirmed elapsed_ms={} detail={error}",
+                started.elapsed().as_millis()
+            )),
+        }
+        // Restore even when BLE cleanup failed. The runtime retains an unfinished
+        // restoration journal on failure; do not imply successful restoration.
+        if state.microphone.restore().is_err() {
+            sayall_windows::gatt_note("app_exit microphone_restore phase=completed terminal_result=failed reason=restore_unconfirmed journal_retained=true".to_owned());
+        }
+    })
 }
 
 /// 监听安装器发出的"请优雅退出"信号（2026-09-16）。
@@ -1119,8 +1129,9 @@ fn spawn_installer_graceful_exit_watcher(app: tauri::AppHandle) {
                 "app_exit graceful_exit_signal phase=completed terminal_result=passed reason=installer_requested_exit"
                     .to_owned(),
             );
-            shutdown_platform_for_exit(&app);
-            app.exit(0);
+            if shutdown_platform_for_exit(&app) {
+                app.exit(0);
+            }
         });
     if let Err(error) = spawned {
         sayall_windows::gatt_note(format!(
@@ -1394,9 +1405,15 @@ pub fn run() {
             // 10 秒重试循环；用户在按键页显式停止（Stopped）时不重试。
             spawn_raw_input_supervisor(Arc::clone(&platform));
 
+            #[cfg(not(feature = "runtime-simulation"))]
+            let simulation = false;
+            #[cfg(feature = "runtime-simulation")]
+            let simulation = runtime_simulation_requested();
+            let microphone = Arc::new(microphone::MicrophoneController::new(&settings, simulation));
             app.manage(AppState {
                 platform,
                 settings,
+                microphone,
                 pending_update: std::sync::Mutex::new(None),
             });
             // 安装/升级前的优雅退出监听（2026-09-16）：安装器会先请求退出、
@@ -1458,6 +1475,8 @@ pub fn run() {
         disconnect_remote,
         list_audio_endpoints,
         list_microphones,
+        get_microphone_selection,
+        select_microphone,
         retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
@@ -1507,6 +1526,8 @@ pub fn run() {
         disconnect_remote,
         list_audio_endpoints,
         list_microphones,
+        get_microphone_selection,
+        select_microphone,
         retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
@@ -1547,8 +1568,20 @@ pub fn run() {
     let built = builder.build(tauri::generate_context!());
     if let Err(_) = built.map(|app| {
         app.run(|handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                shutdown_platform_for_exit(handle);
+            if let tauri::RunEvent::Ready = event {
+                let state = handle.state::<AppState>();
+                let microphone = Arc::clone(&state.microphone);
+                let platform = Arc::clone(&state.platform);
+                let settings = state.settings.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    microphone.apply_startup(platform.as_ref(), &settings)
+                });
+            }
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if !shutdown_platform_for_exit(handle) {
+                    api.prevent_exit();
+                    sayall_windows::gatt_note("app_exit cleanup phase=waiting terminal_result=deferred reason=concurrent_cleanup_not_finished".to_owned());
+                }
             }
         })
     }) {
@@ -1606,19 +1639,6 @@ mod tests {
             .find("!macroend")
             .unwrap_or_else(|| panic!("`{opener}` 未以 !macroend 结束"));
         rest[..end].to_owned()
-    }
-
-    #[test]
-    fn exit_shutdown_claim_is_one_shot() {
-        let done = AtomicBool::new(false);
-        assert!(claim_exit_shutdown(&done), "首次调用应认领退出收尾");
-        assert!(
-            !claim_exit_shutdown(&done),
-            "重复调用不得再次收尾：工作线程已关闭，再发一次只会落一条误导性的 failed 日志"
-        );
-        // 收尾**失败**后同样不重试：安装器给的宽限是有限的，二次等待会把退出拖过
-        // 强杀线，反而丢掉"自己退出"这个前提。
-        assert!(!claim_exit_shutdown(&done), "收尾失败后不得重试");
     }
 
     /// 安装器必须用**应用注册的那个事件名**请应用退出。

@@ -530,3 +530,25 @@ ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实
 顶部电源/语音按钮、左侧返回/主页/菜单及右侧音量摇杆/TV 键。图标全部由几何代码重绘，
 不嵌入照片像素；加宽机身、缩短底部留白，保留第一版底色与无线声波。
 对新资源重复执行 PNG/ICO 校验、深浅背景小尺寸预览和前端构建，结果 passed；原生安装外观仍 deferred。
+
+## 默认麦克风选择与会话恢复（2026-10-19）
+
+先核对 SoundSwitch 与 EarTrumpet 的默认设备切换做法。Windows 公开 Core Audio 接口提供
+[默认端点读取](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint)
+和 [默认端点变更通知](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immnotificationclient-ondefaultdevicechanged)，
+这两个参考项目通过未公开的 PolicyConfig 设置默认设备。用户明确授权的范围仅限默认录音设备切换及恢复，
+见 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
+
+Rust 的最小 ABI 声明参考
+[SoundSwitch IPolicyConfig.cs](https://github.com/Belphemur/SoundSwitch/blob/6ce0c4d80849fe4654ec36a0db0556eee8555f26/SoundSwitch.Audio.Manager/Interop/Interface/Policy/IPolicyConfig.cs)，
+固定提交 `6ce0c4d80849fe4654ec36a0db0556eee8555f26`，仅采用接口 IID、类 CLSID 与方法顺序。
+该提交 [LICENSE.txt](https://github.com/Belphemur/SoundSwitch/blob/6ce0c4d80849fe4654ec36a0db0556eee8555f26/LICENSE.txt)
+为 GNU GPL v3，与本仓库 GPL-3.0-only 边界相容。
+EarTrumpet 固定提交 `0321205ad775a91967cf439576b52909e146149b` 的
+`DataModel/WindowsAudio/Internal/AudioDeviceManager.cs` 与 `Interop/MMDeviceAPI/IPolicyConfig.cs`
+仅作行为交叉核对，未复制实现；其许可含额外排除条款，不将其标注为标准 MIT。
+
+逐角色恢复资格、原子恢复记录、失败回滚、通知处理及 COM 工作线程均独立实现。
+读取与通知使用公开 API，写入入口只接受重新验证为 active Capture 的端点；不写 Render 默认设备，
+不访问第三方应用设置，也不新增驱动、提权或蓝牙操作。真实设备与安装版验收分别记录于
+[Windows 默认麦克风验证](Testing/WindowsDefaultMicrophone.md)。

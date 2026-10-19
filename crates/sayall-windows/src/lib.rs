@@ -20,7 +20,9 @@ mod ble;
 mod button_gestures;
 pub mod button_mapping;
 pub mod compatibility;
+pub mod default_microphone;
 pub mod diagnostic_sink;
+pub use default_microphone::{DefaultMicrophoneRuntime, MicrophoneSelectionSnapshot};
 pub mod file_dialog;
 #[cfg(windows)]
 pub mod graceful_exit;

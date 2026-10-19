@@ -1,6 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AudioEndpoint, AudioSnapshot, ConnectionSnapshot, KeyChord, MicrophoneEndpoint, RuntimeSnapshot } from "../lib/bridge";
+import type { AudioEndpoint, AudioSnapshot, ConnectionSnapshot, KeyChord, MicrophoneEndpoint, MicrophoneSelectionSnapshot, RuntimeSnapshot } from "../lib/bridge";
 import ConnectionPage from "./ConnectionPage.vue";
 
 const emptyConnection: ConnectionSnapshot = {
@@ -25,6 +25,17 @@ const emptyAudio: AudioSnapshot = {
   generation: 0,
   lastError: null,
 };
+
+const emptyMicrophoneSelection: MicrophoneSelectionSnapshot = {
+  targetMicrophoneId: null, targetMicrophoneName: null, currentMicrophoneId: null, currentMicrophoneName: null,
+  phase: "unconfigured", lastError: null, restorePending: false,
+};
+
+function selected(microphone: MicrophoneEndpoint): MicrophoneSelectionSnapshot {
+  return { targetMicrophoneId: microphone.id, targetMicrophoneName: microphone.name,
+    currentMicrophoneId: microphone.id, currentMicrophoneName: microphone.name,
+    phase: "ready", lastError: null, restorePending: true };
+}
 
 const runtime: RuntimeSnapshot = {
   appVersion: "0.1.0",
@@ -91,9 +102,13 @@ const physicalMicrophone: MicrophoneEndpoint = {
 
 const mocks = vi.hoisted(() => ({
   endpoints: [] as AudioEndpoint[],
+  audio: {} as AudioSnapshot,
+  selection: {} as MicrophoneSelectionSnapshot,
   microphones: [] as MicrophoneEndpoint[],
   getConnectionSnapshot: vi.fn(),
   getAudioSnapshot: vi.fn(),
+  getMicrophoneSelection: vi.fn(),
+  selectMicrophone: vi.fn(),
   listAudioEndpoints: vi.fn(),
   listMicrophones: vi.fn(),
   retryAudioEndpoint: vi.fn(),
@@ -110,6 +125,8 @@ vi.mock("../lib/bridge", async (importOriginal) => {
     ...original,
     getConnectionSnapshot: mocks.getConnectionSnapshot,
     getAudioSnapshot: mocks.getAudioSnapshot,
+    getMicrophoneSelection: mocks.getMicrophoneSelection,
+    selectMicrophone: mocks.selectMicrophone,
     listAudioEndpoints: mocks.listAudioEndpoints,
     listMicrophones: mocks.listMicrophones,
     retryAudioEndpoint: mocks.retryAudioEndpoint,
@@ -128,9 +145,20 @@ describe("Connection and voice settings", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.endpoints = [];
+    mocks.audio = { ...emptyAudio };
+    mocks.selection = { ...emptyMicrophoneSelection };
     mocks.microphones = [];
     mocks.getConnectionSnapshot.mockResolvedValue(emptyConnection);
-    mocks.getAudioSnapshot.mockResolvedValue(emptyAudio);
+    mocks.getAudioSnapshot.mockImplementation(async () => ({ ...mocks.audio }));
+    mocks.getMicrophoneSelection.mockImplementation(async () => ({ ...mocks.selection }));
+    mocks.selectMicrophone.mockImplementation(async (microphoneId: string) => {
+      const microphone = mocks.microphones.find((item) => item.id === microphoneId)!;
+      mocks.selection = selected(microphone);
+      if (microphone.isVirtualCableCandidate) {
+        mocks.audio = { ...emptyAudio, phase: "ready", selectedEndpointId: microphone.renderEndpointIds[0] ?? null, selectedEndpointName: cableEndpoint.name };
+      }
+      return { ...mocks.selection };
+    });
     mocks.listAudioEndpoints.mockImplementation(async () => mocks.endpoints);
     mocks.listMicrophones.mockImplementation(async () => mocks.microphones);
     mocks.retryAudioEndpoint.mockResolvedValue(emptyAudio);
@@ -150,375 +178,364 @@ describe("Connection and voice settings", () => {
     vi.useRealTimers();
   });
 
-  it("groups each status dot with its heading for vertical alignment", async () => {
+  function prepareCable() {
+    mocks.microphones = [cableMicrophone, physicalMicrophone];
+    mocks.selection = selected(cableMicrophone);
+    mocks.audio = { ...emptyAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name };
+  }
+
+  function microphoneButton(wrapper: ReturnType<typeof mount>, name: string) {
+    return wrapper.findAll(".endpoint-list li").find((row) => row.text().includes(name))!.get("button");
+  }
+
+  it("shows the saved virtual microphone and all other capture choices without automatically selecting", async () => {
+    prepareCable();
+    mocks.microphones[0] = { ...cableMicrophone, renderEndpointIds: [cableEndpoint.id, "cable-speakers"] };
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-
-    const headings = wrapper.findAll(".status-heading");
-    expect(headings).toHaveLength(2);
-    for (const heading of headings) {
-      expect(heading.find(".status-dot").exists()).toBe(true);
-      expect(heading.find("strong").exists()).toBe(true);
-    }
-    wrapper.unmount();
-  });
-
-  it("selects one virtual microphone even when its cable has two render interfaces", async () => {
-    const cableSpeakers = { ...cableEndpoint, id: "cable-speakers", name: "Speakers (2- VB-Audio Virtual Cable)" };
-    mocks.endpoints = [cableSpeakers, cableEndpoint, speakerEndpoint];
-    mocks.microphones = [{ ...cableMicrophone, renderEndpointIds: [cableEndpoint.id, cableSpeakers.id] }, physicalMicrophone];
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-
-    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(cableEndpoint.id);
     const card = wrapper.get(".audio-settings-card");
-    expect(card.get(".microphone-status").text()).toContain("已就绪");
     expect(card.get(".microphone-name").text()).toBe(cableMicrophone.name);
-    expect(card.text()).toContain("目标虚拟麦克风");
-    expect(card.text()).toContain("在 Codex 或语音输入法中选择这个麦克风");
-    expect(card.get(".microphone-target").text()).not.toContain("CABLE Input");
-    expect(card.get(".microphone-target").text()).not.toContain("Speakers");
-    expect(card.get(".audio-route-details").attributes("open")).toBeUndefined();
-    expect(card.text()).not.toContain("高级设置");
-
-    const rows = card.findAll(".endpoint-list li");
-    expect(rows).toHaveLength(1);
-    expect(rows[0].text()).toContain(physicalMicrophone.name);
-    expect(rows[0].text()).toContain("在目标应用中选择");
-    expect(rows[0].find("button").exists()).toBe(false);
+    expect(card.get(".microphone-status").text()).toBe("已就绪");
+    expect(card.text()).toContain("目标麦克风");
+    expect(card.text()).toContain("启动时切换到所选麦克风，退出时恢复原设置");
+    expect(card.text()).toContain("系统默认麦克风");
     expect(card.get(".endpoint-list").text()).not.toContain(cableMicrophone.name);
-    expect(card.get(".audio-route-details").text()).toContain("默认通信设备");
-    expect(card.get(".endpoint-list").text()).not.toContain("Speakers");
-    expect(card.get(".endpoint-list").text()).not.toContain("CABLE Input");
+    expect(microphoneButton(wrapper, physicalMicrophone.name).text()).toBe("选择");
+    expect(card.get(".microphone-target").text()).not.toContain("CABLE Input");
+    expect(card.get(".audio-route-details").attributes("open")).toBeUndefined();
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(mocks.listAudioEndpoints).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
-  it("does not infer an installed microphone from render names or offer a speaker as a microphone", async () => {
+  it("uses the capture selection command for physical microphones without opening a render route", async () => {
+    prepareCable();
+    mocks.audio.phase = "failed";
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    await flushPromises();
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(physicalMicrophone.id);
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(mocks.retryAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get(".microphone-name").text()).toBe(physicalMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
+    expect(wrapper.get(".endpoint-list").text()).toContain(cableMicrophone.name);
+    wrapper.unmount();
+  });
+
+  it("selects a virtual microphone by its capture ID and lets the host prepare its route", async () => {
+    prepareCable();
+    mocks.selection = selected(physicalMicrophone);
+    mocks.audio = { ...emptyAudio };
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    await microphoneButton(wrapper, cableMicrophone.name).trigger("click");
+    await flushPromises();
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(cableMicrophone.id);
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    wrapper.unmount();
+  });
+
+  it("does not infer microphones from render endpoints or select a first device on page mount", async () => {
     mocks.endpoints = [cableEndpoint, speakerEndpoint];
     mocks.microphones = [physicalMicrophone];
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    const card = wrapper.get(".audio-settings-card");
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    expect(card.get(".microphone-name").text()).toBe("尚未选择");
-    expect(card.text()).not.toContain("需要安装 VB-CABLE");
-    expect(card.text()).toContain("未检测到可用的 VB-CABLE 麦克风");
-    await card.findAll("button").find((button) => button.text() === "刷新设备列表")!.trigger("click");
-    await flushPromises();
-    expect(card.get(".endpoint-list").text()).toContain(physicalMicrophone.name);
-    expect(card.get(".endpoint-list").text()).not.toContain(speakerEndpoint.name);
-    expect(card.get(".endpoint-list").find("button").exists()).toBe(false);
-    wrapper.unmount();
-  });
-
-  it("keeps distinct virtual microphones unselected until the user chooses one", async () => {
-    const otherRender = { ...cableEndpoint, id: "other-input", name: "Other cable input" };
-    const otherMicrophone = { ...cableMicrophone, id: "other-output", name: "Other cable microphone", renderEndpointIds: [otherRender.id] };
-    mocks.endpoints = [cableEndpoint, otherRender];
-    mocks.microphones = [cableMicrophone, otherMicrophone];
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    await wrapper.findAll(".endpoint-list li")[1].get("button").trigger("click");
-    await flushPromises();
-    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(otherRender.id);
-    expect(wrapper.get(".audio-settings-card .microphone-name").text()).toBe(otherMicrophone.name);
-    expect(wrapper.get(".endpoint-list").text()).toContain(cableMicrophone.name);
-    expect(wrapper.get(".endpoint-list").text()).not.toContain(otherMicrophone.name);
-    expect(wrapper.get(".endpoint-list button").text()).toBe("选择");
-    wrapper.unmount();
-  });
-
-  it("does not overwrite settings when their initial read fails", async () => {
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.getAudioSnapshot.mockRejectedValueOnce(new Error("设置暂时无法读取"));
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    expect(mocks.listMicrophones).toHaveBeenCalledOnce();
+    expect(wrapper.get(".microphone-name").text()).toBe("尚未选择");
+    expect(wrapper.get(".endpoint-list").text()).not.toContain(speakerEndpoint.name);
+    expect(wrapper.get(".endpoint-list").text()).not.toContain(cableEndpoint.name);
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeUndefined();
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
     expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
-  it("preserves an unavailable saved route until explicit recovery and then shows the actual paired microphone", async () => {
-    const failedAudio: AudioSnapshot = { ...emptyAudio, phase: "failed", selectedEndpointId: "absent-cable-input", selectedEndpointName: "Old cable input" };
-    let resolveAudio: ((snapshot: AudioSnapshot) => void) | undefined;
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.getAudioSnapshot.mockImplementationOnce(() => new Promise((resolve) => { resolveAudio = resolve; }));
-    mocks.retryAudioEndpoint.mockResolvedValue({ ...failedAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name });
+  it("keeps an unpaired virtual microphone visible and reports a host rejection without claiming it is usable", async () => {
+    mocks.microphones = [{ ...cableMicrophone, renderEndpointIds: [] }, physicalMicrophone];
+    mocks.selection = selected(physicalMicrophone);
+    mocks.selectMicrophone.mockRejectedValueOnce(new Error("microphone_render_route_unavailable"));
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    expect(mocks.listMicrophones).not.toHaveBeenCalled();
-    resolveAudio?.(failedAudio);
+    expect(wrapper.get(".endpoint-list").text()).toContain("遥控器传声线路暂不可用");
+    await microphoneButton(wrapper, cableMicrophone.name).trigger("click");
     await flushPromises();
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(cableMicrophone.id);
+    expect(wrapper.get(".microphone-name").text()).toBe(physicalMicrophone.name);
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("麦克风切换失败");
+    expect(wrapper.get(".audio-route-details").text()).toContain("microphone_render_route_unavailable");
+    wrapper.unmount();
+  });
+
+  it("keeps the saved target separate from an externally changed system default until the user reapplies it", async () => {
+    prepareCable();
+    mocks.selection = { ...mocks.selection, phase: "external", currentMicrophoneId: physicalMicrophone.id, currentMicrophoneName: physicalMicrophone.name };
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-current").text()).toContain(physicalMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("系统麦克风已更改");
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    await wrapper.get(".selected-microphone-row button").trigger("click");
+    await flushPromises();
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(cableMicrophone.id);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(wrapper.find(".microphone-current").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("reports an externally changed capture role without repeating an unchanged Console device name", async () => {
+    prepareCable();
+    mocks.selection.phase = "external";
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".microphone-status").text()).toBe("系统麦克风已更改");
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.find(".microphone-current").exists()).toBe(false);
+    expect(wrapper.get(".selected-microphone-row button").text()).toBe("使用这个麦克风");
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("does not report readiness from a ready phase when the current and saved capture IDs differ", async () => {
+    prepareCable();
+    mocks.selection.currentMicrophoneId = physicalMicrophone.id;
+    mocks.selection.currentMicrophoneName = physicalMicrophone.name;
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".microphone-status").text()).toBe("系统麦克风已更改");
+    wrapper.unmount();
+  });
+
+  it("does not name an unknown current device as another microphone", async () => {
+    prepareCable();
+    mocks.selection = { ...mocks.selection, phase: "external", currentMicrophoneId: null, currentMicrophoneName: null };
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".microphone-status").text()).toBe("当前麦克风待确认");
+    expect(wrapper.find(".microphone-current").exists()).toBe(false);
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("recovers an initial selection getter failure through polling without writing system defaults", async () => {
+    vi.useFakeTimers();
+    prepareCable();
+    mocks.getMicrophoneSelection.mockRejectedValueOnce(new Error("read failed"));
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".microphone-status").text()).toBe("状态待确认");
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("正在重新读取");
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeDefined();
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushPromises();
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeUndefined();
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("retains the target name but stops claiming current readiness after a polling getter failure", async () => {
+    vi.useFakeTimers();
+    prepareCable();
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    mocks.getMicrophoneSelection.mockRejectedValueOnce(new Error("poll failed"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("状态待确认");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("ignores a stale getter response arriving after a newer explicit selection", async () => {
+    vi.useFakeTimers();
+    prepareCable();
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    let resolveRead!: (snapshot: MicrophoneSelectionSnapshot) => void;
+    mocks.getMicrophoneSelection.mockImplementationOnce(() => new Promise((resolve) => { resolveRead = resolve; }));
+    await vi.advanceTimersByTimeAsync(1000);
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    await flushPromises();
+    resolveRead(selected(cableMicrophone));
+    await flushPromises();
+    expect(wrapper.get(".microphone-name").text()).toBe(physicalMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    wrapper.unmount();
+  });
+
+  it("keeps known names visible but disables stale choices until automatic inventory refresh succeeds", async () => {
+    vi.useFakeTimers();
+    prepareCable();
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    mocks.listMicrophones.mockRejectedValueOnce(new Error("capture enumeration failure"));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("等待刷新");
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeDefined();
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toBe("麦克风列表暂时无法更新，正在自动重试。");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeUndefined();
+    expect(mocks.listMicrophones).toHaveBeenCalledTimes(3);
     expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    const card = wrapper.get(".audio-settings-card");
-    expect(card.get(".microphone-name").text()).toBe("尚未选择");
-    expect(card.get(".microphone-status").text()).not.toContain("已就绪");
-    await card.findAll("button").find((button) => button.text() === "重试恢复语音线路")!.trigger("click");
-    await flushPromises();
-    expect(mocks.retryAudioEndpoint).toHaveBeenCalledOnce();
-    expect(card.get(".microphone-name").text()).toBe(cableMicrophone.name);
-    expect(card.get(".microphone-status").text()).toContain("已就绪");
-    expect(card.text()).not.toContain("重试恢复语音线路");
+    expect(mocks.retryAudioEndpoint).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
-  it("allows reselection of the same microphone when the saved stream failed", async () => {
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "failed", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name });
+  it("does not treat a returned failed selection snapshot as success", async () => {
+    prepareCable();
+    mocks.selectMicrophone.mockResolvedValueOnce({ ...selected(physicalMicrophone), phase: "failed", lastError: "default_verify_failed" });
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    const retry = wrapper.get(".selected-microphone-row button");
-    expect(retry.text()).toBe("重试");
-    expect(retry.attributes("disabled")).toBeUndefined();
-    await retry.trigger("click");
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
     await flushPromises();
-    expect(mocks.selectAudioEndpoint).toHaveBeenCalledExactlyOnceWith(cableEndpoint.id);
-    expect(wrapper.get(".microphone-status").text()).toContain("已就绪");
+    expect(wrapper.get(".microphone-status").text()).toBe("暂不可用");
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("切换失败");
     wrapper.unmount();
   });
 
-  it("shows capture enumeration errors instead of suggesting a driver install, and refresh recovers", async () => {
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name });
-    mocks.listMicrophones.mockRejectedValueOnce(new Error("音频服务暂时不可用"));
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    const card = wrapper.get(".audio-settings-card");
-    expect(card.get('[role="alert"]').text()).toContain("正在自动重试");
-    expect(card.get(".audio-route-details").text()).toContain("麦克风读取失败：音频服务暂时不可用");
-    expect(card.find(".vb-cable-callout").exists()).toBe(false);
-    expect(card.get(".microphone-status").text()).not.toContain("已就绪");
-    await card.findAll("button").find((button) => button.text() === "刷新设备列表")!.trigger("click");
-    await flushPromises();
-    expect(card.find('[role="alert"]').exists()).toBe(false);
-    expect(card.get(".microphone-status").text()).toContain("已就绪");
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    wrapper.unmount();
-  });
-
-  it("keeps route activation failure visible and allows a manual retry", async () => {
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.selectAudioEndpoint.mockRejectedValueOnce(new Error("设备正忙"));
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    const card = wrapper.get(".audio-settings-card");
-    expect(card.get('[role="alert"]').text()).toContain("麦克风启用失败");
-    await card.get(".endpoint-list li button").trigger("click");
-    await flushPromises();
-    expect(card.find('[role="alert"]').exists()).toBe(false);
-    expect(card.get(".microphone-status").text()).toContain("已就绪");
-    expect(mocks.selectAudioEndpoint).toHaveBeenCalledTimes(2);
-    wrapper.unmount();
-  });
-
-  it("does not claim VB-CABLE is uninstalled when no active device was returned", async () => {
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    const card = wrapper.get(".audio-settings-card");
-    expect(card.text()).toContain("未检测到可用的 VB-CABLE 麦克风");
-    expect(card.text()).not.toContain("需要安装 VB-CABLE");
-    expect(card.text()).not.toContain("重启电脑");
-    await card.get(".audio-route-details button").trigger("click");
-    await flushPromises();
-    expect(mocks.openVbCableDownloadPage).toHaveBeenCalledOnce();
-    wrapper.unmount();
-  });
-
-  it("preserves a selection failure while the changed failed state refreshes inventory", async () => {
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.selectAudioEndpoint.mockRejectedValueOnce(new Error("设备正忙"));
-    mocks.getAudioSnapshot.mockResolvedValueOnce(emptyAudio).mockResolvedValue({
-      ...emptyAudio, phase: "failed", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name,
+  it("retains a specific save failure across getter polls and retries the requested capture target", async () => {
+    vi.useFakeTimers();
+    prepareCable();
+    mocks.selectMicrophone.mockImplementationOnce(async () => {
+      mocks.selection = { ...selected(cableMicrophone), currentMicrophoneId: physicalMicrophone.id, currentMicrophoneName: physicalMicrophone.name, phase: "external" };
+      throw new Error("microphone_settings_save_failed");
     });
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
-    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("麦克风启用失败");
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-current").text()).toContain(physicalMicrophone.name);
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toBe("麦克风已切换，但设置未保存。");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(wrapper.get(".microphone-status").text()).toBe("设置未保存");
+    const retry = wrapper.get(".microphone-retry button");
+    expect(retry.text()).toBe("重试保存设置");
+    await retry.trigger("click");
+    await flushPromises();
+    expect(mocks.selectMicrophone.mock.calls).toEqual([[physicalMicrophone.id], [physicalMicrophone.id]]);
+    expect(wrapper.get(".microphone-name").text()).toBe(physicalMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
-  it("refreshes microphone identity when background recovery selects a replacement route", async () => {
-    vi.useFakeTimers();
-    const replacementRender = { ...cableEndpoint, id: "replacement-input" };
-    const replacementMic = { ...cableMicrophone, id: "replacement-output", name: "Recovered cable microphone", renderEndpointIds: [replacementRender.id] };
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "failed", selectedEndpointId: "old-input", selectedEndpointName: "Old cable" });
+  it("does not infer a save failure merely because a failed selection currently matches the requested default", async () => {
+    prepareCable();
+    mocks.selectMicrophone.mockImplementationOnce(async () => {
+      mocks.selection = selected(physicalMicrophone);
+      throw new Error("default_verify_failed");
+    });
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    mocks.endpoints = [replacementRender];
-    mocks.microphones = [replacementMic];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "ready", selectedEndpointId: replacementRender.id, selectedEndpointName: replacementRender.name });
-    await vi.advanceTimersByTimeAsync(1000);
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
     await flushPromises();
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
-    expect(wrapper.get(".audio-settings-card .microphone-name").text()).toBe(replacementMic.name);
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toBe("麦克风切换失败，可重试。");
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).not.toContain("未保存");
     wrapper.unmount();
   });
 
-  it("refreshes the capture list when a parent runtime snapshot announces recovery", async () => {
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "failed", selectedEndpointId: cableEndpoint.id });
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    mocks.microphones = [cableMicrophone];
-    await wrapper.setProps({ runtime: { ...runtime, platform: { ...runtime.platform, audio: {
-      ...emptyAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name,
-    } } } });
-    await flushPromises();
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
-    expect(wrapper.get(".audio-settings-card .microphone-name").text()).toBe(cableMicrophone.name);
-    wrapper.unmount();
-  });
-
-  it("updates default roles and capture-only changes every ten seconds without reopening a ready route", async () => {
-    vi.useFakeTimers();
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone, physicalMicrophone];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name });
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    mocks.microphones = [{ ...cableMicrophone, isDefault: false }, { ...physicalMicrophone, isDefault: true }];
-    await vi.advanceTimersByTimeAsync(9000);
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushPromises();
-    const roles = wrapper.get(".audio-route-details");
-    expect(roles.text()).toContain(`${physicalMicrophone.name}：Windows 默认录音设备`);
-    expect(roles.text()).not.toContain(`${cableMicrophone.name}：Windows 默认录音设备`);
-    expect(wrapper.get(".endpoint-list").text()).toContain(physicalMicrophone.name);
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
+  it("preserves the saved name when its capture device disappears without presenting stale readiness", async () => {
+    prepareCable();
     mocks.microphones = [physicalMicrophone];
-    await vi.advanceTimersByTimeAsync(10000);
-    await flushPromises();
-    expect(wrapper.get(".audio-settings-card .microphone-name").text()).toBe("尚未选择");
-    expect(wrapper.get(".microphone-status").text()).not.toContain("已就绪");
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    expect(mocks.retryAudioEndpoint).not.toHaveBeenCalled();
-    wrapper.unmount();
-    await vi.advanceTimersByTimeAsync(30000);
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(3);
-    expect(mocks.getAudioSnapshot).toHaveBeenCalledTimes(21);
-  });
-
-  it("keeps known names visible but disables stale choices until the next automatic refresh", async () => {
-    vi.useFakeTimers();
-    const otherRender = { ...cableEndpoint, id: "other-input" };
-    const otherMicrophone = { ...cableMicrophone, id: "other-output", name: "Other cable microphone", renderEndpointIds: [otherRender.id] };
-    mocks.endpoints = [cableEndpoint, otherRender];
-    mocks.microphones = [cableMicrophone, otherMicrophone, physicalMicrophone];
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name });
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
     expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
-    expect(wrapper.get(".endpoint-list button").attributes("disabled")).toBeUndefined();
+    expect(wrapper.get(".microphone-status").text()).toBe("设备暂不可用");
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
 
-    mocks.listMicrophones.mockRejectedValueOnce(new Error("temporary capture enumeration failure"));
-    await vi.advanceTimersByTimeAsync(10000);
+  it("requires a matching ready render route for a virtual microphone even when the Windows default is correct", async () => {
+    prepareCable();
+    mocks.audio.phase = "failed";
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
-    expect(wrapper.get(".microphone-status").text()).toBe("等待刷新");
-    expect(wrapper.get(".endpoint-list").text()).toContain(otherMicrophone.name);
-    expect(wrapper.get(".endpoint-list").text()).toContain(physicalMicrophone.name);
-    expect(wrapper.get(".endpoint-list button").attributes("disabled")).toBeDefined();
-    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toBe("麦克风列表暂时无法更新，正在自动重试。");
-    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).not.toContain("temporary capture");
-    await wrapper.get(".endpoint-list button").trigger("click");
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(wrapper.get(".microphone-status").text()).toBe("传声线路暂不可用");
+    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("遥控器语音线路暂不可用");
+    await wrapper.get(".microphone-retry button").trigger("click");
+    await flushPromises();
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(cableMicrophone.id);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    wrapper.unmount();
+  });
 
-    await vi.advanceTimersByTimeAsync(10000);
+  it("shows a virtual route as unconfirmed after an audio read failure without blocking a physical target", async () => {
+    prepareCable();
+    mocks.getAudioSnapshot.mockRejectedValueOnce(new Error("audio read failed"));
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    await flushPromises();
+    expect(wrapper.get(".microphone-status").text()).toBe("传声线路待确认");
+    await microphoneButton(wrapper, physicalMicrophone.name).trigger("click");
     await flushPromises();
     expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
-    expect(wrapper.get(".endpoint-list button").attributes("disabled")).toBeUndefined();
-    expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(3);
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    expect(mocks.retryAudioEndpoint).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
-  it("defers the periodic microphone refresh until an active voice session has ended", async () => {
+  it("defers microphone selection and inventory refresh during an active voice session", async () => {
     vi.useFakeTimers();
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    const streaming: AudioSnapshot = { ...emptyAudio, phase: "streaming", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name };
-    mocks.getAudioSnapshot.mockResolvedValue(streaming);
+    prepareCable();
+    mocks.audio.phase = "streaming";
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeDefined();
     await vi.advanceTimersByTimeAsync(10000);
     expect(mocks.listMicrophones).toHaveBeenCalledTimes(1);
-    mocks.getAudioSnapshot.mockResolvedValue({ ...streaming, phase: "ready" });
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    mocks.audio.phase = "ready";
     await vi.advanceTimersByTimeAsync(2000);
     expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(microphoneButton(wrapper, physicalMicrophone.name).attributes("disabled")).toBeUndefined();
     wrapper.unmount();
   });
 
-  it("retries a failed initial microphone enumeration when runtime recovery changes the route", async () => {
+  it("does not schedule inventory or write defaults after unmount while the initial selection read is pending", async () => {
     vi.useFakeTimers();
-    mocks.endpoints = [cableEndpoint];
-    mocks.microphones = [cableMicrophone];
-    mocks.listMicrophones.mockRejectedValueOnce(new Error("音频服务暂时不可用"));
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "failed", selectedEndpointId: "old-route" });
-    const wrapper = mount(ConnectionPage, { props: { runtime } });
-    await flushPromises();
-    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("正在自动重试");
-    mocks.getAudioSnapshot.mockResolvedValue({ ...emptyAudio, phase: "ready", selectedEndpointId: cableEndpoint.id, selectedEndpointName: cableEndpoint.name });
-    await vi.advanceTimersByTimeAsync(1000);
-    await flushPromises();
-    expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
-    expect(wrapper.get(".audio-settings-card .microphone-name").text()).toBe(cableMicrophone.name);
-    expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
-    wrapper.unmount();
-  });
-
-  it("does not auto-select or schedule more inventory work after unmount during the initial read", async () => {
-    vi.useFakeTimers();
-    mocks.endpoints = [cableEndpoint];
-    let resolveMicrophones!: (microphones: MicrophoneEndpoint[]) => void;
-    mocks.listMicrophones.mockImplementationOnce(() => new Promise((resolve) => { resolveMicrophones = resolve; }));
+    let resolveRead!: (snapshot: MicrophoneSelectionSnapshot) => void;
+    mocks.getMicrophoneSelection.mockImplementationOnce(() => new Promise((resolve) => { resolveRead = resolve; }));
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
     wrapper.unmount();
-    resolveMicrophones([cableMicrophone]);
+    resolveRead(selected(cableMicrophone));
     await flushPromises();
     await vi.advanceTimersByTimeAsync(20000);
-    expect(mocks.listMicrophones).toHaveBeenCalledOnce();
-    expect(mocks.getAudioSnapshot).toHaveBeenCalledOnce();
-    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
+    expect(mocks.getMicrophoneSelection).toHaveBeenCalledOnce();
+    expect(mocks.listMicrophones).not.toHaveBeenCalled();
+    expect(mocks.selectMicrophone).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("distinguishes an enabled route with unsaved settings and retries saving (alternate interface: %s)", async (useAlternate) => {
-    vi.useFakeTimers();
+  it.each([false, true])("accepts either paired render interface after host selection (alternate interface: %s)", async (useAlternate) => {
+    prepareCable();
     const alternate = { ...cableEndpoint, id: "cable-speakers", name: "Speakers (VB-Audio Virtual Cable)" };
-    mocks.endpoints = [cableEndpoint, alternate];
-    mocks.microphones = [{ ...cableMicrophone, renderEndpointIds: [cableEndpoint.id, alternate.id] }];
-    const opened = useAlternate ? alternate : cableEndpoint;
-    const ready: AudioSnapshot = { ...emptyAudio, phase: "ready", selectedEndpointId: opened.id, selectedEndpointName: opened.name };
-    mocks.selectAudioEndpoint.mockRejectedValueOnce(new Error("保存设置失败"));
-    mocks.getAudioSnapshot.mockResolvedValueOnce(emptyAudio).mockResolvedValue(ready);
-    mocks.retryAudioEndpoint.mockResolvedValue(ready);
+    mocks.microphones[0] = { ...cableMicrophone, renderEndpointIds: [cableEndpoint.id, alternate.id] };
+    mocks.selection = selected(physicalMicrophone);
+    mocks.selectMicrophone.mockImplementationOnce(async () => {
+      const opened = useAlternate ? alternate : cableEndpoint;
+      mocks.audio = { ...emptyAudio, phase: "ready", selectedEndpointId: opened.id, selectedEndpointName: opened.name };
+      mocks.selection = selected(cableMicrophone);
+      return { ...mocks.selection };
+    });
     const wrapper = mount(ConnectionPage, { props: { runtime } });
     await flushPromises();
-    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("已启用，但设置未保存");
-    expect(wrapper.get(".audio-settings-card").text()).not.toContain("线路启用失败");
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(wrapper.get('.audio-settings-card [role="alert"]').text()).toContain("已启用，但设置未保存");
-    await wrapper.findAll("button").find((button) => button.text() === "重试保存设置")!.trigger("click");
+    await microphoneButton(wrapper, cableMicrophone.name).trigger("click");
     await flushPromises();
-    expect(mocks.retryAudioEndpoint).toHaveBeenCalledOnce();
-    expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
-    expect(wrapper.get(".microphone-status").text()).toContain("已就绪");
+    expect(wrapper.get(".microphone-name").text()).toBe(cableMicrophone.name);
+    expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+    expect(mocks.selectMicrophone).toHaveBeenCalledExactlyOnceWith(cableMicrophone.id);
+    expect(mocks.selectAudioEndpoint).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
@@ -574,9 +591,9 @@ describe("Connection and voice settings", () => {
     expect(wrapper.get('.scan-summary[role="status"]').text()).toContain("按住说话快捷键已设为");
     const guide = wrapper.get(".usage-hint-details");
     expect(guide.text()).toContain("将 Codex 切到前台，点击输入框");
-    expect(guide.text()).toContain("遥控器麦克风");
+    expect(guide.text()).toContain("目标麦克风");
     expect(guide.text()).not.toContain("CABLE Input");
-    expect(guide.text()).toContain("CABLE Output");
+    expect(guide.text()).toContain("系统默认麦克风");
     expect(guide.text()).toContain("不需要微信输入法");
     expect(guide.text()).toContain("仍需要 VB-CABLE");
     expect(guide.text()).toContain("本程序不会自动发送");
@@ -644,5 +661,50 @@ describe("Connection and voice settings", () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     expect(wrapper.get('.voice-hotkey-presets button[aria-pressed="true"]').text()).toBe("微信输入法（默认）");
     wrapper.unmount();
+  });
+});
+
+describe("Microphone browser preview", () => {
+  it("simulates physical and virtual capture selection without requiring native IPC", async () => {
+    const bridge = await vi.importActual<typeof import("../lib/bridge")>("../lib/bridge");
+    expect(bridge.isTauriRuntime()).toBe(false);
+    const [captures, renders] = await Promise.all([bridge.listMicrophones(), bridge.listAudioEndpoints()]);
+    const virtual = captures.find((microphone) => microphone.isVirtualCableCandidate)!;
+    const physical = captures.find((microphone) => !microphone.isVirtualCableCandidate)!;
+    expect(renders.map((endpoint) => endpoint.id)).toContain(virtual.renderEndpointIds[0]);
+    expect((await bridge.selectMicrophone(virtual.id)).targetMicrophoneId).toBe(virtual.id);
+    expect((await bridge.getAudioSnapshot()).phase).toBe("ready");
+    const routeBeforePhysicalSelection = { ...await bridge.getAudioSnapshot() };
+    expect((await bridge.selectMicrophone(physical.id)).currentMicrophoneId).toBe(physical.id);
+    expect((await bridge.getMicrophoneSelection()).phase).toBe("ready");
+    expect(await bridge.getAudioSnapshot()).toEqual(routeBeforePhysicalSelection);
+    expect((await bridge.listMicrophones()).find((microphone) => microphone.id === physical.id)?.isDefault).toBe(true);
+  });
+
+  it("loads and refreshes the page using the actual preview inventory without losing capture choices", async () => {
+    const bridge = await vi.importActual<typeof import("../lib/bridge")>("../lib/bridge");
+    vi.resetAllMocks();
+    mocks.getConnectionSnapshot.mockResolvedValue(emptyConnection);
+    mocks.getVoiceHoldHotkey.mockResolvedValue(wetypeChord);
+    mocks.getAudioSnapshot.mockImplementation(bridge.getAudioSnapshot);
+    mocks.getMicrophoneSelection.mockImplementation(bridge.getMicrophoneSelection);
+    mocks.listMicrophones.mockImplementation(bridge.listMicrophones);
+    const wrapper = mount(ConnectionPage, { props: { runtime } });
+    try {
+      await flushPromises();
+      const captures = await bridge.listMicrophones();
+      const current = await bridge.getMicrophoneSelection();
+      expect(wrapper.get(".microphone-name").text()).toBe(current.targetMicrophoneName);
+      expect(wrapper.findAll(".endpoint-list li")).toHaveLength(captures.length - 1);
+      await wrapper.findAll("button").find((button) => button.text() === "刷新设备列表")!.trigger("click");
+      await flushPromises();
+      expect(mocks.listMicrophones).toHaveBeenCalledTimes(2);
+      expect(wrapper.get(".microphone-status").text()).toBe("已就绪");
+      expect(wrapper.findAll(".endpoint-list li")).toHaveLength(captures.length - 1);
+      expect(wrapper.find('.audio-settings-card [role="alert"]').exists()).toBe(false);
+      expect(mocks.selectMicrophone).not.toHaveBeenCalled();
+    } finally {
+      wrapper.unmount();
+    }
   });
 });

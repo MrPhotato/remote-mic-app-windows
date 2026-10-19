@@ -24,6 +24,8 @@ pub struct AppSettings {
     pub selected_remote_id: Option<String>,
     pub audio_endpoint_id: Option<String>,
     pub audio_endpoint_name: Option<String>,
+    pub target_microphone_id: Option<String>,
+    pub target_microphone_name: Option<String>,
     pub gain_db: f32,
     pub voice_trigger_mode: VoiceTriggerMode,
     pub launch_at_login: bool,
@@ -40,6 +42,8 @@ impl Default for AppSettings {
             selected_remote_id: None,
             audio_endpoint_id: None,
             audio_endpoint_name: None,
+            target_microphone_id: None,
+            target_microphone_name: None,
             gain_db: 0.0,
             voice_trigger_mode: VoiceTriggerMode::Hold,
             launch_at_login: false,
@@ -89,6 +93,8 @@ mod tests {
 
         assert_eq!(settings.audio_endpoint_id.as_deref(), Some("endpoint-1"));
         assert_eq!(settings.audio_endpoint_name, None);
+        assert_eq!(settings.target_microphone_id, None);
+        assert_eq!(settings.target_microphone_name, None);
         assert_eq!(settings.schema_version, 3);
         assert!(!settings.check_prerelease_updates);
         assert_eq!(settings.theme_preference, ThemePreference::System);
@@ -110,5 +116,19 @@ mod tests {
             let decoded: AppSettings = serde_json::from_str(&encoded).unwrap();
             assert_eq!(decoded.normalized().theme_preference, preference);
         }
+    }
+
+    #[test]
+    fn capture_preference_is_independent_of_render_route() {
+        let settings = AppSettings {
+            audio_endpoint_id: Some("render-id".into()),
+            audio_endpoint_name: Some("CABLE Input".into()),
+            target_microphone_id: Some("capture-id".into()),
+            target_microphone_name: Some("CABLE Output".into()),
+            ..AppSettings::default()
+        };
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let decoded: AppSettings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.normalized(), settings);
     }
 }
