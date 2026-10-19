@@ -566,3 +566,19 @@ EarTrumpet 固定提交 `0321205ad775a91967cf439576b52909e146149b` 的
 读取与通知使用公开 API，写入入口只接受重新验证为 active Capture 的端点；不写 Render 默认设备，
 不访问第三方应用设置，也不新增驱动、提权或蓝牙操作。真实设备与安装版验收分别记录于
 [Windows 默认麦克风验证](Testing/WindowsDefaultMicrophone.md)。
+
+### 默认麦克风改为跟随遥控器连接（2026-10-19）
+
+按用户要求，将切换触发点由进程启动／退出改为所选遥控器的连接生命周期。复核并复用上节
+SoundSwitch `6ce0c4d80849fe4654ec36a0db0556eee8555f26`、EarTrumpet
+`0321205ad775a91967cf439576b52909e146149b` 的既有参考结论，以及本仓库 Windows
+平台层的逐角色恢复、外部默认设备通知和真实 `connection_generation` 隔离；没有复制新的外部实现。
+枚举和通知仍为公开 Core Audio API，写默认录音设备仍是用户有限授权的未公开
+`IPolicyConfig::SetDefaultEndpoint`，不将整条路径表述为公开 API，边界沿用 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
+
+同一连接代次 `Ready/Streaming/Draining` 持有切换，不随单次说话反复切换；离线仅保存，
+断开时恢复，新代次就绪后重建基线，退出兜底。保留外部手动选择，不新增 BLE 会话、Radio 操作、
+驱动或提权，不改变按住说话时序。宿主 28 项、Windows 平台层 23 项（1 项默认 ignored）、
+前端 44 项测试及 1030×734 深浅浏览器布局 passed；真实接口释放／重选往返 passed，
+三种 Render 默认值全程不变。安装版实体遥控器断开／重连与听写仍 deferred，详见
+[本次验证与历史边界](Testing/WindowsDefaultMicrophone.md)。

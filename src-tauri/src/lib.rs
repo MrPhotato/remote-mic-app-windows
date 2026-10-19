@@ -1587,9 +1587,7 @@ pub fn run() {
                 let microphone = Arc::clone(&state.microphone);
                 let platform = Arc::clone(&state.platform);
                 let settings = state.settings.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    microphone.apply_startup(platform.as_ref(), &settings)
-                });
+                microphone.start_connection_monitor(platform, settings);
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if !shutdown_platform_for_exit(handle) {

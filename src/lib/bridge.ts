@@ -49,7 +49,7 @@ export interface MicrophoneSelectionSnapshot {
   targetMicrophoneName: string | null;
   currentMicrophoneId: string | null;
   currentMicrophoneName: string | null;
-  phase: "unconfigured" | "ready" | "failed" | "external";
+  phase: "unconfigured" | "waiting_connection" | "ready" | "failed" | "external";
   lastError: string | null;
   restorePending: boolean;
 }
@@ -524,7 +524,7 @@ const browserMicrophones: MicrophoneEndpoint[] = [
 let browserMicrophoneSelection: MicrophoneSelectionSnapshot = {
   targetMicrophoneId: "preview-microphone", targetMicrophoneName: "Microphone Array (Realtek Audio)",
   currentMicrophoneId: "preview-microphone", currentMicrophoneName: "Microphone Array (Realtek Audio)",
-  phase: "ready", lastError: null, restorePending: false,
+  phase: "waiting_connection", lastError: null, restorePending: false,
 };
 
 export async function getMicrophoneSelection(): Promise<MicrophoneSelectionSnapshot> {
@@ -537,19 +537,10 @@ export async function selectMicrophone(microphoneId: string): Promise<Microphone
     const microphone = browserMicrophones.find((item) => item.id === microphoneId);
     if (!microphone) throw new Error("麦克风暂不可用");
     browserMicrophoneSelection = {
+      ...browserMicrophoneSelection,
       targetMicrophoneId: microphone.id, targetMicrophoneName: microphone.name,
-      currentMicrophoneId: microphone.id, currentMicrophoneName: microphone.name,
-      phase: "ready", lastError: null, restorePending: false,
+      phase: "waiting_connection", lastError: null, restorePending: false,
     };
-    if (microphone.isVirtualCableCandidate) {
-      browserSnapshot.platform.audio = {
-        ...browserSnapshot.platform.audio,
-        phase: "ready",
-        selectedEndpointId: microphone.renderEndpointIds[0] ?? null,
-        selectedEndpointName: "CABLE Input (VB-Audio Virtual Cable)",
-        lastError: null,
-      };
-    }
     return { ...browserMicrophoneSelection };
   }
   return invoke<MicrophoneSelectionSnapshot>("select_microphone", { microphoneId });

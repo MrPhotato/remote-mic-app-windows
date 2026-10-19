@@ -222,6 +222,7 @@ const microphoneName = computed(() => microphoneSelection.value.targetMicrophone
 const defaultMatchesTarget = computed(() => Boolean(microphoneSelection.value.targetMicrophoneId)
   && microphoneSelection.value.currentMicrophoneId === microphoneSelection.value.targetMicrophoneId
   && microphoneSelection.value.phase === "ready");
+const microphoneWaitingConnection = computed(() => microphoneSelection.value.phase === "waiting_connection");
 const virtualRouteReady = computed(() => selectedVirtualCable.value && wasapiReady.value
   && selectedMicrophone.value!.renderEndpointIds.includes(audio.value.selectedEndpointId ?? "") && !audioReadError.value);
 const selectionDisabled = computed(() => audioInventoryStale.value || !audioScanComplete.value
@@ -266,6 +267,7 @@ const audioStatus = computed(() => {
   if (audioSettingsUnsaved.value) return "设置未保存";
   if (audioOperationError.value || microphoneSelection.value.phase === "failed") return "暂不可用";
   if (!microphoneSelection.value.targetMicrophoneId) return "待选择";
+  if (microphoneWaitingConnection.value) return audioScanComplete.value && !selectedMicrophone.value ? "设备暂不可用" : "等待遥控器连接";
   if (!defaultMatchesTarget.value) return microphoneSelection.value.currentMicrophoneId ? "系统麦克风已更改" : "当前麦克风待确认";
   if (!audioScanComplete.value) return "正在读取";
   if (!selectedMicrophone.value) return "设备暂不可用";
@@ -279,17 +281,17 @@ const audioStatus = computed(() => {
 const audioTone = computed(() => {
   if (audioStatus.value === "已就绪") return "success";
   if (audioStatus.value === "传送中") return "active";
-  if (audioOperationError.value || microphoneSelection.value.phase === "failed" || (selectedVirtualCable.value && audio.value.phase === "failed")) return "error";
+  if (audioOperationError.value || microphoneSelection.value.phase === "failed" || (!microphoneWaitingConnection.value && selectedVirtualCable.value && audio.value.phase === "failed")) return "error";
   return "warning";
 });
 
 const audioVisibleError = computed(() => {
   if (microphoneSelectionReadError.value) return "无法确认当前麦克风，正在重新读取。";
   if (audioInventoryStale.value) return "麦克风列表暂时无法更新，正在自动重试。";
-  if (audioSettingsUnsaved.value) return "麦克风已切换，但设置未保存。";
+  if (audioSettingsUnsaved.value) return "麦克风设置未保存，可重试。";
   if (audioOperationError.value) return "麦克风切换失败，可重试。";
   if (microphoneSelection.value.phase === "failed") return "麦克风暂不可用，可重试。";
-  if (selectedVirtualCable.value && audio.value.phase === "failed") return "遥控器语音线路暂不可用，可重试。";
+  if (!microphoneWaitingConnection.value && selectedVirtualCable.value && audio.value.phase === "failed") return "遥控器语音线路暂不可用，可重试。";
   return "";
 });
 
@@ -435,11 +437,12 @@ async function chooseMicrophone(microphone: MicrophoneEndpoint) {
     microphoneSelection.value = snapshot;
     microphoneSelectionLoaded.value = true;
     microphoneSelectionReadError.value = "";
-    const confirmed = snapshot.phase === "ready" && snapshot.targetMicrophoneId === microphone.id && snapshot.currentMicrophoneId === microphone.id;
+    const savedWaiting = snapshot.phase === "waiting_connection" && snapshot.targetMicrophoneId === microphone.id;
+    const confirmed = savedWaiting || (snapshot.phase === "ready" && snapshot.targetMicrophoneId === microphone.id && snapshot.currentMicrophoneId === microphone.id);
     if (confirmed) pendingSelectionId.value = "";
     else audioOperationError.value = snapshot.lastError ?? "microphone_selection_unconfirmed";
     await Promise.all([refreshAudio(), detectAudioEndpoints()]);
-    reportFrontendEvent({ event: "microphone_selection", phase: "completed", result: confirmed ? "passed" : "failed", reason: confirmed ? reason : "selection_unconfirmed", elapsedMs: Math.round(performance.now() - started) });
+    reportFrontendEvent({ event: "microphone_selection", phase: "completed", result: confirmed ? "passed" : "failed", reason: savedWaiting ? "target_saved_waiting_connection" : confirmed ? reason : "selection_unconfirmed", elapsedMs: Math.round(performance.now() - started) });
   } catch (error) {
     if (disposed) return;
     const detail = error instanceof Error ? error.message : String(error);
@@ -634,16 +637,17 @@ onUnmounted(() => {
           <div class="selected-microphone-row">
             <strong class="microphone-name">{{ microphoneName }}</strong>
             <button
-              v-if="selectedMicrophone && !audioSettingsUnsaved && !audioVisibleError && !defaultMatchesTarget"
+              v-if="selectedMicrophone && !audioSettingsUnsaved && !audioVisibleError && !defaultMatchesTarget && !microphoneWaitingConnection"
               class="secondary-button"
               type="button"
               :disabled="selectionDisabled"
               @click="chooseMicrophone(selectedMicrophone)"
             >
-              {{ selectingMicrophoneId ? "正在切换…" : "使用这个麦克风" }}
+              {{ selectingMicrophoneId ? "正在保存…" : "使用这个麦克风" }}
             </button>
           </div>
-          <p class="muted microphone-target-hint">启动时切换到所选麦克风，退出时恢复原设置。目标应用选择“系统默认麦克风”即可跟随切换。</p>
+          <p class="muted microphone-target-hint">连接遥控器后自动切换到所选麦克风，断开后恢复原设置。目标应用选择“系统默认麦克风”即可跟随切换。</p>
+          <p v-if="microphoneWaitingConnection && !audioVisibleError" class="muted microphone-waiting" role="status">目标已保存，等待遥控器连接；当前系统麦克风保持不变。</p>
           <p v-if="microphoneSelectionLoaded && !microphoneSelectionReadError && microphoneSelection.currentMicrophoneId && microphoneSelection.currentMicrophoneId !== microphoneSelection.targetMicrophoneId" class="muted microphone-current">当前系统麦克风：{{ microphoneSelection.currentMicrophoneName ?? '名称暂不可用' }}</p>
         </div>
 
@@ -663,7 +667,7 @@ onUnmounted(() => {
                 :disabled="selectionDisabled"
                 @click="chooseMicrophone(microphone)"
               >
-                {{ selectingMicrophoneId === microphone.id ? "正在切换…" : "选择" }}
+                {{ selectingMicrophoneId === microphone.id ? "正在保存…" : "选择" }}
               </button>
             </li>
           </ul>
@@ -696,8 +700,8 @@ onUnmounted(() => {
               {{ microphone.name }}：{{ [microphone.isDefault ? 'Windows 默认录音设备' : '', microphone.isDefaultCommunications ? '默认通信设备' : ''].filter(Boolean).join('、') }}
             </li>
           </ul>
-          <p class="muted">普通麦克风直接录音；VB-CABLE 接收遥控器语音。关闭窗口仅缩到托盘；从托盘退出才恢复启动前的默认麦克风。固定选择了某个设备的应用不会跟随系统默认设置。</p>
-          <p v-if="microphoneSelection.restorePending" class="muted">已记住启动前的默认麦克风，退出时恢复。</p>
+          <p class="muted">普通麦克风直接录音；VB-CABLE 接收遥控器语音。关闭窗口仅缩到托盘；遥控器断开时恢复连接前的默认麦克风，退出程序时也会尝试恢复。期间手动更改过的系统麦克风不会被覆盖。固定选择了某个设备的应用不会跟随系统默认设置。</p>
+          <p v-if="microphoneSelection.restorePending" class="muted">已记住本次连接前的默认麦克风，断开连接或退出时恢复。</p>
           <button v-if="audioScanComplete && !virtualCableEndpoints.length" class="secondary-button" type="button" :disabled="openingVbCablePage" @click="openVbCablePage">
             {{ openingVbCablePage ? "正在打开…" : "VB-CABLE 官方下载页" }}
           </button>

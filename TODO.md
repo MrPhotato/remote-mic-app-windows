@@ -5,6 +5,13 @@
 - [x] 从当前 exe 内嵌资源补齐主窗口 `ICON_BIG`，保留小图标，不操作固定链接或全局缓存；6 项真实隐藏窗口测试及 Windows 宿主编译检查 passed。见 [Bug 记录](Bugs/2026-10-19-taskbar-window-icon.md)。
 - [ ] 本地安装版任务栏可见新图标、托盘隐藏恢复及退出重启验收。
 
+## 2026-10-19 默认麦克风跟随遥控器连接
+
+- [x] 把默认麦克风切换绑定到真实 `connection_generation`：同代次 `Ready/Streaming/Draining` 期间持有，断开／休眠／失败释放恢复，新连接代次重建基线；离线只保存，退出兜底，外部手动更改不抢回。宿主 28 项、Windows 平台层 23 项定向测试 passed（另 1 项真实接口默认 ignored），沿用 [ADR 0004](docs/decisions/0004-default-microphone-session.md) 的有限未公开接口授权。
+- [x] 等待连接及离线保存文案、状态刷新与失败反馈：44 项组件测试及类型检查 passed；1030×734 深浅浏览器布局与目视检查 passed，无裁切、溢出或按钮遮挡。
+- [x] 新真实接口释放／重选往返 passed：物理 Capture 与已验证 CABLE 分别选择后释放并独立读回基线；重复释放正常，三个 Render 默认值始终不变。见 [验证记录](Testing/WindowsDefaultMicrophone.md)。
+- [ ] 新安装版离线启动不切换、实体遥控器就绪后切换、断开恢复、重连重建、退出兜底及听写验收；RC001／RC003 分别记录，不复用 0.3.10 启动触发版验收。
+
 ## 2026-10-19 README 展示与上手说明
 
 - [x] 原创横幅、语音流程图、0.3.11 安装版截图及真实状态徽章；桌面深浅主题、390px 手机宽度、图片加载和本地链接验证 passed。默认键位、麦克风选择及更新说明已按当前实现校正，见 [验证记录](Testing/ReadmeShowcase.md)。
@@ -17,7 +24,7 @@
 - [x] 安装器退出超时中止，保留未退出进程；真实 NSIS 独立进程测试 absent/respond/unresponsive 三种场景 passed（超时退出码 1640）。
 - [ ] 真实安装版一键升级、自动重启、三份配置保留、麦克风恢复与重新选择验收。见 [WindowsOneClickUpdate](Testing/WindowsOneClickUpdate.md)。
 
-## 2026-10-19 默认麦克风选择与退出恢复
+## 2026-10-19 默认麦克风选择与退出恢复（0.3.10 历史验收）
 
 - [x] 所有 Capture 均可直接选择，保存独立目标偏好；虚拟线路与系统默认录音选择分离，目标应用使用系统默认时跟随。36 项组件测试及 8 组浏览器布局验证 passed。
 - [x] 启动切换、正常退出恢复的生命周期及逐角色恢复实现；外部改动不抢回，X 继续隐藏至托盘。自动化与生产 runtime 真实切换/恢复 passed，安装版验收单列。用户已授权有限未公开接口，见 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
