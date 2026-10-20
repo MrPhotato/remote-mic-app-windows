@@ -54,7 +54,7 @@ CI 后 main 已变化时，更新 PR 后重跑 CI；其他仓库写入者若恰�
 
 ## Stable 与 updater 资产
 
-- 0.3.12 起，先生成原 NSIS 安装内核，再封装独立 Vue/Tauri 安装界面。只对最终外层安装器生成 updater 签名；`target/release/setup-build-receipt.json` 将版本、最终安装器、内层包、主程序及安装宿主 SHA-256 绑定。CI 和发布输出都须核对该收据，不能把内层安装器当作最终资产。原有 `/S`、`/P`、`/UPDATE`、`/R` 和 `/D` 调用继续转发给内核。
+- 0.3.12 起，先生成原 NSIS 安装内核，再封装独立 Vue/Tauri 安装界面。只对最终外层安装器生成 updater 签名；`target/release/setup-build-receipt.json` 的 schema 2 将版本、本次构建身份、最终安装器、内层包及安装宿主 SHA-256 绑定。构建原件和实际安装程序分别记录：后者在 NSIS 装入文件前捕获，包含 Tauri 标记修改及可选签名，不得用打包后恢复的构建原件替代。CI 和发布输出都须核对捕获收据及快照，不能把内层安装器当作最终资产。原有 `/S`、`/P`、`/UPDATE`、`/R` 和 `/D` 调用继续转发给内核。
 
 - 当前 fork 的 workflow 先创建 **Preview 草稿**，下载验证成功后按本次发布请求自动公开，不声称 Stable。Tag 必须指向当前 `origin/main`，并关联已合入的 PR；该 PR 精确 head 的最新 Windows CI 及最新重试必须完成且成功，旧绿灯不能覆盖后来失败。
 - GitHub 在 PR 合并后可能将 Actions run 的 `pull_requests` 返回为空。此时不得丢弃这些运行或退回旧绿灯：仍选择最新精确 head，并从该次 attempt 的 checkout 日志提取对应 PR 的 merge SHA，再用 Git commit API 核对父提交包含 PR head、文件树等于发布源码；缺失日志、身份不符或重试变化均停止。门禁回归见 `scripts/test-release-source-gates.ps1`。

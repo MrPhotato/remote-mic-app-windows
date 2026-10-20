@@ -291,7 +291,22 @@ FunctionEnd
   Pop $R8
 !macroend
 
+; This runs in makensis, never on the user's machine. Tauri restores the source
+; executable after bundling, so hashing it later would miss its patched/signed
+; bytes. Explicit per-build paths keep ordinary NSIS fixtures unaffected.
+!macro SayAllCaptureInstalledApp
+  ; Unset NSIS environment expressions remain literal text, so an explicit
+  ; sentinel is necessary; comparing a missing path with "" would trigger it.
+  !if "$%SAYALL_SETUP_CAPTURE_ENABLED%" == "1"
+    !if ! /FileExists "$%SAYALL_SETUP_CAPTURE_SCRIPT%"
+      !error "Setup capture script is missing"
+    !endif
+    !execute '"$%WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$%SAYALL_SETUP_CAPTURE_SCRIPT%" -SourcePath "${MAINBINARYSRCPATH}" -ReceiptPath "$%SAYALL_SETUP_CAPTURE_RECEIPT%" -Version "${VERSION}"' = 0
+  !endif
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro SayAllCaptureInstalledApp
   !insertmacro SayAllReadDesktopChoice
   ${IfNot} ${AtLeastBuild} ${SAYALL_MINIMUM_WINDOWS_BUILD}
     MessageBox MB_ICONSTOP|MB_OK "无线麦 SayAll 需要 Windows 10 1809（内部版本 17763）或更高版本。$\r$\nSayAll requires Windows 10 1809 (build 17763) or later."

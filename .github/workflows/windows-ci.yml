@@ -151,6 +151,11 @@ jobs:
         shell: pwsh
         run: ./tools/setup-bootstrap/test-forwarding.ps1 -MakensisPath "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
 
+      - name: Verify NSIS application byte capture
+        shell: pwsh
+        timeout-minutes: 3
+        run: ./scripts/test-setup-app-capture.ps1 -MakensisPath "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
+
       - name: Verify custom setup directory and desktop shortcut
         shell: pwsh
         timeout-minutes: 3

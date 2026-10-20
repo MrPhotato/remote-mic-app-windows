@@ -9,6 +9,18 @@ Tauri CLI 参考版本为 2.11.4，固定提交 `8909f221d1515955fc843808032bdc5
 `crates/tauri-bundler/src/bundle/windows/templates/nsis/installer.nsi` 的签名、命令行和快捷方式行为。
 安装内核继续使用本仓库锁定工具链生成的模板，外层分派及安装界面为独立实现。
 
+2026-10-20 实装发现打包后程序哈希不能取恢复后的构建原件。
+[Tauri bundle.rs](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs)
+先备份原件，修改 bundle type 并签名，生成 NSIS 后再还原原件。实际安装文件仅标记三字节不同，
+只读实验哈希与安装结果精确一致。修复采用 NSIS 编译期捕获真正装入的文件，覆盖签名等后续字节变化，
+不通过忽略标记或降低完整性校验来规避问题。见 [故障记录](Bugs/2026-10-20-setup-installed-hash.md)。
+
+捕获使用 NSIS 编译期 `!execute`，直接创建 PowerShell 进程，不经命令解释器；仅在本次构建显式开启时执行。
+另外核对锁定的 `tauri-runtime-wry 2.11.4`，提交
+`ca90b46b2e2cbbc981dae1b809f4af4343fe0558` 的
+[`RequestExit` 分支](https://github.com/tauri-apps/tauri/blob/ca90b46b2e2cbbc981dae1b809f4af4343fe0558/crates/tauri-runtime-wry/src/lib.rs#L4354)
+未保留退出码；安装宿主记录退出请求，在事件循环正常结束后返回该码，保持取消的 `1602`。
+
 - 实施前对照 [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)、本仓库锁定的 Tauri CLI 2.11.4 生成模板，以及 [NSIS Modern UI 2](https://nsis.sourceforge.io/Docs/Modern%20UI%202/Readme.html)。原安装器已有目录页，但被动更新会跳过；原生 NSIS 控件不能直接复用 Vue 组件。因此保留现有 NSIS 文件、注册表、卸载和正常退出实现，新增隔离的 Vue/Tauri 安装宿主；共享本仓库 `WindowChrome.vue` 与 `styles.css`，不复制另一套玻璃主题。
 - 薄 NSIS 外层仅负责解包与分派；无参数进入新界面，显式命令行参数进入原安装器。依据 [NSIS $CMDLINE](https://nsis.sourceforge.io/Docs/Chapter4.html#varconstant) 对 `/D=` 的特殊处理，使用公开 `GetCommandLineW` 保留原参数，避免丢失含空格、中文的安装位置。更新继续锁定现有目录，不将目录选择误当作完整迁移支持。
 - 依照 [Microsoft WebView2 distribution](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，先检查 Runtime；缺失时经原生提示运行官方引导程序。构建时验证并嵌入 Microsoft Authenticode 有效的 bootstrapper，安装时不从其他来源下载运行程序。

@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$InstallerPath,
+    [Parameter(Mandatory = $true)][string]$CaptureReceiptPath,
     [string]$MakensisPath,
     [switch]$CreateUpdaterArtifacts
 )
@@ -9,6 +10,7 @@ $taskRepo = Split-Path -Parent $PSScriptRoot
 $taskConfig = Get-Content -LiteralPath (Join-Path $taskRepo 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
 $taskVersion = [string]$taskConfig.version
 if ($taskVersion -notmatch '^\d+\.\d+\.\d+$') { throw '安装器版本格式无效。' }
+$taskCapture = & (Join-Path $PSScriptRoot 'read-setup-capture.ps1') -ReceiptPath $CaptureReceiptPath -Version $taskVersion
 $taskInstaller = (Resolve-Path -LiteralPath $InstallerPath).Path
 $taskBundleRoot = [IO.Path]::GetFullPath((Join-Path $taskRepo 'target/release/bundle/nsis')).TrimEnd('\') + '\'
 if (-not $taskInstaller.StartsWith($taskBundleRoot, [StringComparison]::OrdinalIgnoreCase)) {
@@ -41,12 +43,12 @@ if (-not $MakensisPath) {
 if (-not $MakensisPath -or -not (Test-Path -LiteralPath $MakensisPath -PathType Leaf)) { throw '找不到 NSIS 编译器。' }
 $MakensisPath = (Resolve-Path -LiteralPath $MakensisPath).Path
 $taskBuildRoot = Join-Path $taskRepo 'target/setup-build'
-$taskStage = Join-Path $taskBuildRoot ($taskVersion + '-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $taskStage -Force | Out-Null
+$taskStage = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($CaptureReceiptPath))
 $taskPayload = Join-Path $taskStage 'sayall-payload.exe'
+if (Test-Path -LiteralPath $taskPayload) { throw '本次打包目录已使用；请重新构建内部安装器。' }
 Copy-Item -LiteralPath $taskInstaller -Destination $taskPayload
 $taskPayloadHash = (Get-FileHash -LiteralPath $taskPayload -Algorithm SHA256).Hash.ToLowerInvariant()
-$taskAppHash = (Get-FileHash -LiteralPath $taskApp -Algorithm SHA256).Hash.ToLowerInvariant()
+$taskBuildAppHash = (Get-FileHash -LiteralPath $taskApp -Algorithm SHA256).Hash.ToLowerInvariant()
 
 # Keep the official bootstrapper in a build cache, not in source control. Verify
 # its publisher every build, even when cached; never execute an unverified file.
@@ -74,7 +76,7 @@ try {
     & npm.cmd run setup:build *> (Join-Path $taskStage 'frontend-build.log')
     if ($LASTEXITCODE -ne 0) { throw "安装界面构建失败，日志：$taskStage/frontend-build.log" }
     $env:SAYALL_SETUP_PAYLOAD_SHA256 = $taskPayloadHash
-    $env:SAYALL_SETUP_APP_SHA256 = $taskAppHash
+    $env:SAYALL_SETUP_APP_SHA256 = $taskCapture.installed_app_sha256
     & cargo build --release -p sayall-setup --locked *> (Join-Path $taskStage 'host-build.log')
     if ($LASTEXITCODE -ne 0) { throw "安装宿主构建失败，日志：$taskStage/host-build.log" }
     $taskHost = Join-Path $taskRepo 'target/release/sayall-setup.exe'
@@ -151,11 +153,14 @@ try {
     Move-Item -LiteralPath $taskOutput -Destination $taskInstaller
     if ($CreateUpdaterArtifacts) { Move-Item -LiteralPath ($taskOutput + '.sig') -Destination ($taskInstaller + '.sig') }
     $taskReceipt = [ordered]@{
-        schema_version = 1
+        schema_version = 2
         version = $taskVersion
+        build_id = $taskCapture.build_id
         installer_sha256 = (Get-FileHash -LiteralPath $taskInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
         payload_sha256 = $taskPayloadHash
-        app_sha256 = $taskAppHash
+        build_app_sha256 = $taskBuildAppHash
+        installed_app_sha256 = $taskCapture.installed_app_sha256
+        capture_receipt_sha256 = $taskCapture.capture_receipt_sha256
         host_sha256 = (Get-FileHash -LiteralPath $taskHost -Algorithm SHA256).Hash.ToLowerInvariant()
         webview_bootstrapper_sha256 = (Get-FileHash -LiteralPath $taskWebView -Algorithm SHA256).Hash.ToLowerInvariant()
         updater_signed = [bool]$CreateUpdaterArtifacts
@@ -163,14 +168,11 @@ try {
     $taskReceiptPath = Join-Path $taskStage 'build-receipt.json'
     [IO.File]::WriteAllText($taskReceiptPath, $taskReceipt, [Text.UTF8Encoding]::new($false))
     $taskStableReceipt = Join-Path $taskRepo 'target/release/setup-build-receipt.json'
-    if (Test-Path -LiteralPath $taskStableReceipt) {
-        Copy-Item -LiteralPath $taskStableReceipt -Destination (Join-Path $taskPrevious 'setup-build-receipt.json')
-    }
     # Publish a complete, SHA-bound receipt with an atomic file replacement.
     $taskReceiptPending = Join-Path $taskRepo ('target/release/setup-build-receipt-' + [Guid]::NewGuid().ToString('N') + '.json')
     [IO.File]::WriteAllText($taskReceiptPending, $taskReceipt, [Text.UTF8Encoding]::new($false))
     if (Test-Path -LiteralPath $taskStableReceipt) {
-        [IO.File]::Replace($taskReceiptPending, $taskStableReceipt, $null)
+        [IO.File]::Replace($taskReceiptPending, $taskStableReceipt, (Join-Path $taskPrevious 'setup-build-receipt.json'))
     } else {
         Move-Item -LiteralPath $taskReceiptPending -Destination $taskStableReceipt
     }

@@ -79,15 +79,32 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Rust 格式检查失败。' }
     }
     if ($Installer) {
-        & npm.cmd run tauri -- build --bundles nsis --config $bundleConfig
+        $version = (Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+        if ($version -cnotmatch '^\d+\.\d+\.\d+$') { throw '安装器版本格式无效。' }
+        $captureStage = Join-Path $taskRepo ('target/setup-build/' + $version + '-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $captureStage -Force | Out-Null
+        $captureReceipt = Join-Path $captureStage 'capture-receipt.json'
+        $previousCaptureScript = $env:SAYALL_SETUP_CAPTURE_SCRIPT
+        $previousCaptureReceipt = $env:SAYALL_SETUP_CAPTURE_RECEIPT
+        $previousCaptureEnabled = $env:SAYALL_SETUP_CAPTURE_ENABLED
+        try {
+            $env:SAYALL_SETUP_CAPTURE_SCRIPT = Join-Path $PSScriptRoot 'capture-setup-app.ps1'
+            $env:SAYALL_SETUP_CAPTURE_RECEIPT = $captureReceipt
+            $env:SAYALL_SETUP_CAPTURE_ENABLED = '1'
+            & npm.cmd run tauri -- build --bundles nsis --config $bundleConfig
+            if ($LASTEXITCODE -ne 0) { throw 'Windows 程序编译失败。' }
+        } finally {
+            $env:SAYALL_SETUP_CAPTURE_SCRIPT = $previousCaptureScript
+            $env:SAYALL_SETUP_CAPTURE_RECEIPT = $previousCaptureReceipt
+            $env:SAYALL_SETUP_CAPTURE_ENABLED = $previousCaptureEnabled
+        }
     } else {
         & npm.cmd run tauri -- build --no-bundle --config $bundleConfig
+        if ($LASTEXITCODE -ne 0) { throw 'Windows 程序编译失败。' }
     }
-    if ($LASTEXITCODE -ne 0) { throw 'Windows 程序编译失败。' }
     if ($Installer) {
-        $version = (Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
         $installerPath = Join-Path $taskRepo "target/release/bundle/nsis/Remote Coding_$($version)_x64-setup.exe"
-        & (Join-Path $PSScriptRoot 'build-setup-shell.ps1') -InstallerPath $installerPath -CreateUpdaterArtifacts:$CreateUpdaterArtifacts
+        & (Join-Path $PSScriptRoot 'build-setup-shell.ps1') -InstallerPath $installerPath -CaptureReceiptPath $captureReceipt -CreateUpdaterArtifacts:$CreateUpdaterArtifacts
         if (-not $?) { throw '安装界面打包失败。' }
     }
     Write-Host (Join-Path $taskRepo 'target/release/remote-coding.exe')

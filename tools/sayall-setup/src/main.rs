@@ -5,12 +5,14 @@ mod validation;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -111,8 +113,8 @@ struct Installed {
     version: String,
 }
 
-/// Log only fixed event/reason labels: never arguments, directory names or
-/// device/user information. Setup never opens the application's settings.
+/// Log fixed event/reason labels and product-binary digests, never arguments,
+/// directory names or device/user information. Setup never opens app settings.
 fn note(event: &str, result: &str) {
     write_note(&format!("event={event} result={result}"));
 }
@@ -136,7 +138,43 @@ fn write_note(fields: &str) {
     }
 }
 
-fn checked_file(path: &Path, expected: &str) -> Result<File, String> {
+#[derive(Clone, Copy)]
+enum CheckedBinary {
+    Payload,
+    InstalledApp,
+}
+
+impl CheckedBinary {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Payload => "payload",
+            Self::InstalledApp => "installed_app",
+        }
+    }
+
+    fn read_error(self) -> &'static str {
+        match self {
+            Self::Payload => "无法读取安装文件，请重新下载安装包。",
+            Self::InstalledApp => "无法读取已安装的无线麦，请保留安装日志以便排查。",
+        }
+    }
+
+    fn mismatch_error(self) -> &'static str {
+        match self {
+            Self::Payload => "安装文件校验失败，请重新下载安装包。",
+            Self::InstalledApp => {
+                "无线麦已写入，但程序完整性校验未通过。请保留安装日志以便排查，暂不启动程序。"
+            }
+        }
+    }
+}
+
+fn checked_file(
+    path: &Path,
+    expected: &str,
+    binary: CheckedBinary,
+    operation: &Operation,
+) -> Result<File, String> {
     if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("此安装包未完成校验准备，请重新下载安装包。".into());
     }
@@ -147,20 +185,30 @@ fn checked_file(path: &Path, expected: &str) -> Result<File, String> {
         .read(true)
         .share_mode(1)
         .open(path)
-        .map_err(|_| "无法读取安装文件，请重新下载安装包。".to_owned())?;
+        .map_err(|_| binary.read_error().to_owned())?;
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let count = file
             .read(&mut buffer)
-            .map_err(|_| "安装文件校验失败，请重新下载。".to_owned())?;
+            .map_err(|_| binary.read_error().to_owned())?;
         if count == 0 {
             break;
         }
         hash.update(&buffer[..count]);
     }
-    if format!("{:x}", hash.finalize()) != expected {
-        return Err("安装文件校验失败，请重新下载安装包。".into());
+    let actual = format!("{:x}", hash.finalize());
+    if actual != expected {
+        operation.record(
+            "binary_verification",
+            "failed",
+            "sha256_mismatch",
+            &format!(
+                "binary={} expected_sha256={expected} actual_sha256={actual} error_domain=integrity error_code=sha256_mismatch retryable=false",
+                binary.label()
+            ),
+        );
+        return Err(binary.mismatch_error().into());
     }
     Ok(file)
 }
@@ -175,12 +223,17 @@ fn payload_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法确认安装文件的位置。".into())
 }
 
-fn verify_installed(directory: &Path) -> Result<Installed, String> {
+fn verify_installed(directory: &Path, operation: &Operation) -> Result<Installed, String> {
     let registered = native::registration()?.ok_or("未能确认安装结果，请重试安装。")?;
     if registered.version != VERSION || !same_directory(&registered.directory, directory) {
         return Err("安装结果与预期不一致，请重试安装。".into());
     }
-    let _file = checked_file(&directory.join("remote-coding.exe"), APP_HASH)?;
+    let _file = checked_file(
+        &directory.join("remote-coding.exe"),
+        APP_HASH,
+        CheckedBinary::InstalledApp,
+        operation,
+    )?;
     Ok(Installed {
         directory: directory.to_string_lossy().into_owned(),
         version: VERSION.into(),
@@ -298,9 +351,10 @@ fn install(
         .map_err(|error| operation.failure("target_validation", "target_not_writable", error))?;
     let payload = payload_path()
         .map_err(|error| operation.failure("payload_validation", "payload_location", error))?;
-    let _verified_payload = checked_file(&payload, PAYLOAD_HASH).map_err(|error| {
-        operation.failure("payload_validation", "payload_hash_or_read_failed", error)
-    })?;
+    let _verified_payload =
+        checked_file(&payload, PAYLOAD_HASH, CheckedBinary::Payload, &operation).map_err(
+            |error| operation.failure("payload_validation", "payload_hash_or_read_failed", error),
+        )?;
     // A valid main-binary binding is also required before changing anything.
     if APP_HASH.len() != 64 || !APP_HASH.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(operation.failure(
@@ -369,7 +423,7 @@ fn install(
         return Err(install_exit_message(status.code(), unregistered_partial_files).into());
     }
     operation.record("install_exit", "passed", "exit_zero", "exit_code=0");
-    let result = verify_installed(&target).map_err(|error| {
+    let result = verify_installed(&target, &operation).map_err(|error| {
         operation.failure(
             "install_verification",
             "installed_registration_or_hash_failed",
@@ -420,10 +474,15 @@ fn setup_finish(
         .clone()
         .ok_or("请先完成安装。")?;
     let directory = directory_path(&installed.directory)?;
-    verify_installed(&directory)?;
+    verify_installed(&directory, &operation)?;
     if launch {
         let application = directory.join("remote-coding.exe");
-        let _verified_app = checked_file(&application, APP_HASH)?;
+        let _verified_app = checked_file(
+            &application,
+            APP_HASH,
+            CheckedBinary::InstalledApp,
+            &operation,
+        )?;
         Command::new(&application)
             .current_dir(&directory)
             .spawn()
@@ -439,7 +498,7 @@ fn setup_finish(
 fn main() {
     let state = Arc::new(SetupState::default());
     note("host_started", "passed");
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             setup_info,
@@ -462,8 +521,29 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("SayAll setup could not start");
+    // The locked Wry runtime maps RequestExit(code) to ControlFlow::Exit,
+    // discarding code. Preserve the request while still allowing Tauri cleanup.
+    let requested_exit = Rc::new(Cell::new(None));
+    let observed_exit = requested_exit.clone();
+    let runtime_exit = app.run_return(move |_, event| {
+        if let tauri::RunEvent::ExitRequested {
+            code: Some(code), ..
+        } = event
+        {
+            observed_exit.set(Some(code));
+        }
+    });
+    let code = setup_exit_code(requested_exit.get(), runtime_exit);
+    write_note(&format!(
+        "event=host_exit result=completed exit_code={code}"
+    ));
+    std::process::exit(code);
+}
+
+fn setup_exit_code(requested: Option<i32>, runtime: i32) -> i32 {
+    requested.unwrap_or(runtime)
 }
 
 #[cfg(test)]
@@ -516,7 +596,16 @@ mod tests {
     }
 
     #[test]
+    fn explicit_cancel_survives_runtime_zero_exit_code() {
+        assert_eq!(setup_exit_code(Some(1602), 0), 1602);
+        assert_eq!(setup_exit_code(Some(0), 0), 0);
+        assert_eq!(setup_exit_code(None, 1), 1);
+    }
+
+    #[test]
     fn unbound_or_modified_payload_is_rejected_before_launch() {
+        let state = Arc::new(SetupState::default());
+        let operation = Operation::begin(&state).unwrap();
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -526,10 +615,35 @@ mod tests {
             std::process::id()
         ));
         std::fs::write(&path, b"test-only payload").unwrap();
-        assert!(checked_file(&path, "unbound").is_err());
-        assert!(checked_file(&path, &"0".repeat(64)).is_err());
+        assert!(checked_file(&path, "unbound", CheckedBinary::Payload, &operation).is_err());
+        assert!(checked_file(&path, &"0".repeat(64), CheckedBinary::Payload, &operation).is_err());
         let correct = format!("{:x}", Sha256::digest(b"test-only payload"));
-        assert!(checked_file(&path, &correct).is_ok());
+        assert!(checked_file(&path, &correct, CheckedBinary::Payload, &operation).is_ok());
+        let installed_error = checked_file(
+            &path,
+            &"0".repeat(64),
+            CheckedBinary::InstalledApp,
+            &operation,
+        )
+        .unwrap_err();
+        assert!(installed_error.contains("程序完整性校验未通过"));
+        assert!(!installed_error.contains("重新下载"));
+        // Bundle-type differences must still fail exact-byte verification.
+        let bundled = b"test-only __TAURI_BUNDLE_TYPE_VAR_NSS payload";
+        std::fs::write(&path, bundled).unwrap();
+        let unpatched = format!(
+            "{:x}",
+            Sha256::digest(b"test-only __TAURI_BUNDLE_TYPE_VAR_UNK payload")
+        );
+        assert!(checked_file(&path, &unpatched, CheckedBinary::InstalledApp, &operation).is_err());
+        let bundled_hash = format!("{:x}", Sha256::digest(bundled));
+        assert!(checked_file(
+            &path,
+            &bundled_hash,
+            CheckedBinary::InstalledApp,
+            &operation
+        )
+        .is_ok());
         // Retain this inert fixture for inspection (no product executable).
     }
 }
