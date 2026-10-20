@@ -2,6 +2,19 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 安装界面与自选目录（2026-10-20）
+
+Tauri CLI 参考版本为 2.11.4，固定提交 `8909f221d1515955fc843808032bdc5d62209c96`；
+核对 `crates/tauri-cli/src/signer/sign.rs`、`helpers/updater_signature.rs` 和
+`crates/tauri-bundler/src/bundle/windows/templates/nsis/installer.nsi` 的签名、命令行和快捷方式行为。
+安装内核继续使用本仓库锁定工具链生成的模板，外层分派及安装界面为独立实现。
+
+- 实施前对照 [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)、本仓库锁定的 Tauri CLI 2.11.4 生成模板，以及 [NSIS Modern UI 2](https://nsis.sourceforge.io/Docs/Modern%20UI%202/Readme.html)。原安装器已有目录页，但被动更新会跳过；原生 NSIS 控件不能直接复用 Vue 组件。因此保留现有 NSIS 文件、注册表、卸载和正常退出实现，新增隔离的 Vue/Tauri 安装宿主；共享本仓库 `WindowChrome.vue` 与 `styles.css`，不复制另一套玻璃主题。
+- 薄 NSIS 外层仅负责解包与分派；无参数进入新界面，显式命令行参数进入原安装器。依据 [NSIS $CMDLINE](https://nsis.sourceforge.io/Docs/Chapter4.html#varconstant) 对 `/D=` 的特殊处理，使用公开 `GetCommandLineW` 保留原参数，避免丢失含空格、中文的安装位置。更新继续锁定现有目录，不将目录选择误当作完整迁移支持。
+- 依照 [Microsoft WebView2 distribution](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，先检查 Runtime；缺失时经原生提示运行官方引导程序。构建时验证并嵌入 Microsoft Authenticode 有效的 bootstrapper，安装时不从其他来源下载运行程序。
+- 安装界面只用公开注册表、`IFileOpenDialog`、进程及文件 API；不加载应用平台层、不访问音频或蓝牙。内层安装器和安装完成的主程序均与编译时 SHA-256 绑定；最终外层安装器完成后才生成 updater 签名。CLI 透传和新 UI 分别验证，不把文件夹选择或安装器启动成功当作完整安装通过。
+
+
 ## README 展示资源（2026-10-19）
 
 - `docs/assets/readme-hero.svg` 与 `voice-flow.svg` 为本项目原创矢量图，沿用新应用图标的银灰遥控器及靛紫、薄荷绿配色，按 GPL-3.0-only 提供；未复制第三方插画、模板或代码。截图来自本机已安装的 0.3.11 应用，展示更新及外观设置，无设备身份或个人路径。

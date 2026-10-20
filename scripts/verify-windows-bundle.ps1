@@ -92,6 +92,7 @@ if ($installers.Count -ne 1) {
     throw "Expected exactly one NSIS installer, found $($installers.Count)"
 }
 $installer = $installers[0]
+$setupBundle = & (Join-Path $PSScriptRoot 'verify-setup-bundle.ps1') -RepositoryRoot $repositoryRoot -InstallerPath $installer.FullName
 if ($installer.Length -lt 1MB) {
     throw "NSIS installer is unexpectedly small: $($installer.Length) bytes"
 }
@@ -119,8 +120,9 @@ $metadata = [ordered]@{
     signatureStatus = $signature.Status.ToString()
     sourceCommit = $env:GITHUB_SHA
     distributionStatus = "unsigned-ci-preview-not-for-public-release"
+    setup_bundle = $setupBundle
 }
-$metadata | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $artifactDirectory "build-metadata.json")
+$metadata | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $artifactDirectory "build-metadata.json")
 
 Write-Host "Verified unsigned NSIS preview: $($installer.Name)"
 Write-Host "SHA-256: $hash"

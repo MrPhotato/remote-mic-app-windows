@@ -47,7 +47,7 @@ $step = 0
 function Invoke-Step {
     param([string]$Name, [scriptblock]$Action)
     $script:step++
-    Write-Host ("[$script:step/$(if ($Full) { 7 } else { 6 })] $Name ...")
+    Write-Host ("[$script:step/$(if ($Full) { 8 } else { 7 })] $Name ...")
     & $Action
     if ($LASTEXITCODE -ne 0) {
         Write-Host ("  FAIL（exit=$LASTEXITCODE）——CI 步骤 [$Name] 将失败") -ForegroundColor Red
@@ -74,6 +74,10 @@ Invoke-Step "Test frontend" {
 
 Invoke-Step "Build frontend" {
     Invoke-Pnpm @("build")
+}
+
+Invoke-Step "Build setup frontend" {
+    Invoke-Pnpm @("setup:build")
 }
 
 Invoke-Step "Check Rust formatting" {

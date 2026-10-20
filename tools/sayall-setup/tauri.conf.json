@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SayAll Setup",
+  "version": "../../src-tauri/tauri.conf.json",
+  "identifier": "local.remote-coding.windows.setup",
+  "build": { "frontendDist": "../../dist-setup" },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "url": "setup.html",
+      "title": "安装无线麦 SayAll",
+      "width": 760,
+      "height": 600,
+      "minWidth": 680,
+      "minHeight": 560,
+      "decorations": false,
+      "resizable": true,
+      "center": true
+    }],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": { "active": false, "icon": ["../../src-tauri/icons/icon.ico"] }
+}

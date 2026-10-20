@@ -1,12 +1,14 @@
 {
   "name": "sayall-windows",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "setup:dev": "vite --config vite.setup.config.ts",
+    "setup:build": "vue-tsc --noEmit && vite build --config vite.setup.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",

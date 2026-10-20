@@ -59,6 +59,9 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
+      - name: Build setup frontend
+        run: pnpm setup:build
+
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
@@ -68,6 +71,10 @@ jobs:
       - name: Test helper bundle verification gates
         shell: pwsh
         run: ./scripts/test-rc003-helper-bundle.ps1
+
+      - name: Test final setup bundle receipt gates
+        shell: pwsh
+        run: ./scripts/test-setup-bundle-gates.ps1
 
       - name: Test release source verification gates
         shell: pwsh
@@ -135,6 +142,19 @@ jobs:
       - name: Verify installer identity and create checksums
         shell: pwsh
         run: ./scripts/verify-windows-bundle.ps1
+
+      - name: Verify setup shortcut choices
+        shell: pwsh
+        run: ./scripts/test-setup-shortcut-choice.ps1 -MakensisPath "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
+
+      - name: Verify setup command forwarding
+        shell: pwsh
+        run: ./tools/setup-bootstrap/test-forwarding.ps1 -MakensisPath "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
+
+      - name: Verify custom setup directory and desktop shortcut
+        shell: pwsh
+        timeout-minutes: 3
+        run: ./scripts/test-setup-directory-install.ps1 -MakensisPath "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
 
       - name: Test install upgrade downgrade and uninstall matrix
         shell: pwsh

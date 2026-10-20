@@ -50,6 +50,7 @@ $installer = $installers[0]
 if ($installer.Name -notlike "*_$version`_x64-setup.exe") {
     throw "NSIS installer $($installer.Name) does not carry version $version"
 }
+$setupBundle = & (Join-Path $PSScriptRoot 'verify-setup-bundle.ps1') -RepositoryRoot $RepositoryRoot -InstallerPath $installer.FullName -RequireUpdaterSignature
 
 $signaturePath = "$($installer.FullName).sig"
 if (-not (Test-Path -LiteralPath $signaturePath -PathType Leaf)) {
@@ -121,6 +122,7 @@ $metadata = [ordered]@{
     automatic_updates_enabled = @($config.plugins.updater.endpoints).Count -gt 0
     helper_file_count = $helperFiles.Count
     helper_manifest_sha256 = (Get-FileHash -LiteralPath $helperManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+    setup_bundle = $setupBundle
 }
 [IO.File]::WriteAllText((Join-Path $stagingDirectory 'release-metadata.json'), ($metadata | ConvertTo-Json -Depth 5) + "`n", $utf8WithoutBom)
 

@@ -1,0 +1,11 @@
+{
+  "identifier": "setup-window",
+  "description": "安装窗口的基本窗口控制；安装操作只通过受限的本地命令执行。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
+}

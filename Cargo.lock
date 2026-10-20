@@ -3103,7 +3103,7 @@ dependencies = [
 
 [[package]]
 name = "sayall-core"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "serde",
  "serde_json",
@@ -3111,8 +3111,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sayall-setup"
+version = "0.3.12"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "sayall-windows"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "base64 0.22.1",
  "dunce",
@@ -3130,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "sayall-windows-app"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "quick-xml",
  "reqwest",

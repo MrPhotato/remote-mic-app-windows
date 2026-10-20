@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-setup/
+tools/sayall-setup/gen/
 target/
 src-tauri/target/
 src-tauri/gen/

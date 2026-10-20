@@ -60,7 +60,9 @@ try {
     # final resource directory, so its build step need not copy each DLL again.
     $resourceMap['../target/release/rc003-helper/'] = 'rc003-helper/'
     $bundleOverride = @{ resources = $resourceMap }
-    if ($CreateUpdaterArtifacts) { $bundleOverride.createUpdaterArtifacts = $true }
+    # Sign only the final setup shell. An inner NSIS signature cannot authenticate
+    # the wrapper that users download and the app updater executes.
+    $bundleOverride.createUpdaterArtifacts = $false
     @{ bundle = $bundleOverride } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $bundleConfig -Encoding utf8
     if (-not (Test-Path -LiteralPath 'node_modules/.bin/vite.cmd')) {
         & npm.cmd exec --yes --package=pnpm@10.15.0 -- pnpm install --frozen-lockfile
@@ -82,6 +84,12 @@ try {
         & npm.cmd run tauri -- build --no-bundle --config $bundleConfig
     }
     if ($LASTEXITCODE -ne 0) { throw 'Windows 程序编译失败。' }
+    if ($Installer) {
+        $version = (Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+        $installerPath = Join-Path $taskRepo "target/release/bundle/nsis/Remote Coding_$($version)_x64-setup.exe"
+        & (Join-Path $PSScriptRoot 'build-setup-shell.ps1') -InstallerPath $installerPath -CreateUpdaterArtifacts:$CreateUpdaterArtifacts
+        if (-not $?) { throw '安装界面打包失败。' }
+    }
     Write-Host (Join-Path $taskRepo 'target/release/remote-coding.exe')
 } finally {
     Pop-Location
