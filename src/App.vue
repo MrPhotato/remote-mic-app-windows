@@ -164,9 +164,9 @@ onUnmounted(() => {
         {{ navigationError }} <button class="secondary-button" type="button" @click="navigate('buttons')">重新读取</button>
       </div>
       <p v-if="!pageReady && navigationPending" class="muted" role="status">正在读取按键配置…</p>
-      <!-- 按键页等配置完整后直接切入，由页内动画接手；
-           其余页面保留 out-in，避免两屏玻璃面板同时重绘。 -->
-      <Transition name="page" :mode="activePage === 'buttons' ? undefined : 'out-in'" :css="activePage !== 'buttons'">
+      <!-- 配置完整后使用统一的翻页动画；按键画布的局部展开独立完成，
+           out-in 避免两屏玻璃面板同时重绘。 -->
+      <Transition name="page" mode="out-in">
         <component v-if="pageReady" :is="activeComponent" :key="activePage" :runtime="runtime" v-bind="activePage === 'buttons' ? { initialMappings: preparedMappings } : {}" @navigate="navigate" />
       </Transition>
     </main>

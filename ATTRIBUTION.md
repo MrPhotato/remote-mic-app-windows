@@ -4,11 +4,15 @@
 
 ## 2026-10-20 按键页入场与应用级初始化提示
 
+- 0.3.16 按用户体验反馈恢复本应用统一的 150ms 离场、440ms 翻页入场，
+  页内展开独立放慢至 660ms（遥控器先显示、连线展开、卡片淡入）。
+  继续参考下述 Vue 嵌套动画边界：局部动画不依赖父级 enter 类存活；
+  中途离页交回统一退出动画，保留快速返回及减少动态效果规则。
 - 先复查本仓库对原 macOS RemoteMappingCanvas / RemoteMappingLayout 的既有布局、
   0.3.2 首帧几何修正、0.3.4 最新配置准备及 0.2.16 初始化弹窗；沿用原遥控器照片、
   卡片定位、原生 dialog 和真实中性状态判断，不移植额外外部实现或新增动画依赖。
 - 参考 [Vue Transition](https://vuejs.org/guide/built-ins/transition.html) 的 CSS 开关及嵌套动画边界，
-  进入按键页不叠加整页退出/进入等待；局部短动画不改变玻璃祖先的 opacity。
+  0.3.15 曾移除按键页的整页等待；0.3.16 按反馈恢复。局部动画不改变玻璃祖先的 opacity。
   每次仍读取最新按键配置，图片失败不阻塞配置界面。
 - 按 [preload](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload)
   提前获取已有本地 PNG；不重新生成图片或改变外观。
