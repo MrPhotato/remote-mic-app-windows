@@ -78,3 +78,13 @@
 
 本轮日志存放在忽略目录 `target/microphone-recovery-0313`；只读实验收据在
 `target/microphone-readonly-probe-*`，仅包含布尔结论和写入次数。
+
+### 0.3.13 本地测试包
+
+- 构建源：`fb48cbb5643d22bf4d7269227b32db6504dc780f`。
+- passed：前端生产构建、Rust release、NSIS 和安装界面封装；最终安装器、构建原件、
+  实际装入文件的绑定收据校验通过，98 个增强组件及主程序内嵌清单一致。
+- 安装包：`target/release/bundle/nsis/Remote Coding_0.3.13_x64-setup.exe`，54864090 字节。
+- SHA-256：`d62d5c01200b863bcea9c7627ed7b09340d1504e8edcef506fdc35d3f1110bcf`。
+- deferred：用户手动安装、已运行应用正常退出、启动后的故障恢复和实体听写验收。
+- 保留安装版进程与连接；没有自动启动安装器、修改系统默认设备或发布到 GitHub。
