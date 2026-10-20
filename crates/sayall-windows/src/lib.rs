@@ -59,6 +59,8 @@ pub mod send_input_windows;
 pub mod text_edit;
 #[cfg(windows)]
 mod wetype_revive;
+#[cfg(windows)]
+pub mod window_icon;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
