@@ -21,6 +21,12 @@
 - [x] 安装器退出超时中止，保留未退出进程；真实 NSIS 独立进程测试 absent/respond/unresponsive 三种场景 passed（超时退出码 1640）。
 - [ ] 真实安装版一键升级、自动重启、三份配置保留、麦克风恢复与重新选择验收。见 [WindowsOneClickUpdate](Testing/WindowsOneClickUpdate.md)。
 
+## 2026-10-20 旧默认麦克风恢复记录
+
+- [x] 定位「CABLE 已就绪但暂不可用」现场：旧 original 已不在系统端点列表，恢复失败阻塞新选择；当前 CABLE active 且为三个 Capture 默认值。只读安装版和独立 Core Audio 检查 passed，见 [故障记录](Bugs/2026-10-20-missing-microphone-restore-target.md)。
+- [ ] 安全处理缺失的退出恢复目标；区分当前设备可用性和旧记录恢复错误，不猜另一设备、不自动重启驱动。
+- [ ] 本机修复后验证选择、正常退出恢复，再继续微信输入法长按、切换及闲置首用测试。
+
 ## 2026-10-19 默认麦克风选择与退出恢复
 
 - [x] 所有 Capture 均可直接选择，保存独立目标偏好；虚拟线路与系统默认录音选择分离，目标应用使用系统默认时跟随。36 项组件测试及 8 组浏览器布局验证 passed。
