@@ -1157,11 +1157,11 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   animation: mapping-line-enter 360ms var(--ease-out-quart) 140ms backwards;
 }
 .mapping-canvas-entering .mapping-connections polygon {
-  animation: mapping-item-enter 120ms ease-out 440ms backwards;
+  animation: mapping-item-enter 120ms ease-out 380ms backwards;
 }
 .mapping-canvas-entering .mapping-card {
   /* Begin before the line finishes; finish after the arrowhead. */
-  animation: mapping-item-enter 220ms ease-out 380ms backwards;
+  animation: mapping-item-enter 220ms ease-out 300ms backwards;
 }
 /* Leaving early returns opacity control to the normal page exit. */
 .page-leave-active .mapping-canvas-entering :is(.mapping-connections path, .mapping-connections polygon, .mapping-card) {
