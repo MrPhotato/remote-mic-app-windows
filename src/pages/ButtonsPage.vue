@@ -662,7 +662,7 @@ async function restoreDefaults(): Promise<void> {
     pendingSelections.clear();
     mappings.value = saved;
     savedSnapshot.value = JSON.parse(JSON.stringify(saved)) as ButtonMappings;
-    statusMessage.value = "已恢复默认配置。返回键按住连续删除，电源键长按插队/排队。";
+    statusMessage.value = "已恢复默认配置。返回键按住连续删除，确定和电源键长按插队/排队。";
   } catch (error) {
     statusMessage.value = error instanceof Error ? error.message : String(error);
   } finally {

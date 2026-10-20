@@ -44,7 +44,7 @@
     "ok": {
       "single": { "type": "shortcut", "chord": { "keys": ["enter"] } },
       "double": { "type": "disabled" },
-      "long": { "type": "disabled" }
+      "long": { "type": "shortcut", "chord": { "keys": ["control", "enter"] } }
     },
     "back": {
       "single": { "type": "normal_backspace" },

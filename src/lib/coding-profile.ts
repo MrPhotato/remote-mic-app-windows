@@ -23,7 +23,7 @@ function copy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-/** Voice has a separate setting; primary editing keys retain immediate, repeatable behavior. */
+/** Voice has a separate setting; direction and Backspace keys remain immediate and repeatable. */
 export function buildCodingProfile(current: ButtonMappings): ButtonMappings {
   const next = copy(current);
   next.enabled = true;

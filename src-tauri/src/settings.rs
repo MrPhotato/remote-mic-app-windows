@@ -385,6 +385,14 @@ mod tests {
         assert_eq!(mappings, ButtonMappings::default().normalized().unwrap());
         assert_eq!(mappings.actions.len(), 12);
         assert_eq!(
+            mappings.actions(RemoteButton::Ok).long,
+            ButtonAction::Shortcut {
+                chord: KeyChord {
+                    keys: vec![KeyCode::Control, KeyCode::Enter]
+                }
+            }
+        );
+        assert_eq!(
             mappings.actions(RemoteButton::Power).long,
             ButtonAction::Shortcut {
                 chord: KeyChord {
@@ -434,10 +442,50 @@ mod tests {
                 }
             );
             assert_eq!(
+                mappings.actions(RemoteButton::Ok).long,
+                ButtonAction::Disabled
+            );
+            assert_eq!(
                 fs::read_to_string(store.button_mappings_path()).unwrap(),
                 content
             );
         }
+    }
+
+    #[test]
+    fn confirm_hold_defaults_and_custom_choices_survive_save_and_reload() {
+        use sayall_windows::raw_input::RemoteButton;
+        use sayall_windows::send_input::{ButtonAction, KeyCode};
+
+        let store = mapping_transaction_store();
+        let mut mappings = store.load_button_mappings().unwrap();
+        for action in [
+            ButtonAction::Shortcut {
+                chord: KeyChord {
+                    keys: vec![KeyCode::Control, KeyCode::Enter],
+                },
+            },
+            ButtonAction::Shortcut {
+                chord: KeyChord {
+                    keys: vec![KeyCode::Escape],
+                },
+            },
+            ButtonAction::Disabled,
+        ] {
+            mappings.actions.get_mut(&RemoteButton::Ok).unwrap().long = action;
+            let saved = store
+                .save_button_mappings_and_apply(mappings.clone(), |_| {})
+                .unwrap();
+            let content = fs::read(store.button_mappings_path()).unwrap();
+            assert_eq!(store.load_button_mappings().unwrap(), saved);
+            assert_eq!(fs::read(store.button_mappings_path()).unwrap(), content);
+        }
+        // An existing configuration without OK must not acquire the new default.
+        mappings.actions.remove(&RemoteButton::Ok);
+        store
+            .save_button_mappings_and_apply(mappings.clone(), |_| {})
+            .unwrap();
+        assert_eq!(store.load_button_mappings().unwrap(), mappings);
     }
 
     #[test]

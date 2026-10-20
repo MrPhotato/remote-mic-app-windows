@@ -1313,7 +1313,7 @@ describe("buttons mapping page", () => {
     const wrapper = await mountPage();
     await wrapper.findAll("button").find((button) => button.text() === "恢复默认配置")!.trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("返回键按住连续删除，电源键长按插队/排队");
+    expect(wrapper.text()).toContain("返回键按住连续删除，确定和电源键长按插队/排队");
     const backCard = wrapper.findAll(".mapping-card").find((card) => card.find(".mapping-card-title strong").text() === "返回")!;
     expect(backCard.text()).toContain("Backspace");
     expect(backCard.findAll(".mapping-cell")[2]!.text()).toContain("Backspace");

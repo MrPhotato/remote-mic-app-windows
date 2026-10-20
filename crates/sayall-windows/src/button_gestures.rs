@@ -1170,7 +1170,6 @@ mod tests {
         for button in [
             RemoteButton::VolumeUp,
             RemoteButton::VolumeDown,
-            RemoteButton::Ok,
             RemoteButton::Up,
             RemoteButton::Back,
         ] {
@@ -1189,33 +1188,35 @@ mod tests {
     }
 
     #[test]
-    fn default_power_hold_queues_once_without_escape_and_tap_escapes_on_release() {
-        let now = Instant::now();
-        let mut recognizer = GestureRecognizer::new();
-        recognizer.configure(&ButtonMappings::default());
-        assert!(recognizer.press(RemoteButton::Power, now).is_empty());
-        assert_eq!(
-            recognizer.release(RemoteButton::Power, now + Duration::from_millis(80)),
-            vec![ButtonTrigger::Single]
-        );
-        let held = now + Duration::from_secs(1);
-        assert!(recognizer.press(RemoteButton::Power, held).is_empty());
-        assert_eq!(
-            recognizer.advance(held + LONG_PRESS_THRESHOLD),
-            vec![(RemoteButton::Power, ButtonTrigger::Long)]
-        );
-        assert!(recognizer.advance(held + Duration::from_secs(2)).is_empty());
-        assert!(recognizer
-            .release(RemoteButton::Power, held + Duration::from_secs(3))
-            .is_empty());
-        let next = held + Duration::from_secs(4);
-        recognizer.press(RemoteButton::Power, next);
-        recognizer.release_all();
-        recognizer.configure(&ButtonMappings::default());
-        assert!(recognizer
-            .release(RemoteButton::Power, next + Duration::from_secs(1))
-            .is_empty());
-        assert!(recognizer.advance(next + Duration::from_secs(2)).is_empty());
+    fn default_confirm_and_power_hold_queue_once_without_single_and_tap_fires_on_release() {
+        for button in [RemoteButton::Ok, RemoteButton::Power] {
+            let now = Instant::now();
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&ButtonMappings::default());
+            assert!(recognizer.press(button, now).is_empty());
+            assert_eq!(
+                recognizer.release(button, now + Duration::from_millis(80)),
+                vec![ButtonTrigger::Single]
+            );
+            let held = now + Duration::from_secs(1);
+            assert!(recognizer.press(button, held).is_empty());
+            assert_eq!(
+                recognizer.advance(held + LONG_PRESS_THRESHOLD),
+                vec![(button, ButtonTrigger::Long)]
+            );
+            assert!(recognizer.advance(held + Duration::from_secs(2)).is_empty());
+            assert!(recognizer
+                .release(button, held + Duration::from_secs(3))
+                .is_empty());
+            let next = held + Duration::from_secs(4);
+            recognizer.press(button, next);
+            recognizer.release_all();
+            recognizer.configure(&ButtonMappings::default());
+            assert!(recognizer
+                .release(button, next + Duration::from_secs(1))
+                .is_empty());
+            assert!(recognizer.advance(next + Duration::from_secs(2)).is_empty());
+        }
     }
 
     #[test]

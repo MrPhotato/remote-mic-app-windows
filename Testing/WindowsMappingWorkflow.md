@@ -17,7 +17,7 @@ Esc、Backspace、Enter、方向键等单键显示键名；组合快捷键使用
 | --- | --- | --- | --- |
 | 电源 | Esc，松开时触发 | 未设置 | 插队/排队，Ctrl+Enter |
 | 方向 | 对应方向键 | 未设置 | 连续移动 |
-| 确定 | Enter | 未设置 | 不另配置 |
+| 确定 | Enter，松开时触发 | 未设置 | 插队/排队，Ctrl+Enter |
 | 返回 | Backspace | 未设置 | 连续删除 |
 | 音量＋／－ | 上一个／下一个聊天，Ctrl+Shift+[ / ] | 未设置 | 不连续切换 |
 | 主页 | 回到 Codex | 新建聊天，Ctrl+N | 待我处理，Ctrl+Alt+A |
@@ -28,14 +28,15 @@ Esc、Backspace、Enter、方向键等单键显示键名；组合快捷键使用
 首次不存在按键配置文件时直接加载上述默认；不需要先点击应用方案。手动应用与恢复
 默认使用同一配置源。升级时存在的配置，包括空映射及用户主动禁用，保持原有语义。
 主页的双击与长按不会先执行其单击动作；快捷键仍发送给当前前台应用。
-确定键有冷首按原生 Enter 泄漏边界，因此不默认使用确定长按 Ctrl+Enter。
+确定键长按自 0.3.18 纳入默认。RC003 需手动启用按键增强并完成真实方向键初始化，
+才由现有确认键报告接管阻止原生 Enter 泄漏；默认配置不会自动启动增强或请求提权。
 
 ## 必要验证
 
 1. 后端使用全新临时设置目录读取，获得完整默认配置；已有自定义及显式禁用不被覆盖，
    保存、重新读取、重置与前端应用方案保持一致。
 2. 自动测试检查音量聊天切换一次长按只切一个、方向和 Backspace 连续行为保留、
-   电源短按 Esc 与长按 Ctrl+Enter 互斥，手势阈值不变。
+   确定短按 Enter、电源短按 Esc 各自与长按 Ctrl+Enter 互斥，手势阈值不变。
 3. UI 实测各单击/双击/长按格进入对应编辑目标、录制已知及未知快捷键、搜索、命名、
    重复识别、置顶、重新加载与历史排序；保存失败不能显示记住成功，也不增加选择次数。
 4. 完整 Windows 包安装后保留已有按键、语音、音频和 Helper；由用户手动启动应用。
@@ -56,6 +57,32 @@ Esc、Backspace、Enter、方向键等单键显示键名；组合快捷键使用
 - `deferred`：全新安装的硬件路径、严格闲置后首用、实际 Ctrl+Enter 与聊天切换、原生快捷键录制及 RC001 仍待实测，不以软件计时回归或当前听写成功代替。
 
 本机详细日志和截图保存于忽略目录 `target/local-launch/mapping-workflow/`；包含配置及设备信息的本机证据不提交。
+
+## 2026-10-20 确定键长按默认配置
+
+按用户要求，将共享默认配置中的确定键长按设为 Ctrl+Enter（插队/排队），保留
+电源键既有长按配置。日常默认方案、首次无配置文件启动、恢复默认均使用同一来源。
+现有配置照常加载，不填补缺失动作，不覆盖用户自定义或显式禁用；手动应用日常方案
+仍先备份原配置，可恢复原来的确定键长按动作。
+
+只调整默认数据及对应说明，不修改手势识别、输入注入或 Helper。既有 RC003
+0.3.14 闲置后首次长按及 Codex 排队/插队实测结果见
+[确认键故障记录](../Bugs/2026-10-20-confirm-hold-native-enter.md)；
+这些结果不代替本次新安装实际默认配置验收，RC001 继续 deferred。
+
+- `passed`：日常预设、按键页和 Codex 遥控页 84 项定向回归；确定键长按展示为
+  插队/排队，实际保存 Ctrl+Enter，应用方案前精确保留原自定义长按并可恢复。
+- `passed`：输入配置 24 项、手势 39 项及设置持久化 18 项。覆盖首次无文件自动默认、
+  默认短按释放与长按一次互斥、取消后不补单击；旧格式、自定义长按、显式禁用、
+  缺失确定键均不被填补；保存后重新读取一致，读取不改写文件。
+- `passed`：`vue-tsc --noEmit`、`cargo fmt --all -- --check` 及 `git diff --check`。
+- `deferred`：本次新默认的安装版/首次安装实际使用；此改动没有启动应用、注入按键
+  或更改用户配置，不以软件测试代替硬件端到端结果。
+
+定向命令：`node node_modules/vitest/vitest.mjs run src/lib/coding-profile.test.ts src/pages/CodingPage.test.ts src/pages/ButtonsPage.test.ts --reporter=dot --maxWorkers=2 --minWorkers=1`；
+Rust 使用 `cargo test -p sayall-windows --lib --locked send_input::tests -- --test-threads=1`、
+同包 `button_gestures::tests` 及 `cargo test -p sayall-windows-app --lib --locked settings::tests -- --test-threads=1`。
+Rust 输出保留于忽略目录 `target/default-confirm-*.log`，全部定向测试均通过，无 ignored。
 
 ## 0.2.14 固定工具入口
 
