@@ -33,9 +33,22 @@
 - `passed`：冷上下文一组初次检查出现浏览器长帧，固定 420ms 采样窗提前结束；
   改为观察真实完成并以 2 秒为失败上限后，同一组正常完成。最终矩阵五组均通过，
   正常动态组从首帧到卡片完整约 248ms；不将繁忙机器的帧调度保证成固定墙钟延迟。
-- `deferred`：安装版三项界面调整及跨页初始化提示，等待候选包和用户实际观察。
+- `passed`：Rust 格式检查；0.3.15 完整本地安装包构建及包身份检查。
+  源码 `f2442b8873e9213190c36dbdbc5430670dc8d4a9`，安装器 54,863,089 字节，
+  SHA-256 `e363e1b0cf48127246900d3fe37923ced30997827cf5025282dd054c4caace18`。
+  98 项增强组件哈希及主程序内嵌清单均通过。
+- `passed`：用户此前授权的静默升级于 06:54:09Z–06:54:25Z 完成，安装器退出码 0；
+  旧 0.3.14 日志确认 Helper、BLE 会话及平台正常清理，没有强杀进程或改变整机蓝牙。
+  已安装程序版本 0.3.15，哈希匹配本次装入快照
+  `12d7718b5d9c31f3a33a7d7eb421e1cf24d9dbe91fd334fe40240b615bed191a`；
+  三份按键、语音和音频配置哈希未变，98 项已安装增强组件完整；
+  麦克风恢复记录保持无待恢复项，未自动启动新版。
+- `deferred`：安装版三项界面调整及跨页初始化提示，等待用户手动打开及实体方向键验收。
 - `deferred`：RC001 真机；本轮不扩大此前 RC003 硬件结论。
 
 回归命令为 `npm.cmd test -- --maxWorkers=2 --minWorkers=1` 及 `npm.cmd run build`。
+构建与安装检查使用 `scripts/build-local.ps1 -Installer -SkipTests -SkipHelperBuild`、
+`scripts/verify-setup-bundle.ps1`（锁定本次单个安装器）及
+`scripts/verify-rc003-helper-bundle.ps1`；安装使用 `/S /UPDATE`，不要求自动重启。
 完整日志、矩阵与截图保留在忽略目录 `target/local-launch/mapping-presentation-0315/`
 和 `target/buttons-entry-0314/`。没有发布授权，不创建发布 Tag 或资产。
