@@ -566,6 +566,15 @@ ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实
 
 ## 默认麦克风选择与会话恢复（2026-10-19）
 
+2026-10-20 缺失恢复目标处理：沿用下述 SoundSwitch / EarTrumpet 接口范围，
+同时核对 Microsoft [默认端点选择规则](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/default-audio-endpoint-selection)
+及 [GetDevice](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdevice)。
+Windows 以活动设备、用户偏好和系统排序选择默认端点；没有可用默认值时返回
+E_NOTFOUND。GetDevice 的 E_NOTFOUND 仅证明该标识不对应当前系统端点，
+不能据此宣称驱动故障。实现只在确认原端点不可用或原本没有默认值时保留系统当前选择，
+不复制系统排序、不重启设备，也不调用未验证的“清空默认设备”接口。
+当前默认仍为 CABLE 也必须如实记录。授权与边界见 ADR 0004。
+
 先核对 SoundSwitch 与 EarTrumpet 的默认设备切换做法。Windows 公开 Core Audio 接口提供
 [默认端点读取](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint)
 和 [默认端点变更通知](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immnotificationclient-ondefaultdevicechanged)，

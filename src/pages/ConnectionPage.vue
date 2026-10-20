@@ -263,6 +263,7 @@ const phaseDetail = computed(() => {
 const audioStatus = computed(() => {
   if (!microphoneSelectionLoaded.value || microphoneSelectionReadError.value) return microphoneSelectionReadError.value ? "状态待确认" : "正在读取";
   if (audioInventoryStale.value) return "等待刷新";
+  if (audioScanComplete.value && !scanningAudio.value && !microphones.value.length) return "没有可用麦克风";
   if (audioSettingsUnsaved.value) return "设置未保存";
   if (audioOperationError.value || microphoneSelection.value.phase === "failed") return "暂不可用";
   if (!microphoneSelection.value.targetMicrophoneId) return "待选择";
@@ -292,6 +293,14 @@ const audioVisibleError = computed(() => {
   if (selectedVirtualCable.value && audio.value.phase === "failed") return "遥控器语音线路暂不可用，可重试。";
   return "";
 });
+
+const audioDiagnosticErrors = computed(() => [...new Set([
+  audioOperationError.value,
+  microphoneSelectionReadError.value,
+  microphoneSelection.value.lastError,
+  audioReadError.value,
+  audio.value.lastError,
+].filter((error): error is string => Boolean(error)))]);
 
 function reportAudioDetailsToggle(event: Event) {
   reportFrontendEvent({ event: "audio_advanced_settings", phase: "completed", result: "passed", reason: (event.target as HTMLDetailsElement).open ? "expanded" : "collapsed" });
@@ -332,6 +341,13 @@ async function refreshMicrophoneSelection(allowDuringSelection = false): Promise
     microphoneSelection.value = snapshot;
     microphoneSelectionLoaded.value = true;
     microphoneSelectionReadError.value = "";
+    if (!selectingMicrophoneId.value && !audioSettingsUnsaved.value && pendingSelectionId.value
+      && snapshot.phase === "ready" && snapshot.targetMicrophoneId === pendingSelectionId.value
+      && snapshot.currentMicrophoneId === pendingSelectionId.value) {
+      audioOperationError.value = "";
+      pendingSelectionId.value = "";
+      reportFrontendEvent({ event: "microphone_selection", phase: "completed", result: "passed", reason: "selection_confirmed_by_readback" });
+    }
     if (changed) reportFrontendEvent({ event: "microphone_selection_load", phase: "completed", result: "passed", reason: `state_${snapshot.phase}` });
     return true;
   } catch (error) {
@@ -643,7 +659,7 @@ onUnmounted(() => {
               {{ selectingMicrophoneId ? "正在切换…" : "使用这个麦克风" }}
             </button>
           </div>
-          <p class="muted microphone-target-hint">启动时切换到所选麦克风，退出时恢复原设置。目标应用选择“系统默认麦克风”即可跟随切换。</p>
+          <p class="muted microphone-target-hint">启动时切换到所选麦克风。退出时优先恢复原麦克风；不可用时保留 Windows 当前选择。目标应用选择“系统默认麦克风”即可跟随切换。</p>
           <p v-if="microphoneSelectionLoaded && !microphoneSelectionReadError && microphoneSelection.currentMicrophoneId && microphoneSelection.currentMicrophoneId !== microphoneSelection.targetMicrophoneId" class="muted microphone-current">当前系统麦克风：{{ microphoneSelection.currentMicrophoneName ?? '名称暂不可用' }}</p>
         </div>
 
@@ -686,18 +702,14 @@ onUnmounted(() => {
           <p>传送状态：{{ audioPhaseLabel(audio.phase) }}</p>
           <p v-if="audio.selectedEndpointName">内部传声线路：{{ audio.selectedEndpointName }}</p>
           <p class="muted" role="status">{{ audioMessage }}</p>
-          <p v-if="audioOperationError" class="error-text">{{ audioOperationError }}</p>
-          <p v-if="microphoneSelectionReadError" class="error-text">{{ microphoneSelectionReadError }}</p>
-          <p v-if="microphoneSelection.lastError" class="error-text">{{ microphoneSelection.lastError }}</p>
-          <p v-if="audioReadError" class="error-text">{{ audioReadError }}</p>
-          <p v-if="audio.lastError" class="error-text">{{ audio.lastError }}</p>
+          <p v-for="error in audioDiagnosticErrors" :key="error" class="error-text">{{ error }}</p>
           <ul v-if="microphones.some(microphone => microphone.isDefault || microphone.isDefaultCommunications)">
             <li v-for="microphone in microphones.filter(item => item.isDefault || item.isDefaultCommunications)" :key="microphone.id">
               {{ microphone.name }}：{{ [microphone.isDefault ? 'Windows 默认录音设备' : '', microphone.isDefaultCommunications ? '默认通信设备' : ''].filter(Boolean).join('、') }}
             </li>
           </ul>
-          <p class="muted">普通麦克风直接录音；VB-CABLE 接收遥控器语音。关闭窗口仅缩到托盘；从托盘退出才恢复启动前的默认麦克风。固定选择了某个设备的应用不会跟随系统默认设置。</p>
-          <p v-if="microphoneSelection.restorePending" class="muted">已记住启动前的默认麦克风，退出时恢复。</p>
+          <p class="muted">普通麦克风直接录音；VB-CABLE 接收遥控器语音。关闭窗口仅缩到托盘；从托盘可退出应用。固定选择了某个设备的应用不会跟随系统默认设置。</p>
+          <p v-if="microphoneSelection.restorePending" class="muted">已记录原默认麦克风。退出时优先恢复原麦克风；不可用时保留 Windows 当前选择。</p>
           <button v-if="audioScanComplete && !virtualCableEndpoints.length" class="secondary-button" type="button" :disabled="openingVbCablePage" @click="openVbCablePage">
             {{ openingVbCablePage ? "正在打开…" : "VB-CABLE 官方下载页" }}
           </button>
