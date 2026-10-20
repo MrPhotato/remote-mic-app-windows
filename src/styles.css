@@ -1160,7 +1160,8 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   animation: mapping-item-enter 120ms ease-out 440ms backwards;
 }
 .mapping-canvas-entering .mapping-card {
-  animation: mapping-item-enter 220ms ease-out 440ms backwards;
+  /* Begin before the line finishes; finish after the arrowhead. */
+  animation: mapping-item-enter 220ms ease-out 380ms backwards;
 }
 /* Leaving early returns opacity control to the normal page exit. */
 .page-leave-active .mapping-canvas-entering :is(.mapping-connections path, .mapping-connections polygon, .mapping-card) {
