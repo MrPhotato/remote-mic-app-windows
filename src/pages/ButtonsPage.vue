@@ -587,6 +587,9 @@ const capabilityNote = computed<string | null>(() => {
   if (button === "home" || button === "tv") {
     return "遥控器的主页或 TV 键可能同时触发 Home 或输入反引号，按住时可能重复。普通键盘不受此映射影响。";
   }
+  if (button === "ok" && remoteModel.value === "rc003") {
+    return "RC003 确认键自定义动作请先开启上方按键增强。未开启时，首次按下可能额外触发 Enter。";
+  }
   if (shortcutCapability(button, "single", remoteModel.value) === "identity") {
     const identity = identityShortcutByButton[button];
     const label = identity ? chordLabel({ keys: [identity] }) : "";

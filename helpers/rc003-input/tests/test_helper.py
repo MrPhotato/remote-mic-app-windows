@@ -109,6 +109,38 @@ class StateTests(unittest.TestCase):
         self.state.begin(3, False)
         with self.assertRaises(ValueError): self.state.observe(8)
 
+    def test_ok_and_tv_masks_match_independent_permissions(self):
+        for tv in (False, True):
+            for ok in (False, True):
+                self.state.begin(2, tv, ok)
+                allowed = 7 | (8 if tv else 0) | (16 if ok else 0)
+                for mask in range(64):
+                    if mask & ~allowed:
+                        with self.assertRaises(ValueError): self.state.observe(mask)
+                    else:
+                        self.state.observe(mask)
+        for value in (0, 1, None, 'true'):
+            with self.assertRaisesRegex(ValueError, 'invalid_ok_configuration'):
+                self.state.begin(2, False, value)
+
+    def test_preheld_ok_needs_real_neutral_and_cancellation_never_releases(self):
+        self.state.begin(2, True, True)
+        for mask in (16, 24, 8, 16):
+            self.state.observe(mask)
+        self.assertFalse(self.state.armed)
+        self.state.observe(0)
+        for mask in (16, 24, 8, 0):
+            self.state.observe(mask)
+        self.assertEqual([event['pressed_mask'] for event in self.events if event['type'] == 'state'],
+                         [0, 16, 24, 8, 0])
+        self.state.observe(16)
+        before = len(self.events)
+        self.state.stop('ok_source_lost')
+        self.assertEqual([event['type'] for event in self.events[before:]], ['status'])
+        self.state.begin(3, False, True)
+        self.state.observe(16)
+        self.assertFalse(self.state.armed)
+
 
 class ProtocolTests(unittest.TestCase):
     def test_token_and_cli_are_narrow(self):
@@ -119,24 +151,24 @@ class ProtocolTests(unittest.TestCase):
 
     def test_stream_splits_multiple_and_limits(self):
         parser = LineDecoder()
-        wire = encode(dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False))
+        wire = encode(dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False, ok_enabled=False))
         self.assertEqual(parser.feed(wire[:8]), [])
-        self.assertEqual(parser.feed(wire[8:] + b'{"type":"stop"}\n'), [Lease(3, True, 'test', False), None])
+        self.assertEqual(parser.feed(wire[8:] + b'{"type":"stop"}\n'), [Lease(3, True, 'test', False, False), None])
         with self.assertRaises(ProtocolError): LineDecoder().feed(b'x' * 4096)
         with self.assertRaises(ProtocolError): LineDecoder().feed(b'x' * 4096 + b'\n')
 
     def test_schema_rejects_arbitrary_operations(self):
         for payload in ({'type': 'exec', 'script': 'x'}, {'type': 'stop', 'pid': 1},
-                        {'type': 'lease', 'generation': True, 'enabled': True, 'device_id': 'x', 'tv_enabled': False},
-                        {'type': 'lease', 'generation': -1, 'enabled': False, 'device_id': None, 'tv_enabled': False}):
+                        {'type': 'lease', 'generation': True, 'enabled': True, 'device_id': 'x', 'tv_enabled': False, 'ok_enabled': False},
+                        {'type': 'lease', 'generation': -1, 'enabled': False, 'device_id': None, 'tv_enabled': False, 'ok_enabled': False}):
             with self.assertRaises(ProtocolError): decode_line(json.dumps(payload).encode())
-        self.assertEqual(decode_line(b'{"type":"lease","generation":0,"enabled":false,"device_id":null,"tv_enabled":false}'), Lease(0, False, '', False))
+        self.assertEqual(decode_line(b'{"type":"lease","generation":0,"enabled":false,"device_id":null,"tv_enabled":false,"ok_enabled":false}'), Lease(0, False, '', False, False))
 
     def test_lease_expiration_and_generation_replay(self):
         now = [0.0]
         box = Mailbox(lambda: now[0])
-        box.update(Lease(2, True, 'test', False))
-        with self.assertRaises(ProtocolError): box.update(Lease(1, True, 'test', False))
+        box.update(Lease(2, True, 'test', False, False))
+        with self.assertRaises(ProtocolError): box.update(Lease(1, True, 'test', False, False))
         now[0] = 4.9
         box.snapshot()
         self.assertFalse(box.stopped.is_set())
@@ -145,25 +177,35 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(box.stopped.is_set())
 
     def test_tv_option_is_required_and_must_be_a_boolean(self):
-        message = dict(type='lease', generation=3, enabled=True, device_id='test')
+        message = dict(type='lease', generation=3, enabled=True, device_id='test', ok_enabled=False)
         with self.assertRaises(ProtocolError): decode_line(json.dumps(message).encode())
         for invalid in (None, 0, 1, 'true', []):
             with self.assertRaises(ProtocolError):
                 decode_line(json.dumps({**message, 'tv_enabled': invalid}).encode())
         self.assertEqual(decode_line(json.dumps({**message, 'tv_enabled': True}).encode()),
-                         Lease(3, True, 'test', True))
+                         Lease(3, True, 'test', True, False))
+
+    def test_ok_option_is_required_boolean_and_not_a_legacy_lease_default(self):
+        message = dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False)
+        with self.assertRaises(ProtocolError): decode_line(json.dumps(message).encode())
+        for invalid in (None, 0, 1, 'true', []):
+            with self.assertRaises(ProtocolError):
+                decode_line(json.dumps({**message, 'ok_enabled': invalid}).encode())
+        self.assertEqual(decode_line(json.dumps({**message, 'ok_enabled': True}).encode()),
+                         Lease(3, True, 'test', False, True))
 
     def test_same_generation_cannot_change_device_or_tv_permission(self):
         box = Mailbox()
-        original = Lease(3, True, 'test', False)
+        original = Lease(3, True, 'test', False, False)
         box.update(original)
         box.update(original)
-        for changed in (Lease(3, True, 'test', True), Lease(3, True, 'other', False),
-                        Lease(3, False, '', False)):
+        for changed in (Lease(3, True, 'test', True, False), Lease(3, True, 'test', False, True),
+                        Lease(3, True, 'other', False, False),
+                        Lease(3, False, '', False, False)):
             with self.assertRaisesRegex(ProtocolError, 'selection_changed_without_generation'):
                 box.update(changed)
             self.assertEqual(box.snapshot(), original)
-        box.update(Lease(4, True, 'test', True))
+        box.update(Lease(4, True, 'test', True, False))
         self.assertTrue(box.snapshot().tv_enabled)
 
     def test_remote_address_is_last_peer_not_adapter(self):
@@ -173,9 +215,10 @@ class ProtocolTests(unittest.TestCase):
 
 
 class FakeCapture:
-    def __init__(self, selection, tv_enabled=False):
+    def __init__(self, selection, tv_enabled=False, ok_enabled=False):
         self.selection = selection
         self.tv_enabled = tv_enabled
+        self.ok_enabled = ok_enabled
         self.events = []
         self.closes = 0
         self.aborts = 0
@@ -200,7 +243,7 @@ class CaptureDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         frida = SimpleNamespace(__version__=FRIDA_VERSION, Cancellable=self.Cancellation)
         with patch.dict(sys.modules, {'frida': frida}):
-            self.capture = FridaCapture('test', False)
+            self.capture = FridaCapture('test', False, False)
 
     def test_stage_failures_hide_exception_and_keep_cancellation(self):
         def fail(): raise RuntimeError('private exception body')
@@ -241,6 +284,26 @@ class CaptureDiagnosticsTests(unittest.TestCase):
                                                             'reason': 'private device details'}}, None)
         self.assertEqual(list(self.capture.drain()), [('fault', 'script_stopped'),
                                                      ('fault', 'invalid_script_message')])
+
+    def test_capture_rejects_every_disabled_optional_mask_bit(self):
+        for tv in (False, True):
+            for ok in (False, True):
+                self.capture.tv_enabled, self.capture.ok_enabled = tv, ok
+                allowed = 7 | (8 if tv else 0) | (16 if ok else 0)
+                for mask in range(64):
+                    self.capture._on_message({'type': 'send', 'payload': {'type': 'mask', 'mask': mask}}, None)
+                    self.assertEqual(list(self.capture.drain()),
+                        [('fault', 'invalid_script_message')] if mask & ~allowed else [('mask', mask)])
+
+    def test_ok_cleanup_failure_is_recognized_and_never_reported_as_clean(self):
+        script, session = Mock(), Mock()
+        self.capture.script, self.capture.session = script, session
+        self.capture.script_load_attempted = True
+        script.exports_sync.stop.return_value = dict(quiescent=True, cleanup_error='ok_report_restore_failed')
+        self.assertEqual(self.capture.close(), ['ok_report_restore_failed'])
+        self.assertTrue(self.capture.closed)
+        script.unload.assert_called_once()
+        session.detach.assert_called_once()
 
     def test_abort_signals_script_once_and_never_waits_on_stop_rpc(self):
         script = Mock()
@@ -440,8 +503,8 @@ class RuntimeTests(unittest.TestCase):
         self.now = [0.0]
         self.box = Mailbox(lambda: self.now[0])
         self.events, self.captures = [], []
-        def factory(selection, tv_enabled):
-            capture = FakeCapture(selection, tv_enabled)
+        def factory(selection, tv_enabled, ok_enabled):
+            capture = FakeCapture(selection, tv_enabled, ok_enabled)
             self.captures.append(capture)
             return capture
         self.runtime = Runtime(self.box, self.events.append, factory, lambda: self.now[0])
@@ -449,7 +512,7 @@ class RuntimeTests(unittest.TestCase):
     def test_final_cleanup_records_each_failure_and_combines_bits(self):
         cases = [([], 0), (['script_stop_failed'], 1), (['script_unload_failed'], 2),
                  (['session_detach_failed'], 4), (['target_close_failed'], 8),
-                 (['cleanup_failed'], 16),
+                 (['cleanup_failed'], 16), (['ok_report_restore_failed'], 16),
                  (['script_stop_failed', 'script_unload_failed', 'session_detach_failed',
                    'target_close_failed', 'cleanup_failed'], 31)]
         for errors, mask in cases:
@@ -465,7 +528,7 @@ class RuntimeTests(unittest.TestCase):
                 capture.close.assert_called_once()
 
     def test_stop_during_step_cleanup_keeps_final_result(self):
-        self.box.update(Lease(1, True, 'test', False))
+        self.box.update(Lease(1, True, 'test', False, False))
         self.runtime.step()
         def close():
             self.box.stop('parent_stop')
@@ -476,7 +539,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.final_cleanup_mask, 2)
 
     def test_earlier_retry_cleanup_error_does_not_pollute_clean_exit(self):
-        self.box.update(Lease(1, True, 'test', False))
+        self.box.update(Lease(1, True, 'test', False, False))
         self.runtime.step()
         self.captures[0].close = Mock(return_value=['session_detach_failed'])
         self.runtime.cleanup('capture_failed')
@@ -487,7 +550,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.final_cleanup_mask, 0)
 
     def test_capture_diagnostics_keep_generation_without_arming(self):
-        self.box.update(Lease(4, True, 'test', False))
+        self.box.update(Lease(4, True, 'test', False, False))
         self.runtime.step()
         self.captures[0].events = [('diagnostic', code) for code in
                                   ('capture_attach_started', 'capture_attached', 'capture_loaded')]
@@ -501,15 +564,15 @@ class RuntimeTests(unittest.TestCase):
 
     def test_failed_start_preserves_stages_and_discards_pending_input(self):
         original_factory = self.runtime.factory
-        def factory(device, tv_enabled):
-            capture = original_factory(device, tv_enabled)
+        def factory(device, tv_enabled, ok_enabled):
+            capture = original_factory(device, tv_enabled, ok_enabled)
             def start():
                 capture.events = [('diagnostic', 'capture_attach_started'), ('mask', 0)]
                 raise CaptureError('capture_attach_failed')
             capture.start = start
             return capture
         self.runtime.factory = factory
-        self.box.update(Lease(5, True, 'test', False))
+        self.box.update(Lease(5, True, 'test', False, False))
         self.runtime.step()
         self.assertEqual(self.events[-2],
                          dict(type='diagnostic', generation=5, code='capture_attach_started'))
@@ -519,12 +582,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(self.runtime.capture)
 
     def test_selection_change_cleans_before_rebind(self):
-        self.box.update(Lease(1, True, 'first', False))
+        self.box.update(Lease(1, True, 'first', False, False))
         self.runtime.step()
         first = self.captures[0]
         first.events = [('mask', 0), ('mask', 1)]
         self.runtime.step()
-        self.box.update(Lease(2, True, 'second', False))
+        self.box.update(Lease(2, True, 'second', False, False))
         self.runtime.step()
         self.assertEqual(first.closes, 1)
         self.assertEqual(self.captures[1].selection, 'second')
@@ -533,7 +596,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.events[-1]['reason'], 'awaiting_neutral')
 
     def test_failed_revalidation_cleans_and_backs_off(self):
-        self.box.update(Lease(1, True, 'first', False))
+        self.box.update(Lease(1, True, 'first', False, False))
         self.runtime.step()
         self.captures[0].fail = True
         self.now[0] = 1.0
@@ -547,18 +610,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(len(self.captures), 2)
 
     def test_disable_does_not_attach_and_cleans_existing(self):
-        self.box.update(Lease(1, False, '', False))
+        self.box.update(Lease(1, False, '', False, False))
         self.runtime.step()
         self.assertEqual(self.captures, [])
-        self.box.update(Lease(2, True, 'first', False))
+        self.box.update(Lease(2, True, 'first', False, False))
         self.runtime.step()
-        self.box.update(Lease(3, False, '', False))
+        self.box.update(Lease(3, False, '', False, False))
         self.runtime.step()
         self.assertEqual(self.captures[0].closes, 1)
         self.assertEqual(self.events[-1]['reason'], 'disabled')
 
     def test_parent_eof_aborts_and_cleans_without_injection(self):
-        self.box.update(Lease(1, True, 'first', False))
+        self.box.update(Lease(1, True, 'first', False, False))
         self.runtime.step()
         left, right = socket.socketpair()
         left.settimeout(0.05)
@@ -575,13 +638,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(self.captures[0].aborts, 1)
 
     def test_same_lease_renewal_never_cancels_capture(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', False))
+        self.runtime.publish_lease(Lease(1, True, 'first', False, False))
         self.runtime.step()
-        self.runtime.publish_lease(Lease(1, True, 'first', False))
+        self.runtime.publish_lease(Lease(1, True, 'first', False, False))
         self.assertEqual(self.captures[0].aborts, 0)
 
     def test_new_capture_is_not_cancelled_after_lease_publication(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', False))
+        self.runtime.publish_lease(Lease(1, True, 'first', False, False))
         self.runtime.step()
         previous = self.captures[0]
         cancelling, finish_cancel = threading.Event(), threading.Event()
@@ -591,7 +654,7 @@ class RuntimeTests(unittest.TestCase):
             cancelling.set()
             self.assertTrue(finish_cancel.wait(1))
         previous.abort = delayed_abort
-        publisher = threading.Thread(target=self.runtime.publish_lease, args=(Lease(2, True, 'second', False),))
+        publisher = threading.Thread(target=self.runtime.publish_lease, args=(Lease(2, True, 'second', False, False),))
         publisher.start()
         try:
             self.assertTrue(cancelling.wait(1))
@@ -610,19 +673,19 @@ class RuntimeTests(unittest.TestCase):
     def test_capture_created_for_replaced_lease_never_attaches(self):
         factory_entered, finish_factory = threading.Event(), threading.Event()
         original_factory = self.runtime.factory
-        def delayed_factory(device, tv_enabled):
-            capture = original_factory(device, tv_enabled)
+        def delayed_factory(device, tv_enabled, ok_enabled):
+            capture = original_factory(device, tv_enabled, ok_enabled)
             if device == 'first':
                 factory_entered.set()
                 self.assertTrue(finish_factory.wait(1))
             return capture
         self.runtime.factory = delayed_factory
-        self.runtime.publish_lease(Lease(1, True, 'first', False))
+        self.runtime.publish_lease(Lease(1, True, 'first', False, False))
         worker = threading.Thread(target=self.runtime.step)
         worker.start()
         try:
             self.assertTrue(factory_entered.wait(1))
-            self.runtime.publish_lease(Lease(2, True, 'second', False))
+            self.runtime.publish_lease(Lease(2, True, 'second', False, False))
         finally:
             finish_factory.set()
             worker.join(1)
@@ -636,7 +699,7 @@ class RuntimeTests(unittest.TestCase):
         self.runtime.cleanup('test_done')
 
     def test_tv_option_change_cancels_before_close_and_rebinds_generation(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         first = self.captures[0]
         self.assertTrue(first.tv_enabled)
@@ -645,7 +708,7 @@ class RuntimeTests(unittest.TestCase):
         boundary = len(self.events)
         first.abort = lambda: self.assertEqual(self.events[-1]['reason'], 'selection_changed')
         first.close = lambda: (self.assertEqual(self.events[-1]['reason'], 'selection_changed') or [])
-        self.runtime.publish_lease(Lease(2, True, 'first', False))
+        self.runtime.publish_lease(Lease(2, True, 'first', False, False))
         first.events = [('mask', 0)]
         self.runtime.step()
         self.assertFalse(any(event['type'] == 'state' for event in self.events[boundary:]))
@@ -654,8 +717,45 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state.armed)
         self.assertEqual(self.runtime.state.generation, 2)
 
+    def test_ok_permission_change_cancels_held_key_and_discards_queued_release(self):
+        self.runtime.publish_lease(Lease(1, True, 'first', False, True))
+        self.runtime.step()
+        first = self.captures[0]
+        self.assertTrue(first.ok_enabled)
+        self.assertFalse(first.tv_enabled)
+        first.events = [('mask', 16), ('mask', 0), ('mask', 16)]
+        self.runtime.step()
+        self.assertEqual([event['pressed_mask'] for event in self.events if event['type'] == 'state'], [0, 16])
+        boundary = len(self.events)
+        self.runtime.publish_lease(Lease(2, True, 'first', True, False))
+        first.events = [('mask', 0)]
+        self.runtime.step()
+        self.assertFalse(any(event['type'] == 'state' for event in self.events[boundary:]))
+        self.assertEqual((first.aborts, first.closes), (1, 1))
+        self.assertFalse(self.captures[1].ok_enabled)
+        self.assertTrue(self.captures[1].tv_enabled)
+        self.assertFalse(self.runtime.state.armed)
+
+    def test_ok_fault_and_parent_stop_cancel_without_a_normal_release(self):
+        for stop in ('ok_report_submit_failed', 'parent_stop'):
+            with self.subTest(stop=stop):
+                self.setUp()
+                self.runtime.publish_lease(Lease(1, True, 'first', True, True))
+                self.runtime.step()
+                capture = self.captures[0]
+                capture.events = [('mask', 0), ('mask', 24)]
+                self.runtime.step()
+                boundary = len(self.events)
+                if stop == 'parent_stop':
+                    self.runtime.publish_lease(None)
+                else:
+                    capture.events = [('fault', stop), ('mask', 0)]
+                    self.runtime.step()
+                self.assertFalse(any(event['type'] == 'state' for event in self.events[boundary:]))
+                self.assertFalse(self.runtime.state.armed)
+
     def test_tv_fault_cancels_pending_press_before_close_without_release(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         capture = self.captures[0]
         capture.events = [('mask', 0), ('mask', 8)]
@@ -673,14 +773,14 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state.armed)
 
     def test_changed_lease_during_drain_never_forwards_old_tv_release(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         capture = self.captures[0]
         capture.events = [('mask', 0), ('mask', 8)]
         self.runtime.step()
         boundary = len(self.events)
         def drain():
-            self.runtime.publish_lease(Lease(2, True, 'second', True))
+            self.runtime.publish_lease(Lease(2, True, 'second', True, False))
             yield 'mask', 0
             yield 'mask', 8
         capture.drain = drain
@@ -689,7 +789,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(capture.aborts, 1)
 
     def test_parent_stop_while_tv_is_held_emits_cancel_before_abort(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         capture = self.captures[0]
         capture.events = [('mask', 0), ('mask', 8)]
@@ -701,7 +801,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state.armed)
 
     def test_abort_rejects_already_queued_state_even_with_unchanged_lease(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         capture = self.captures[0]
         capture.events = [('mask', 0), ('mask', 8)]
@@ -714,7 +814,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state.armed)
 
     def test_pending_cleanup_prevents_rebind_and_waits_between_attempts(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         capture = self.captures[0]
         calls = []
@@ -723,7 +823,7 @@ class RuntimeTests(unittest.TestCase):
             capture.cleanup_pending = len(calls) == 1
             return ['script_stop_failed'] if capture.cleanup_pending else []
         capture.close = close
-        self.runtime.publish_lease(Lease(2, True, 'second', True))
+        self.runtime.publish_lease(Lease(2, True, 'second', True, False))
         self.runtime.step()
         self.assertIs(self.runtime.capture, capture)
         self.assertEqual(len(self.captures), 1)
@@ -737,7 +837,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.state.generation, 2)
 
     def test_parent_exit_waits_for_cleanup_and_retains_failure_exit_bit(self):
-        self.runtime.publish_lease(Lease(1, True, 'first', True))
+        self.runtime.publish_lease(Lease(1, True, 'first', True, False))
         self.runtime.step()
         capture = self.captures[0]
         calls = []
@@ -782,7 +882,7 @@ class MainExitTests(unittest.TestCase):
         runtime.assert_not_called()
         self.assertEqual(json.loads(sock.sendall.call_args_list[-1].args[0])['code'], 'capture_owner_busy')
 
-    def test_hello_uses_protocol_two(self):
+    def test_hello_uses_protocol_three(self):
         runtime = Mock(final_cleanup_mask=0)
         sock = Mock()
         sock.getsockname.return_value = ('127.0.0.1', 12345)
@@ -793,7 +893,7 @@ class MainExitTests(unittest.TestCase):
             self.assertEqual(main(['--port', '1234', '--token', 'a'*64, '--parent-pid', '1']), 0)
         hello = json.loads(sock.sendall.call_args_list[0].args[0])
         self.assertEqual(hello['type'], 'hello')
-        self.assertEqual(hello['protocol'], 2)
+        self.assertEqual(hello['protocol'], 3)
 
     def test_main_reports_cleanup_mask_and_never_success_on_run_exception(self):
         for mask, failure, expected in ((0, None, 0), (1, None, 65), (31, None, 95),

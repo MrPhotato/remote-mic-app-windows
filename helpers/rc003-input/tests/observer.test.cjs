@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'observer.js'), 'utf8'
 const number = n => ({toUInt32: () => n});
 const bytes = (...usages) => [1, 0, 0, ...[0, 1, 2].flatMap(i => [
   (usages[i] || 0) & 255, (usages[i] || 0) >>> 8])];
-function harness(tvEnabled = true, failures = {}) {
+function harness(tvEnabled = true, failures = {}, okEnabled = false) {
   const h = {clock: 0, allowed: true, ready: true, detached: false, closed: false,
     reads: 0, writes: [], messages: [], callbacks: null, timer: null, postedStop: null};
   const context = {
@@ -32,7 +32,8 @@ function harness(tvEnabled = true, failures = {}) {
   vm.createContext(context);
   try {
     vm.runInContext(source.replace('__SELECTED_SOURCE_KEY__', '"' + 'a'.repeat(64) + '"')
-      .replace('__TV_CAPTURE_ENABLED__', JSON.stringify(tvEnabled)), context);
+      .replace('__TV_CAPTURE_ENABLED__', JSON.stringify(tvEnabled))
+      .replace('__OK_CAPTURE_ENABLED__', JSON.stringify(okEnabled)), context);
   } catch (error) {
     if (Object.keys(failures).length === 0) throw error;
     h.loadError = error;
@@ -337,6 +338,146 @@ async function main() {
     assert.deepEqual(h.masks(), [0, 8]); assert.deepEqual(h.faults(), []);
     assert.equal(h.writes.length, writes);
     h.report(bytes()); assert.deepEqual(h.masks(), [0, 8, 0]);
+  });
+  await test('TV and OK permission matrix clears only enabled slots and leaves voice untouched', () => {
+    for (const tv of [false, true]) for (const ok of [false, true]) {
+      const h = harness(tv, {}, ok); h.report(bytes());
+      const original = bytes(0x35, 0x28, 0x3e);
+      const down = h.report(original);
+      assert.deepEqual(down.delivered, bytes(tv ? 0 : 0x35, ok ? 0 : 0x28, 0x3e));
+      assert.deepEqual(down.call.memory.data, original);
+      assert.deepEqual(h.masks(), [0, (tv ? 8 : 0) | (ok ? 16 : 0)]);
+      h.report(bytes());
+      assert.deepEqual(h.faults(), []);
+    }
+  });
+  await test('preheld OK passes through until a real successful neutral', () => {
+    const h = harness(false, {}, true);
+    for (let i = 0; i < 3; i++)
+      assert.deepEqual(h.report(bytes(0x28)).delivered, bytes(0x28));
+    h.report(bytes(), {status: 0x103});
+    assert.deepEqual(h.report(bytes(0x28)).delivered, bytes(0x28));
+    assert.equal(h.writes.length, 0);
+    assert.equal(h.diagnostics().filter(x => x === 'ok_preheld_passthrough').length, 1);
+    h.report(bytes());
+    const down = h.enter(bytes(0x28));
+    assert.deepEqual(down.memory.data, bytes());
+    assert.deepEqual(h.masks(), [16, 16, 16, 16, 0]); // No DOWN until success.
+    h.leave(down);
+    assert.deepEqual(h.masks(), [16, 16, 16, 16, 0, 16]);
+    h.report(bytes()); assert.equal(h.masks().at(-1), 0);
+  });
+  await test('either configured preheld key prevents shared capture readiness', () => {
+    for (const preheld of [0x28, 0x35]) {
+      const h = harness(true, {}, true);
+      h.report(bytes(preheld));
+      const both = h.report(bytes(0x28, 0x35));
+      assert.deepEqual(both.delivered, bytes(0x28, 0x35));
+      h.report(bytes(preheld)); assert.equal(h.writes.length, 0);
+      h.report(bytes());
+      assert.deepEqual(h.report(bytes(0x28, 0x35)).delivered, bytes());
+      assert.equal(h.masks().at(-1), 24);
+      assert(h.diagnostics().includes('ok_capture_ready'));
+      assert(h.diagnostics().includes('tv_capture_ready'));
+    }
+  });
+  await test('foreign keyboard during owned OK is never read or cleared', () => {
+    const h = harness(false, {}, true); h.report(bytes()); h.report(bytes(0x28));
+    h.allowed = false; const reads = h.reads, writes = h.writes.length;
+    assert.deepEqual(h.report(bytes(0x28)).delivered, bytes(0x28));
+    assert.equal(h.reads, reads); assert.equal(h.writes.length, writes);
+    assert.deepEqual(h.masks(), [0, 16]); assert.deepEqual(h.faults(), []);
+  });
+  await test('duplicate OK and mixed TV slots are restored exactly without extra edges', () => {
+    for (const original of [bytes(0x28, 0x28, 0x28), bytes(0x28, 0x35, 0x28)]) {
+      const h = harness(true, {}, true); h.report(bytes());
+      const expectedMask = original[5] === 0x35 ? 24 : 16;
+      for (let i = 0; i < 3; i++) {
+        const down = h.report(original);
+        assert.deepEqual(down.delivered, bytes()); assert.deepEqual(down.call.memory.data, original);
+      }
+      assert.deepEqual(h.masks(), [0, expectedMask, expectedMask, expectedMask]);
+      assert.equal(h.diagnostics().filter(x => x === 'ok_report_cleared').length, 1);
+    }
+  });
+  await test('mixed partial write failure restores both configured usages without publishing either', () => {
+    const h = harness(true, {}, true); h.report(bytes());
+    const original = bytes(0x35, 0x28, 0x52);
+    const down = h.report(original, {memory: {failWriteAt: 2}});
+    assert.deepEqual(down.call.memory.data, original);
+    assert.deepEqual(h.masks(), [0]); assert.deepEqual(h.faults(), ['ok_report_write_failed']);
+    assert(h.writes.every(write => write.offset === 3 || write.offset === 5));
+  });
+  await test('OK-only write, readback and restore failures cancel without semantic DOWN', async () => {
+    for (const [memory, reason] of [
+      [{failWriteAt: 1}, 'ok_report_write_failed'],
+      [{ignoreWriteAt: 1}, 'ok_report_verify_failed'],
+      [{failReadAt: 2}, 'report_read_failed'],
+      [{failWriteAt: 2}, 'ok_report_restore_failed'],
+    ]) {
+      const h = harness(false, {}, true); h.report(bytes());
+      h.report(bytes(0x28), {memory});
+      assert.deepEqual(h.masks(), [0]); assert.deepEqual(h.faults(), [reason]);
+      assertStopped(await h.rpc.stop(), reason === 'ok_report_restore_failed' ? reason : null);
+    }
+  });
+  await test('OK cannot overwrite unrelated memory during failed clear verification', async () => {
+    const h = harness(false, {}, true); h.report(bytes());
+    const down = h.report(bytes(0x28), {memory: {afterWrite(memory, count) {
+      if (count === 1) memory.data[5] = 0x52;
+    }}});
+    assert.equal(down.call.memory.data[5], 0x52);
+    assert.equal(h.writes.length, 1); assert.deepEqual(h.masks(), [0]);
+    assertStopped(await h.rpc.stop(), 'ok_report_restore_failed');
+  });
+  await test('unsuccessful OK DOWN and UP never become mapped edges or a synthetic click', () => {
+    for (const status of [0x103, 0xc0000001]) for (const release of [false, true]) {
+      const h = harness(false, {}, true); h.report(bytes());
+      if (release) h.report(bytes(0x28));
+      h.report(release ? bytes() : bytes(0x28), {status});
+      assert.deepEqual(h.masks(), release ? [0, 16] : [0]);
+      assert.deepEqual(h.faults(), ['ok_report_submit_failed']);
+    }
+  });
+  await test('OK stop, posted stop and lease expiry drain restoration without a normal release', async () => {
+    for (const cancel of ['rpc', 'post', 'expiry']) {
+      const h = harness(false, {}, true); h.report(bytes()); h.report(bytes(0x28));
+      const call = h.enter(bytes(0x28));
+      if (cancel === 'post') h.postedStop();
+      if (cancel === 'expiry') { h.clock = 10001; h.timer(); }
+      let settled = false;
+      const pending = h.rpc.stop().then(result => {settled = true; return result;});
+      await Promise.resolve(); assert.equal(settled, false); assert.equal(h.detached, false);
+      h.leave(call);
+      assertStopped(await pending); assert.deepEqual(call.memory.data, bytes(0x28));
+      assert.deepEqual(h.masks(), [0, 16]);
+    }
+  });
+  await test('OK-only overlap is rejected before artificial neutral can be read', async () => {
+    const h = harness(false, {}, true); h.report(bytes());
+    const memory = {data: bytes(0x28)};
+    const outer = h.enter(memory), reads = h.reads;
+    const inner = h.enter(memory); assert.equal(h.reads - reads, 2);
+    h.leave(inner); assert.equal(h.detached, false);
+    h.leave(outer); assert.deepEqual(memory.data, bytes(0x28));
+    assert.deepEqual(h.faults(), ['ok_report_overlap']); assert.deepEqual(h.masks(), [0]);
+    assertStopped(await h.rpc.stop());
+  });
+  await test('lost source cancels OK-only and mixed owned reports', () => {
+    for (const tv of [false, true]) {
+      const h = harness(tv, {}, true); h.report(bytes()); h.report(bytes(0x28, 0x35));
+      h.ready = false; assert.equal(h.rpc.renew(), false);
+      assert.deepEqual(h.faults(), ['ok_source_lost']);
+      assert.equal(h.masks().at(-1), tv ? 24 : 16);
+    }
+  });
+  await test('other report IDs preserve OK hold while invalid same-ID frames cancel', () => {
+    const h = harness(false, {}, true); h.report(bytes()); h.report(bytes(0x28));
+    const other = [2, 0, 0, 0x28, 0, 0, 0, 0, 0];
+    assert.deepEqual(h.report(other).delivered, other);
+    assert.deepEqual(h.masks(), [0, 16]);
+    h.report([1, 1, 0, 0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(h.faults(), ['ok_report_invalid']); assert.deepEqual(h.masks(), [0, 16]);
   });
   console.log(`observer checks passed: ${passed}`);
 }

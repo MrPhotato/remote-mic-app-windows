@@ -9,11 +9,15 @@ import guard
 FRIDA_VERSION = "17.18.0"
 CAPTURE_DIAGNOSTICS = frozenset({"capture_attach_started", "capture_attached", "capture_loaded",
                                  "tv_capture_ready", "tv_report_cleared", "tv_preheld_passthrough",
-                                 "tv_buffer_changed"})
+                                 "tv_buffer_changed", "ok_capture_ready", "ok_report_cleared",
+                                 "ok_preheld_passthrough", "ok_buffer_changed"})
 CAPTURE_FAULTS = frozenset({"report_read_failed", "lease_expired", "source_initialization_failed",
                           "client_cleanup", "tv_report_write_failed", "tv_report_verify_failed",
                           "tv_report_submit_failed", "tv_report_restore_failed", "tv_source_lost",
-                          "tv_report_overlap", "tv_report_invalid"})
+                          "tv_report_overlap", "tv_report_invalid",
+                          "ok_report_write_failed", "ok_report_verify_failed",
+                          "ok_report_submit_failed", "ok_report_restore_failed", "ok_source_lost",
+                          "ok_report_overlap", "ok_report_invalid"})
 
 
 class CaptureError(RuntimeError):
@@ -23,15 +27,18 @@ class CaptureError(RuntimeError):
 
 
 class FridaCapture:
-    def __init__(self, device_id, tv_enabled):
+    def __init__(self, device_id, tv_enabled, ok_enabled):
         if type(tv_enabled) is not bool:
             raise CaptureError("invalid_tv_configuration")
+        if type(ok_enabled) is not bool:
+            raise CaptureError("invalid_ok_configuration")
         import frida
         if frida.__version__ != FRIDA_VERSION:
             raise CaptureError("frida_version_mismatch")
         self.frida = frida
         self.device_id = device_id
         self.tv_enabled = tv_enabled
+        self.ok_enabled = ok_enabled
         self.target = self.session = self.script = None
         self.events = queue.Queue(maxsize=256)
         self.failed = threading.Event()
@@ -94,7 +101,9 @@ class FridaCapture:
             return
         payload = message["payload"]
         kind = payload.get("type")
-        if kind == "mask" and type(payload.get("mask")) is int and 0 <= payload["mask"] <= (15 if self.tv_enabled else 7):
+        allowed = 7 | (8 if self.tv_enabled else 0) | (16 if self.ok_enabled else 0)
+        if (kind == "mask" and type(payload.get("mask")) is int and payload["mask"] >= 0
+                and not payload["mask"] & ~allowed):
             self._put(("mask", payload["mask"]))
         elif kind == "loaded":
             self._put(("diagnostic", "capture_loaded"))
@@ -119,6 +128,7 @@ class FridaCapture:
         source = (root / "source_binding.js").read_text(encoding="utf-8") + "\n" + (root / "observer.js").read_text(encoding="utf-8")
         source = source.replace("__SELECTED_SOURCE_KEY__", json.dumps(self.target.binding_key()))
         source = source.replace("__TV_CAPTURE_ENABLED__", json.dumps(self.tv_enabled))
+        source = source.replace("__OK_CAPTURE_ENABLED__", json.dumps(self.ok_enabled))
         self.script = self._call(lambda: self.session.create_script(source),
                                  failure_code="capture_script_create_failed")
         self.script.on("message", self._on_message)
@@ -175,6 +185,7 @@ class FridaCapture:
                 if (not isinstance(result, dict) or set(result) != {"quiescent", "cleanup_error"} or
                         result["quiescent"] is not True or
                         result["cleanup_error"] not in (None, "tv_report_restore_failed",
+                                                         "ok_report_restore_failed",
                                                          "capture_cleanup_failed")):
                     raise CaptureError("script_stop_failed")
                 if result["cleanup_error"] is not None:

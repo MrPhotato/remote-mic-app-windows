@@ -297,7 +297,7 @@ describe("RC003 enhancement control", () => {
     expect(view.get("button").attributes("disabled")).toBeUndefined();
     expect(view.text()).toContain("需要管理员权限");
     expect(view.text()).toContain("每次启动无线麦后需手动开启");
-    expect(view.text()).toContain("按键动作可在「按键映射」中设置");
+    expect(view.text()).toContain("让确认键长按只执行设定动作");
     expect(view.text()).not.toContain("原始行为");
   });
 

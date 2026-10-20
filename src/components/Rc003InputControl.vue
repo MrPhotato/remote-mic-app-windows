@@ -166,7 +166,7 @@ onUnmounted(() => {
       </button>
     </div>
     <p :id="permissionId" class="permission-note"><strong>RC003 · 需要管理员权限</strong>。开启时请在 Windows 授权提示中确认。</p>
-    <p class="muted">启用返回、音量＋/－，并防止 TV 映射时多输入字符。每次启动无线麦后需手动开启。按键动作可在「按键映射」中设置。</p>
+    <p class="muted">启用返回、音量＋/－，让确认键长按只执行设定动作，并防止 TV 键多输入字符。每次启动无线麦后需手动开启。</p>
     <p v-if="!modelConfirmed" class="muted">尚未确认遥控器型号，按键增强暂不可用；型号确认后会自动更新。</p>
     <p v-else-if="!available" class="muted">请在 Windows 应用中启用按键增强。</p>
     <p v-else-if="active && !connected || status.phase === 'waiting' && status.lastError === 'waiting_for_connection'" class="muted">正在等待遥控器连接恢复，请稍候。</p>
@@ -176,7 +176,7 @@ onUnmounted(() => {
       <button type="button" class="secondary-button" @click="reopenNeutralPrompt">查看提示</button>
     </div>
     <p v-else-if="status.phase === 'waiting'" class="muted">正在准备或恢复按键增强，请稍候。</p>
-    <p v-else-if="status.phase === 'ready'" class="muted">返回和音量键已可使用。</p>
+    <p v-else-if="status.phase === 'ready'" class="muted">按键动作可在下方设置。关闭增强前请先松开遥控器按键。</p>
     <p v-if="errorMessage" class="error-text" role="alert">{{ errorMessage }}</p>
     <p v-else-if="readError" class="error-text" role="alert">暂时无法读取按键增强状态，正在重试。</p>
     <dialog ref="neutralDialog" class="neutral-dialog" :aria-labelledby="neutralTitleId" :aria-describedby="neutralDescriptionId" @cancel.prevent="dismissNeutralPrompt">

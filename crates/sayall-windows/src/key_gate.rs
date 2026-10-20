@@ -215,6 +215,8 @@ mod windows_impl {
     static ENABLED: AtomicBool = AtomicBool::new(false);
     static MAPPED_MASK: AtomicU64 = AtomicU64::new(0);
     static LISTENER_ACTIVE: AtomicBool = AtomicBool::new(false);
+    // Source capture owns the selected RC003 report, never a global Enter VK.
+    static RC003_OK_CAPTURE: AtomicBool = AtomicBool::new(false);
     static SWALLOWED_EDGES: AtomicU64 = AtomicU64::new(0);
     static LEAKED_DOWNS: AtomicU64 = AtomicU64::new(0);
     static ARMED_UNTIL_MS: [AtomicU64; ALL_BUTTONS.len()] = {
@@ -269,6 +271,9 @@ mod windows_impl {
     }
 
     fn armed(button: RemoteButton) -> bool {
+        if button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst) {
+            return false;
+        }
         let until = ARMED_UNTIL_MS[button.ordinal()].load(Ordering::Relaxed);
         until != 0 && now_ms() < until
     }
@@ -323,6 +328,21 @@ mod windows_impl {
     /// 条目在 UP 沿必定清除——泄漏污染不跨按住残留。
     pub fn take_up_pairing(pairing: &mut HashMap<(u16, u16), bool>, key: (u16, u16)) -> bool {
         pairing.remove(&key).unwrap_or(false)
+    }
+
+    fn captured_ok_pairing(
+        pairing: &mut HashMap<(u16, u16), bool>,
+        key: (u16, u16),
+        is_key_up: bool,
+    ) -> bool {
+        if is_key_up {
+            // An old swallowed DOWN still owns its UP. A leaked/repeated DOWN
+            // poisons ownership and must keep its UP visible to Windows.
+            take_up_pairing(pairing, key)
+        } else {
+            pairing.insert(key, false);
+            false
+        }
     }
 
     fn feed_edge(button: RemoteButton, is_pressed: bool) {
@@ -426,6 +446,20 @@ mod windows_impl {
         let Some(button) = button_for_keyboard(vk_code as u16, make_code) else {
             return false;
         };
+        if button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst) {
+            let swallow = HOLD_PAIRING.with(|pairing| {
+                captured_ok_pairing(
+                    &mut pairing.borrow_mut(),
+                    (vk_code as u16, make_code),
+                    is_key_up,
+                )
+            });
+            if swallow {
+                SWALLOWED_EDGES.fetch_add(1, Ordering::Relaxed);
+                feed_edge(button, false);
+            }
+            return swallow;
+        }
         if !gate_ready(button) {
             // 未映射按键：不吞、不记配对（原始行为透传）。
             return false;
@@ -463,6 +497,9 @@ mod windows_impl {
             }
             became_armed
         };
+        // Capture can become active during the existing bounded wait.
+        let attributed =
+            attributed && !(button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst));
 
         // 配对状态：true=本次按住的 DOWN 全部被吞（供 UP 沿裁决）。
         HOLD_PAIRING.with(|pairing| {
@@ -619,6 +656,13 @@ mod windows_impl {
     /// 接管物理 Home/OEM_3；这两键始终由已归因的 Raw Input 路径处理。
     pub fn set_remote_connected(_connected: bool) {}
 
+    pub fn set_rc003_ok_capture(active: bool) {
+        RC003_OK_CAPTURE.store(active, Ordering::SeqCst);
+        // Neither entering nor leaving the source lease inherits predictive
+        // attribution from a prior remote Enter.
+        ARMED_UNTIL_MS[RemoteButton::Ok.ordinal()].store(0, Ordering::SeqCst);
+    }
+
     /// Raw Input 监听器起止：监听器停止时门控不吞任何键（无归因来源）。
     pub fn set_listener_active(active: bool) {
         LISTENER_ACTIVE.store(active, Ordering::Relaxed);
@@ -632,11 +676,19 @@ mod windows_impl {
     /// 监听器观察到遥控器按键活动（HID 报文或透传键盘事件）后武装该按键：
     /// 其键盘候选键在武装宽限内可被吞键归因。
     pub fn arm_button(button: RemoteButton, grace_ms: u64) {
-        if matches!(button, RemoteButton::Home | RemoteButton::Tv) {
+        if !can_arm_button(button, RC003_OK_CAPTURE.load(Ordering::SeqCst)) {
             return;
         }
         let until = now_ms() + grace_ms.max(1);
         ARMED_UNTIL_MS[button.ordinal()].store(until, Ordering::Relaxed);
+        if button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst) {
+            ARMED_UNTIL_MS[button.ordinal()].store(0, Ordering::SeqCst);
+        }
+    }
+
+    fn can_arm_button(button: RemoteButton, rc003_ok_capture: bool) -> bool {
+        !matches!(button, RemoteButton::Home | RemoteButton::Tv)
+            && !(button == RemoteButton::Ok && rc003_ok_capture)
     }
 
     /// 注册被吞键盘边沿的投递端（映射引擎）。
@@ -684,6 +736,42 @@ mod windows_impl {
     mod filter_alias_tests {
         use super::*;
         use windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT_FLAGS;
+
+        #[test]
+        fn rc003_ok_source_capture_keeps_physical_enter_and_repeat_edges_visible() {
+            let key = (0x0D, 0x1C);
+            let mut pairing = HashMap::new();
+            for _ in 0..3 {
+                assert!(!captured_ok_pairing(&mut pairing, key, false));
+            }
+            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            assert!(pairing.is_empty());
+            // App/helper start while a physical key is already held owns no DOWN.
+            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            assert!(!direct_attributed(0x0D));
+            // Both raw keyboard and HID listeners share this arming guard.
+            assert!(!can_arm_button(RemoteButton::Ok, true));
+            assert!(can_arm_button(RemoteButton::Ok, false));
+            assert!(can_arm_button(RemoteButton::Up, true));
+            assert!(!can_arm_button(RemoteButton::Tv, true));
+        }
+
+        #[test]
+        fn rc003_ok_source_capture_preserves_old_pairing_across_enable_and_stop() {
+            let key = (0x0D, 0x1C);
+            let mut pairing = HashMap::from([(key, true)]);
+            // A legacy DOWN swallowed before capture started still needs its UP.
+            assert!(captured_ok_pairing(&mut pairing, key, true));
+            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            pairing.insert(key, false);
+            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            pairing.insert(key, true);
+            // A physical repeat delivered during the transition poisons ownership.
+            assert!(!captured_ok_pairing(&mut pairing, key, false));
+            // Capture has stopped: the original gate uses the same pairing map.
+            assert!(!take_up_pairing(&mut pairing, key));
+            assert!(pairing.is_empty());
+        }
 
         #[test]
         fn filter_alias_edges_never_enter_identity_free_hook_pairing() {
@@ -787,9 +875,9 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::{
     arm_button, configure, decide, is_gate_thread_alive, leaked_down_count, listener_active,
-    set_edge_sink, set_listener_active, set_remote_connected, set_shortcut_capture_active,
-    set_shortcut_capture_sink, swallowed_edge_count, KeyGate, HOLD_LEAKED, HOLD_NONE,
-    HOLD_SWALLOWED_ALL,
+    set_edge_sink, set_listener_active, set_rc003_ok_capture, set_remote_connected,
+    set_shortcut_capture_active, set_shortcut_capture_sink, swallowed_edge_count, KeyGate,
+    HOLD_LEAKED, HOLD_NONE, HOLD_SWALLOWED_ALL,
 };
 
 #[cfg(not(windows))]
@@ -811,6 +899,7 @@ mod fallback {
 
     pub fn configure(_enabled: bool, _mapped_mask: u64) {}
     pub fn set_remote_connected(_connected: bool) {}
+    pub fn set_rc003_ok_capture(_active: bool) {}
     pub fn set_listener_active(_active: bool) {}
     pub fn arm_button(_button: RemoteButton, _grace_ms: u64) {}
     pub fn set_edge_sink(_sink: std::sync::Arc<dyn Fn(ButtonEdge) + Send + Sync>) {}

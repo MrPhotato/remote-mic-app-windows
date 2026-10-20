@@ -17,7 +17,7 @@ from protocol import LineDecoder, Mailbox, ProtocolError, PROTOCOL_VERSION, enco
 
 CLEANUP_ERROR_BITS = {"script_stop_failed": 1, "script_unload_failed": 2,
                       "session_detach_failed": 4, "target_close_failed": 8,
-                      "tv_report_restore_failed": 16}
+                      "tv_report_restore_failed": 16, "ok_report_restore_failed": 16}
 
 
 def safe_code(error):
@@ -118,7 +118,7 @@ class Runtime:
                 self.next_attempt = self.clock() + 2.0
                 return
             self.next_attempt = 0.0
-        selection = (lease.generation, lease.enabled, lease.device_id, lease.tv_enabled)
+        selection = (lease.generation, lease.enabled, lease.device_id, lease.tv_enabled, lease.ok_enabled)
         if selection != self.selection:
             if not self.cleanup("selection_changed"):
                 self.next_attempt = self.clock() + 2.0
@@ -136,8 +136,8 @@ class Runtime:
             if self.capture is None:
                 if self.clock() < self.next_attempt:
                     return
-                self.state.begin(lease.generation, lease.tv_enabled)
-                capture = self.factory(lease.device_id, lease.tv_enabled)
+                self.state.begin(lease.generation, lease.tv_enabled, lease.ok_enabled)
+                capture = self.factory(lease.device_id, lease.tv_enabled, lease.ok_enabled)
                 with self.capture_lock:
                     current = self.mailbox.snapshot()
                     register = not self.mailbox.stopped.is_set() and current == lease
