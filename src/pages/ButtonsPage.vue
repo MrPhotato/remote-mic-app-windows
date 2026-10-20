@@ -1,3 +1,8 @@
+<script lang="ts">
+// Returning immediately to this page should not replay its entrance.
+let lastCanvasDepartureAt = Number.NEGATIVE_INFINITY;
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -84,6 +89,16 @@ const REMOTE_TOP = (CANVAS_HEIGHT - REMOTE_HEIGHT) / 2;
 
 const canvasEl = ref<HTMLElement | null>(null);
 const canvasWidth = ref(CANVAS_MIN_WIDTH);
+const canvasMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+const canvasEntryReason = canvasMotion?.matches
+  ? "reduced_motion"
+  : performance.now() - lastCanvasDepartureAt < 300
+    ? "rapid_return_without_animation"
+    : "immediate_photo_short_sequence";
+const canvasEntering = ref(canvasEntryReason === "immediate_photo_short_sequence");
+function finishCanvasEntrance(): void {
+  canvasEntering.value = false;
+}
 const cardWidth = computed(() =>
   Math.min(300, Math.max(270, (canvasWidth.value - 260) / 2)),
 );
@@ -954,6 +969,7 @@ onMounted(() => {
   // 首帧布局不能等待配置、应用扫描或事件订阅；它们可能在页面淡入后才完成。
   const canvas = canvasEl.value;
   if (!canvas) return;
+  canvasMotion?.addEventListener("change", finishCanvasEntrance);
   canvasWidth.value = Math.max(CANVAS_MIN_WIDTH, canvas.clientWidth);
   if (typeof ResizeObserver !== "undefined") {
     resizeObserver = new ResizeObserver((entries) => {
@@ -968,6 +984,12 @@ onMounted(() => {
     phase: "completed",
     result: "passed",
     reason: "measured_before_backend_setup",
+  });
+  reportFrontendEvent({
+    event: "buttons_canvas_entry",
+    phase: "started",
+    result: "passed",
+    reason: canvasEntryReason,
   });
 });
 
@@ -1068,6 +1090,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  lastCanvasDepartureAt = performance.now();
+  canvasMotion?.removeEventListener("change", finishCanvasEntrance);
   unmounted = true;
   releasePageResources();
   reportFrontendEvent({
@@ -1108,7 +1132,15 @@ onUnmounted(() => {
       按键配置读取失败，请重试。
       <button type="button" class="secondary-button" @click="initializeMappings">重新读取</button>
     </p>
-    <div ref="canvasEl" class="mapping-canvas" :aria-busy="!mappingsReady && !mappingLoadFailed" :style="{ height: `${CANVAS_HEIGHT}px` }">
+    <div
+      ref="canvasEl"
+      class="mapping-canvas"
+      :class="{ 'mapping-canvas-entering': canvasEntering }"
+      :aria-busy="!mappingsReady && !mappingLoadFailed"
+      :style="{ height: `${CANVAS_HEIGHT}px` }"
+      @pointerdown="finishCanvasEntrance"
+      @focusin="finishCanvasEntrance"
+    >
       <svg
         class="mapping-connections"
         :width="canvasWidth"
@@ -1120,6 +1152,7 @@ onUnmounted(() => {
             :d="connectionPath(placement)"
             :class="{ selected: selectedButton === placement.button, active: activeButtons.has(placement.button) }"
             fill="none"
+            pathLength="1"
           />
           <polygon
             :points="arrowPolygon(placement)"
@@ -1130,12 +1163,21 @@ onUnmounted(() => {
           :d="connectionPath(VOICE_PLACEMENT)"
           :class="{ active: voiceActive }"
           fill="none"
+          pathLength="1"
         />
         <polygon :points="arrowPolygon(VOICE_PLACEMENT)" :class="{ active: voiceActive }" />
       </svg>
 
       <figure class="remote-photo" :style="{ left: `${remoteLeft}px` }">
-        <img src="/RC003-remote-photo@2x.png" alt="小米蓝牙遥控器 2 Pro（RC003）示意图" draggable="false" />
+        <img
+          src="/RC003-remote-photo@2x.png"
+          alt="小米蓝牙遥控器 2 Pro（RC003）示意图"
+          width="202"
+          height="410"
+          loading="eager"
+          fetchpriority="high"
+          draggable="false"
+        />
         <span
           v-for="placement in PLACEMENTS"
           :key="placement.button"
@@ -1169,6 +1211,7 @@ onUnmounted(() => {
         }"
         :style="{ top: `${cardTop(placement)}px`, width: `${cardWidth}px` }"
         @click="selectButton(placement.button)"
+        @animationend.self="finishCanvasEntrance"
       >
         <div class="mapping-card-title">
           <svg class="mapping-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1216,6 +1259,7 @@ onUnmounted(() => {
         class="mapping-card voice-card right"
         :class="{ active: voiceActive }"
         :style="{ top: `${cardTop(VOICE_PLACEMENT)}px`, width: `${cardWidth}px` }"
+        @animationend.self="finishCanvasEntrance"
       >
         <div class="mapping-card-title">
           <svg class="mapping-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1684,6 +1728,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--warning-surface-soft);
   font-size: 10.5px;
+  line-height: 12px;
   color: var(--warning-text);
 }
 .back-hardware-note { margin: 8px 0; font-size: 12.5px; line-height: 1.5; }

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { defineComponent, h } from "vue";
 import Rc003InputControl from "./Rc003InputControl.vue";
+import Rc003NeutralPrompt from "./Rc003NeutralPrompt.vue";
+import { provideRc003InputState } from "../lib/rc003-input-state";
 import { getRc003InputStatus, rc003InputAvailable, startRc003Input, stopRc003Input, stoppedRc003InputStatus, type Rc003InputStatus } from "../lib/rc003-input";
 import { reportFrontendEvent } from "../lib/frontend-diagnostics";
 
@@ -26,11 +29,27 @@ const closeDialog = vi.fn(function (this: HTMLDialogElement) {
 let nextNeutralGeneration = 100;
 const snapshot = (phase: Rc003InputStatus["phase"], generation = 1): Rc003InputStatus => ({ ...stoppedRc003InputStatus(), phase, generation });
 const neutralSnapshot = (generation: number): Rc003InputStatus => ({ ...snapshot("waiting", generation), lastError: "awaiting_neutral" });
+const MonitorHarness = defineComponent({
+  props: {
+    remoteModel: { type: String, default: "rc003" },
+    connected: { type: Boolean, default: true },
+    showControl: { type: Boolean, default: true },
+    connectionGeneration: { type: Number, default: 1 },
+    statusAvailable: { type: Boolean, default: true },
+  },
+  setup(props) {
+    provideRc003InputState(() => props);
+    return () => h("main", [
+      props.showControl ? h(Rc003InputControl, { remoteModel: props.remoteModel, connected: props.connected }) : null,
+      h(Rc003NeutralPrompt),
+    ]);
+  },
+});
 async function render(remoteModel = "rc003", connected = true): Promise<VueWrapper> {
   const host = document.createElement("div");
   document.body.appendChild(host);
   hosts.push(host);
-  wrapper = mount(Rc003InputControl, { props: { remoteModel, connected }, attachTo: host });
+  wrapper = mount(MonitorHarness, { props: { remoteModel, connected }, attachTo: host });
   await flushPromises();
   return wrapper;
 }
@@ -106,21 +125,130 @@ describe("RC003 enhancement control", () => {
     expect(reportFrontendEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "rc003_neutral_prompt", phase: "hidden", result: "passed" }));
   });
 
-  it("does not automatically repeat a reminder when navigating to another page with the same generation", async () => {
+  it("keeps the same global reminder and single poller across page navigation", async () => {
     vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(++nextNeutralGeneration));
     const first = await render();
     const oldDialog = first.get(".neutral-dialog").element as HTMLDialogElement;
-    first.unmount();
-    wrapper = undefined;
-    expect(oldDialog.open).toBe(false);
-    const nextPage = await render();
-    expect((nextPage.get(".neutral-dialog").element as HTMLDialogElement).open).toBe(false);
-    expect(nextPage.get(".neutral-inline").text()).toContain("查看提示");
+    await first.setProps({ showControl: false });
+    expect(oldDialog.open).toBe(true);
+    expect(first.find('[role="switch"]').exists()).toBe(false);
     await vi.advanceTimersByTimeAsync(2000);
     expect(showModal).toHaveBeenCalledOnce();
-    await nextPage.get(".neutral-inline button").trigger("click");
+    expect(getRc003InputStatus).toHaveBeenCalledTimes(3);
+    await first.get(".neutral-dialog button").trigger("click");
+    await first.setProps({ showControl: true });
+    expect((first.get(".neutral-dialog").element as HTMLDialogElement).open).toBe(false);
+    expect(first.get(".neutral-inline").text()).toContain("查看提示");
+    await first.get(".neutral-inline button").trigger("click");
     expect(showModal).toHaveBeenCalledTimes(2);
     expect(stopRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("shows a completed start on another page and closes automatically when ready", async () => {
+    let resolveStart!: (next: Rc003InputStatus) => void;
+    vi.mocked(startRc003Input).mockReturnValueOnce(new Promise(resolve => { resolveStart = resolve; }));
+    const view = await render();
+    await view.get('[role="switch"]').trigger("click");
+    await view.setProps({ showControl: false });
+    const generation = ++nextNeutralGeneration;
+    resolveStart(neutralSnapshot(generation));
+    await flushPromises();
+    const dialog = view.get(".neutral-dialog").element as HTMLDialogElement;
+    expect(dialog.open).toBe(true);
+    expect(view.find('[role="switch"]').exists()).toBe(false);
+    vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("ready", generation));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(dialog.open).toBe(false);
+    await view.setProps({ showControl: true });
+    expect(view.get('[role="status"]').text()).toBe("增强已就绪");
+    expect(getRc003InputStatus).toHaveBeenCalledTimes(2);
+    expect(startRc003Input).toHaveBeenCalledOnce();
+    expect(stopRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("rejects in-flight reads after a same-model connection change and refreshes the current prompt", async () => {
+    const generation = ++nextNeutralGeneration;
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(generation));
+    const view = await render();
+    const dialog = view.get(".neutral-dialog").element as HTMLDialogElement;
+    let resolveRead!: (next: Rc003InputStatus) => void;
+    vi.mocked(getRc003InputStatus).mockReturnValueOnce(new Promise(resolve => { resolveRead = resolve; }));
+    await vi.advanceTimersByTimeAsync(1000);
+    await view.setProps({ connectionGeneration: 2, showControl: false });
+    expect(dialog.open).toBe(false);
+    resolveRead(neutralSnapshot(generation + 100));
+    await flushPromises();
+    expect(dialog.open).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(dialog.open).toBe(true); // Fresh current state can resume an interrupted visible prompt.
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(generation + 1));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(dialog.open).toBe(true);
+    expect(showModal).toHaveBeenCalledTimes(2);
+    expect(stopRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("hides on unavailable app runtime and does not repeat the same generation after recovery", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(++nextNeutralGeneration));
+    const view = await render();
+    const dialog = view.get(".neutral-dialog").element as HTMLDialogElement;
+    await view.setProps({ statusAvailable: false, showControl: false });
+    expect(dialog.open).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    await view.setProps({ statusAvailable: true });
+    await flushPromises();
+    expect(dialog.open).toBe(false);
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(stopRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current helper generation usable when it arrives before the connection snapshot", async () => {
+    const generation = ++nextNeutralGeneration;
+    const view = await render();
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(generation));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(showModal).toHaveBeenCalledOnce();
+    await view.setProps({ connectionGeneration: 2 });
+    await flushPromises();
+    // Both polling orders represent the same helper session. It must remain
+    // available without inventing a relation between the two generation counters.
+    expect(view.get(".neutral-inline").text()).toContain("请按一下方向键并松开");
+    expect((view.get(".neutral-dialog").element as HTMLDialogElement).open).toBe(true);
+    expect(stopRc003Input).not.toHaveBeenCalled();
+  });
+
+  it("preserves a user dismissal across a later connection snapshot", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(++nextNeutralGeneration));
+    const view = await render();
+    await view.get(".neutral-dialog button").trigger("click");
+    await view.setProps({ connectionGeneration: 2 });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((view.get(".neutral-dialog").element as HTMLDialogElement).open).toBe(false);
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(view.get(".neutral-inline").text()).toContain("查看提示");
+  });
+
+  it("does not resume a completed reminder when an ordinary same-generation poll waits again", async () => {
+    const generation = ++nextNeutralGeneration;
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(generation));
+    const view = await render();
+    vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("ready", generation));
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(generation));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((view.get(".neutral-dialog").element as HTMLDialogElement).open).toBe(false);
+    expect(showModal).toHaveBeenCalledOnce();
+  });
+
+  it("never regresses to a lower helper generation", async () => {
+    const generation = ++nextNeutralGeneration;
+    vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("ready", generation));
+    const view = await render();
+    vi.mocked(getRc003InputStatus).mockResolvedValue(neutralSnapshot(generation - 1));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(view.get('[role="status"]').text()).toBe("增强已就绪");
+    expect(showModal).not.toHaveBeenCalled();
   });
 
   it("hides on read errors without repeating the same-generation reminder on recovery", async () => {
@@ -426,7 +554,7 @@ describe("RC003 enhancement control", () => {
     expect(startRc003Input).not.toHaveBeenCalled();
   });
 
-  it("cleans up polling on navigation without stopping the user's enhancement", async () => {
+  it("cleans up polling when the app unmounts without stopping the user's enhancement", async () => {
     vi.mocked(getRc003InputStatus).mockResolvedValue(snapshot("ready"));
     await render();
     wrapper!.unmount();

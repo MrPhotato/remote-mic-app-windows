@@ -1081,6 +1081,11 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   cursor: pointer;
   transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
+.mapping-card:not(.voice-card) {
+  display: grid;
+  grid-template-rows: 16px minmax(0, 1fr);
+  row-gap: 4px;
+}
 .mapping-card.left { left: 0; }
 .mapping-card.right { right: 0; }
 .mapping-card:hover {
@@ -1099,13 +1104,13 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 3px color-mix(in srgb, var(--pressed) 14%, transparent);
 }
 .mapping-card.flashed { box-shadow: 0 0 0 2px var(--pressed-ring); }
-.mapping-card-title { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.mapping-card-title { display: flex; align-items: center; gap: 6px; min-width: 0; line-height: 16px; }
 .mapping-card-title strong { font-size: 13px; font-weight: 650; }
 .mapping-icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--accent-text); }
 .mapping-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 .mapping-cell {
   min-width: 0;
-  padding: 5px 6px;
+  padding: 3px 6px;
   border: 1px solid transparent;
   border-radius: var(--radius-chip);
   background: var(--mapping-neutral);
@@ -1114,12 +1119,12 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   transition: background-color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .mapping-cell:hover { background: var(--accent-surface); border-color: var(--accent-surface-strong); }
-.mapping-cell small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); line-height: 1.2; }
+.mapping-cell small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); line-height: 14px; }
 /* 单行省略（完整文字放 title 悬停提示，Mac 同款 lineLimit(1)+help）。 */
 .mapping-cell span {
   display: block;
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 14px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1144,6 +1149,26 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
 .voice-badge { margin-left: auto; font-size: 11.5px; font-weight: 600; min-height: 20px; padding: 2px 7px; }
 .voice-badge.active { color: var(--pressed-text); background: var(--pressed-surface); border-color: var(--pressed-border); }
 .voice-note { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.35; }
+/* The photo is immediate; only the lines and individual glass cards enter.
+   No ancestor opacity/filter, layout animation, timer or input gate. */
+.mapping-canvas-entering .mapping-connections path {
+  stroke-dasharray: 1;
+  animation: mapping-line-enter 110ms ease-out 20ms backwards;
+}
+.mapping-canvas-entering .mapping-connections polygon {
+  animation: mapping-item-enter 70ms ease-out 70ms backwards;
+}
+.mapping-canvas-entering .mapping-card {
+  animation: mapping-item-enter 140ms ease-out 100ms backwards;
+}
+@keyframes mapping-line-enter {
+  from { opacity: 0; stroke-dashoffset: 1; }
+  to { opacity: 1; stroke-dashoffset: 0; }
+}
+@keyframes mapping-item-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 /* 按住说话时的呼吸光：只在真实语音会话中出现 */
 .voice-card.active {
   border-color: var(--pressed-border);
@@ -1156,7 +1181,10 @@ body.pointer-nav .theme-option:has(input:focus-visible) { outline: none; }
   50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--pressed) 7%, transparent), 0 10px 26px -16px var(--shadow-glass); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .voice-card.active { animation: none; }
+  .voice-card.active,
+  .mapping-canvas-entering .mapping-connections path,
+  .mapping-canvas-entering .mapping-connections polygon,
+  .mapping-canvas-entering .mapping-card { animation: none; }
 }
 .mapping-editor { margin-top: 12px; }
 .mapping-editor h2 { margin: 0 0 3px; }

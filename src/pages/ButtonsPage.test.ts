@@ -526,6 +526,100 @@ describe("buttons mapping page", () => {
     const voiceCard = wrapper.find(".voice-card");
     expect(voiceCard.text()).toContain("语音键");
     expect(voiceCard.text()).toContain("按住说话");
+    expect(wrapper.get(".remote-photo img").attributes()).toMatchObject({
+      src: "/RC003-remote-photo@2x.png",
+      loading: "eager",
+      fetchpriority: "high",
+      width: "202",
+      height: "410",
+    });
+    expect(wrapper.findAll(".mapping-connections path").every(path => path.attributes("pathLength") === "1")).toBe(true);
+  });
+
+  it("keeps prepared actions usable during entrance and immediately reveals them on pointer or focus", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    const initialMappings = await getButtonMappings();
+    let wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    try {
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+      const okCell = wrapper.findAll(".mapping-cell").find(cell => cell.text().includes("Enter"))!;
+      expect(okCell.attributes("disabled")).toBeUndefined();
+      await okCell.trigger("pointerdown");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      await okCell.trigger("click");
+      expect(wrapper.get(".mapping-editor").text()).toContain("Enter");
+      wrapper.unmount();
+      now += 301;
+      wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+      await wrapper.get(".mapping-cell").trigger("focusin");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+    } finally {
+      clock.mockRestore();
+      wrapper.unmount();
+      await flushPromises();
+    }
+  });
+
+  it("skips entrance on a rapid return and does not reintroduce it after completion or resize", async () => {
+    let now = 2_000_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    let notifyResize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { notifyResize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    const initialMappings = await getButtonMappings();
+    let wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    try {
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+      await wrapper.get(".mapping-card").trigger("animationend");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      notifyResize([{ contentRect: { width: 1280 } } as ResizeObserverEntry], {} as ResizeObserver);
+      await flushPromises();
+      expect(wrapper.get(".remote-photo").attributes("style")).toContain("left: 539px");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      wrapper.unmount();
+      now += 100;
+      wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      wrapper.unmount();
+      now += 301;
+      wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+    } finally {
+      clock.mockRestore();
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+      await flushPromises();
+    }
+  });
+
+  it.each([true, false])("honors reduced-motion=%s and finishes entrance when the preference changes", async (reduced) => {
+    let motionChanged!: () => void;
+    const removeListener = vi.fn();
+    vi.stubGlobal("matchMedia", () => ({
+      matches: reduced,
+      addEventListener: (_type: string, listener: () => void) => { motionChanged = listener; },
+      removeEventListener: removeListener,
+    }));
+    const clock = vi.spyOn(performance, "now").mockReturnValue(3_000_000);
+    const initialMappings = await getButtonMappings();
+    const wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    try {
+      expect(wrapper.get(".mapping-canvas").classes().includes("mapping-canvas-entering")).toBe(!reduced);
+      motionChanged();
+      await flushPromises();
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+    } finally {
+      clock.mockRestore();
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+      await flushPromises();
+    }
+    expect(removeListener).toHaveBeenCalledWith("change", motionChanged);
   });
 
   it("does not register listeners or polling after unmounting during initial load", async () => {

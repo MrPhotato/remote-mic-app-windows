@@ -2,6 +2,20 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 2026-10-20 按键页入场与应用级初始化提示
+
+- 先复查本仓库对原 macOS RemoteMappingCanvas / RemoteMappingLayout 的既有布局、
+  0.3.2 首帧几何修正、0.3.4 最新配置准备及 0.2.16 初始化弹窗；沿用原遥控器照片、
+  卡片定位、原生 dialog 和真实中性状态判断，不移植额外外部实现或新增动画依赖。
+- 参考 [Vue Transition](https://vuejs.org/guide/built-ins/transition.html) 的 CSS 开关及嵌套动画边界，
+  进入按键页不叠加整页退出/进入等待；局部短动画不改变玻璃祖先的 opacity。
+  每次仍读取最新按键配置，图片失败不阻塞配置界面。
+- 按 [preload](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload)
+  提前获取已有本地 PNG；不重新生成图片或改变外观。
+- 参考 [Vue 状态共享](https://vuejs.org/guide/scaling-up/state-management.html)，
+  将增强状态和提示生命周期归应用级管理，卡片消费同一来源。只调整前端归属，
+  不生成中性报告、不自动开启增强、不改变权限与硬件处理。
+
 ## 2026-10-20 RC003 确认键原生 Enter 抑制
 
 - 用户明确授权仅将现有 Helper 再扩展到确认键，先做本地验证；范围见 ADR 0003。
