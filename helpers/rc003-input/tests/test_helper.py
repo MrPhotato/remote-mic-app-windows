@@ -75,6 +75,35 @@ class StateTests(unittest.TestCase):
         for mask in (-1, 8, True, '1', None):
             with self.assertRaises(ValueError): self.state.observe(mask)
 
+    def test_each_ordinary_gesture_permission_requires_real_neutral(self):
+        for bit in (1, 2, 4, 32, 64, 128, 256, 512, 1024, 2048, 4096):
+            self.events.clear()
+            self.state.begin(2, False, False, bit)
+            self.state.observe(bit)
+            self.assertFalse(self.state.armed)
+            self.state.observe(0)
+            self.state.observe(bit)
+            self.state.observe(bit)
+            self.state.observe(0)
+            self.assertEqual([e['pressed_mask'] for e in self.events if e['type'] == 'state'],
+                             [0, bit, 0])
+            self.state.observe(bit)
+            before = len(self.events)
+            self.state.stop('gesture_source_lost')
+            self.assertEqual([e['type'] for e in self.events[before:]], ['status'])
+            self.state.begin(3, False, False, bit)
+            self.state.observe(bit)
+            self.assertFalse(self.state.armed)
+
+    def test_gesture_mask_cannot_grant_tv_ok_unknown_or_noninteger_permissions(self):
+        for value in (True, None, '32', 1.0, -1, 8, 16, 0x2000, 0x10000, 0x1fff):
+            with self.assertRaisesRegex(ValueError, 'invalid_gesture_configuration'):
+                self.state.begin(2, False, False, value)
+        self.state.begin(2, True, True, 0x1fe7)
+        self.state.observe(0)
+        self.state.observe(0x1fff)
+        self.assertEqual(self.state.mask, 0x1fff)
+
     def test_tv_held_at_start_is_not_a_neutral_three_key_report(self):
         self.state.begin(2, True)
         for mask in (8, 8, 9, 8):
@@ -143,6 +172,16 @@ class StateTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_gesture_permission_is_required_bounded_and_not_boolean(self):
+        message = dict(type='lease', generation=3, enabled=True, device_id='test',
+                       tv_enabled=False, ok_enabled=False)
+        with self.assertRaises(ProtocolError): decode_line(json.dumps(message).encode())
+        for invalid in (True, False, None, '32', 32.0, -1, 8, 16, 0x2000, 0x10000, 0x1fff):
+            with self.assertRaises(ProtocolError):
+                decode_line(json.dumps({**message, 'gesture_mask': invalid}).encode())
+        for mask in (0, 1, 32, 0x1fe7):
+            self.assertEqual(decode_line(json.dumps({**message, 'gesture_mask': mask}).encode()),
+                             Lease(3, True, 'test', False, False, mask))
     def test_token_and_cli_are_narrow(self):
         self.assertEqual(token_value('a' * 64), 'a' * 64)
         for token in ('a' * 63, 'g' * 64, None, '../script'):
@@ -151,7 +190,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_stream_splits_multiple_and_limits(self):
         parser = LineDecoder()
-        wire = encode(dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False, ok_enabled=False))
+        wire = encode(dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False, ok_enabled=False, gesture_mask=0))
         self.assertEqual(parser.feed(wire[:8]), [])
         self.assertEqual(parser.feed(wire[8:] + b'{"type":"stop"}\n'), [Lease(3, True, 'test', False, False), None])
         with self.assertRaises(ProtocolError): LineDecoder().feed(b'x' * 4096)
@@ -159,10 +198,10 @@ class ProtocolTests(unittest.TestCase):
 
     def test_schema_rejects_arbitrary_operations(self):
         for payload in ({'type': 'exec', 'script': 'x'}, {'type': 'stop', 'pid': 1},
-                        {'type': 'lease', 'generation': True, 'enabled': True, 'device_id': 'x', 'tv_enabled': False, 'ok_enabled': False},
-                        {'type': 'lease', 'generation': -1, 'enabled': False, 'device_id': None, 'tv_enabled': False, 'ok_enabled': False}):
+                        {'type': 'lease', 'generation': True, 'enabled': True, 'device_id': 'x', 'tv_enabled': False, 'ok_enabled': False, 'gesture_mask': 0},
+                        {'type': 'lease', 'generation': -1, 'enabled': False, 'device_id': None, 'tv_enabled': False, 'ok_enabled': False, 'gesture_mask': 0}):
             with self.assertRaises(ProtocolError): decode_line(json.dumps(payload).encode())
-        self.assertEqual(decode_line(b'{"type":"lease","generation":0,"enabled":false,"device_id":null,"tv_enabled":false,"ok_enabled":false}'), Lease(0, False, '', False, False))
+        self.assertEqual(decode_line(b'{"type":"lease","generation":0,"enabled":false,"device_id":null,"tv_enabled":false,"ok_enabled":false,"gesture_mask":0}'), Lease(0, False, '', False, False))
 
     def test_lease_expiration_and_generation_replay(self):
         now = [0.0]
@@ -177,7 +216,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(box.stopped.is_set())
 
     def test_tv_option_is_required_and_must_be_a_boolean(self):
-        message = dict(type='lease', generation=3, enabled=True, device_id='test', ok_enabled=False)
+        message = dict(type='lease', generation=3, enabled=True, device_id='test', ok_enabled=False, gesture_mask=0)
         with self.assertRaises(ProtocolError): decode_line(json.dumps(message).encode())
         for invalid in (None, 0, 1, 'true', []):
             with self.assertRaises(ProtocolError):
@@ -186,7 +225,7 @@ class ProtocolTests(unittest.TestCase):
                          Lease(3, True, 'test', True, False))
 
     def test_ok_option_is_required_boolean_and_not_a_legacy_lease_default(self):
-        message = dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False)
+        message = dict(type='lease', generation=3, enabled=True, device_id='test', tv_enabled=False, gesture_mask=0)
         with self.assertRaises(ProtocolError): decode_line(json.dumps(message).encode())
         for invalid in (None, 0, 1, 'true', []):
             with self.assertRaises(ProtocolError):
@@ -200,6 +239,7 @@ class ProtocolTests(unittest.TestCase):
         box.update(original)
         box.update(original)
         for changed in (Lease(3, True, 'test', True, False), Lease(3, True, 'test', False, True),
+                        Lease(3, True, 'test', False, False, 32),
                         Lease(3, True, 'other', False, False),
                         Lease(3, False, '', False, False)):
             with self.assertRaisesRegex(ProtocolError, 'selection_changed_without_generation'):
@@ -215,10 +255,11 @@ class ProtocolTests(unittest.TestCase):
 
 
 class FakeCapture:
-    def __init__(self, selection, tv_enabled=False, ok_enabled=False):
+    def __init__(self, selection, tv_enabled=False, ok_enabled=False, gesture_mask=0):
         self.selection = selection
         self.tv_enabled = tv_enabled
         self.ok_enabled = ok_enabled
+        self.gesture_mask = gesture_mask
         self.events = []
         self.closes = 0
         self.aborts = 0
@@ -263,6 +304,31 @@ class CaptureDiagnosticsTests(unittest.TestCase):
     def test_loaded_message_exports_only_fixed_diagnostic(self):
         self.capture._on_message({'type': 'send', 'payload': {'type': 'loaded'}}, None)
         self.assertEqual(list(self.capture.drain()), [('diagnostic', 'capture_loaded')])
+
+    def test_gesture_mask_rejected_before_import_or_attach(self):
+        for value in (True, None, '32', 1.0, -1, 8, 16, 0x2000, 0x10000):
+            with self.assertRaisesRegex(CaptureError, 'invalid_gesture_configuration'):
+                FridaCapture('test', False, False, value)
+
+    def test_script_cannot_export_disabled_ordinary_or_forge_extended_diagnostics(self):
+        self.capture.gesture_mask = 32
+        for mask in (0, 7, 32, 39):
+            self.capture._on_message({'type': 'send', 'payload': {'type': 'mask', 'mask': mask}}, None)
+            self.assertEqual(list(self.capture.drain()), [('mask', mask)])
+        for mask in (8, 16, 64, 4096, 0x1fff, True, -1):
+            self.capture._on_message({'type': 'send', 'payload': {'type': 'mask', 'mask': mask}}, None)
+            self.assertEqual(list(self.capture.drain()), [('fault', 'invalid_script_message')])
+        self.capture._on_message({'type': 'send', 'payload': {'type': 'diagnostic',
+                                  'reason': 'gesture_private_text'}}, None)
+        self.assertEqual(list(self.capture.drain()), [('fault', 'invalid_script_message')])
+
+    def test_gesture_restore_failure_is_explicit_cleanup_error(self):
+        script = Mock()
+        self.capture.script = script
+        self.capture.script_load_attempted = True
+        script.exports_sync.stop.return_value = dict(quiescent=True, cleanup_error='gesture_report_restore_failed')
+        self.assertEqual(self.capture.close(), ['gesture_report_restore_failed'])
+        self.assertTrue(self.capture.closed)
 
     def test_tv_messages_are_narrow_and_respect_configuration(self):
         self.capture._on_message({'type': 'send', 'payload': {'type': 'mask', 'mask': 8}}, None)
@@ -503,8 +569,8 @@ class RuntimeTests(unittest.TestCase):
         self.now = [0.0]
         self.box = Mailbox(lambda: self.now[0])
         self.events, self.captures = [], []
-        def factory(selection, tv_enabled, ok_enabled):
-            capture = FakeCapture(selection, tv_enabled, ok_enabled)
+        def factory(selection, tv_enabled, ok_enabled, gesture_mask):
+            capture = FakeCapture(selection, tv_enabled, ok_enabled, gesture_mask)
             self.captures.append(capture)
             return capture
         self.runtime = Runtime(self.box, self.events.append, factory, lambda: self.now[0])
@@ -564,8 +630,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_failed_start_preserves_stages_and_discards_pending_input(self):
         original_factory = self.runtime.factory
-        def factory(device, tv_enabled, ok_enabled):
-            capture = original_factory(device, tv_enabled, ok_enabled)
+        def factory(device, tv_enabled, ok_enabled, gesture_mask):
+            capture = original_factory(device, tv_enabled, ok_enabled, gesture_mask)
             def start():
                 capture.events = [('diagnostic', 'capture_attach_started'), ('mask', 0)]
                 raise CaptureError('capture_attach_failed')
@@ -594,6 +660,30 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(self.runtime.state.armed)
         self.assertEqual(self.runtime.state.generation, 2)
         self.assertEqual(self.events[-1]['reason'], 'awaiting_neutral')
+
+    def test_gesture_change_cancels_held_source_before_generation_rebind(self):
+        self.runtime.publish_lease(Lease(1, True, 'first', False, False, 32))
+        self.runtime.step()
+        first = self.captures[0]
+        self.assertEqual(first.gesture_mask, 32)
+        first.events = [('mask', 0), ('mask', 32)]
+        self.runtime.step()
+        boundary = len(self.events)
+        self.runtime.publish_lease(Lease(2, True, 'first', False, False, 512))
+        first.events = [('mask', 0), ('mask', 32)]  # Late old source cannot release/click.
+        self.runtime.step()
+        self.assertEqual(first.aborts, 1)
+        self.assertEqual(first.closes, 1)
+        self.assertEqual(self.captures[1].gesture_mask, 512)
+        self.assertFalse(self.runtime.state.armed)
+        self.assertFalse(any(e['type'] == 'state' for e in self.events[boundary:]))
+        self.captures[1].events = [('mask', 512)]
+        self.runtime.step()
+        self.assertFalse(self.runtime.state.armed)
+        self.captures[1].events = [('mask', 0), ('mask', 512), ('mask', 0)]
+        self.runtime.step()
+        self.assertEqual([e['pressed_mask'] for e in self.events[boundary:] if e['type'] == 'state'],
+                         [0, 512, 0])
 
     def test_failed_revalidation_cleans_and_backs_off(self):
         self.box.update(Lease(1, True, 'first', False, False))
@@ -673,8 +763,8 @@ class RuntimeTests(unittest.TestCase):
     def test_capture_created_for_replaced_lease_never_attaches(self):
         factory_entered, finish_factory = threading.Event(), threading.Event()
         original_factory = self.runtime.factory
-        def delayed_factory(device, tv_enabled, ok_enabled):
-            capture = original_factory(device, tv_enabled, ok_enabled)
+        def delayed_factory(device, tv_enabled, ok_enabled, gesture_mask):
+            capture = original_factory(device, tv_enabled, ok_enabled, gesture_mask)
             if device == 'first':
                 factory_entered.set()
                 self.assertTrue(finish_factory.wait(1))
@@ -882,7 +972,7 @@ class MainExitTests(unittest.TestCase):
         runtime.assert_not_called()
         self.assertEqual(json.loads(sock.sendall.call_args_list[-1].args[0])['code'], 'capture_owner_busy')
 
-    def test_hello_uses_protocol_three(self):
+    def test_hello_uses_protocol_four(self):
         runtime = Mock(final_cleanup_mask=0)
         sock = Mock()
         sock.getsockname.return_value = ('127.0.0.1', 12345)
@@ -893,7 +983,7 @@ class MainExitTests(unittest.TestCase):
             self.assertEqual(main(['--port', '1234', '--token', 'a'*64, '--parent-pid', '1']), 0)
         hello = json.loads(sock.sendall.call_args_list[0].args[0])
         self.assertEqual(hello['type'], 'hello')
-        self.assertEqual(hello['protocol'], 3)
+        self.assertEqual(hello['protocol'], 4)
 
     def test_main_reports_cleanup_mask_and_never_success_on_run_exception(self):
         for mask, failure, expected in ((0, None, 0), (1, None, 65), (31, None, 95),

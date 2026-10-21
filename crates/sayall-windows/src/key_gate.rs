@@ -166,10 +166,13 @@ pub fn capture_key_code(vk_code: u32, make_code: u16, extended: bool) -> Option<
 
 #[cfg(windows)]
 mod windows_impl {
-    use crate::raw_input::{button_for_keyboard, ButtonEdge, RemoteButton, ALL_BUTTONS};
+    use crate::raw_input::{
+        button_for_keyboard, rc003_button_mask, ButtonEdge, RemoteButton, ALL_BUTTONS,
+        RC003_GESTURE_MASK,
+    };
     use std::cell::RefCell;
     use std::collections::{HashMap, HashSet};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
     use std::sync::{mpsc, Arc, OnceLock};
     use std::thread::JoinHandle;
     use std::time::Instant;
@@ -217,6 +220,7 @@ mod windows_impl {
     static LISTENER_ACTIVE: AtomicBool = AtomicBool::new(false);
     // Source capture owns the selected RC003 report, never a global Enter VK.
     static RC003_OK_CAPTURE: AtomicBool = AtomicBool::new(false);
+    static RC003_GESTURE_CAPTURE: AtomicU16 = AtomicU16::new(0);
     static SWALLOWED_EDGES: AtomicU64 = AtomicU64::new(0);
     static LEAKED_DOWNS: AtomicU64 = AtomicU64::new(0);
     static ARMED_UNTIL_MS: [AtomicU64; ALL_BUTTONS.len()] = {
@@ -271,7 +275,7 @@ mod windows_impl {
     }
 
     fn armed(button: RemoteButton) -> bool {
-        if button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst) {
+        if source_captured(button) {
             return false;
         }
         let until = ARMED_UNTIL_MS[button.ordinal()].load(Ordering::Relaxed);
@@ -330,7 +334,7 @@ mod windows_impl {
         pairing.remove(&key).unwrap_or(false)
     }
 
-    fn captured_ok_pairing(
+    fn captured_source_pairing(
         pairing: &mut HashMap<(u16, u16), bool>,
         key: (u16, u16),
         is_key_up: bool,
@@ -446,9 +450,9 @@ mod windows_impl {
         let Some(button) = button_for_keyboard(vk_code as u16, make_code) else {
             return false;
         };
-        if button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst) {
+        if source_captured(button) {
             let swallow = HOLD_PAIRING.with(|pairing| {
-                captured_ok_pairing(
+                captured_source_pairing(
                     &mut pairing.borrow_mut(),
                     (vk_code as u16, make_code),
                     is_key_up,
@@ -498,8 +502,18 @@ mod windows_impl {
             became_armed
         };
         // Capture can become active during the existing bounded wait.
-        let attributed =
-            attributed && !(button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst));
+        if source_captured(button) {
+            // Capture may start while a DOWN is awaiting attribution. It owns
+            // only the selected remote report; this identity-free event passes.
+            HOLD_PAIRING.with(|pairing| {
+                captured_source_pairing(
+                    &mut pairing.borrow_mut(),
+                    (vk_code as u16, make_code),
+                    false,
+                )
+            });
+            return false;
+        }
 
         // 配对状态：true=本次按住的 DOWN 全部被吞（供 UP 沿裁决）。
         HOLD_PAIRING.with(|pairing| {
@@ -663,6 +677,31 @@ mod windows_impl {
         ARMED_UNTIL_MS[RemoteButton::Ok.ordinal()].store(0, Ordering::SeqCst);
     }
 
+    pub fn set_rc003_gesture_capture(mask: u16) {
+        let mask = mask & RC003_GESTURE_MASK;
+        let previous = RC003_GESTURE_CAPTURE.swap(mask, Ordering::SeqCst);
+        // A source lease must never inherit or leave behind predictive
+        // attribution that could swallow a matching physical keyboard key.
+        for button in ALL_BUTTONS {
+            if rc003_button_mask(button) & (previous | mask) != 0 {
+                ARMED_UNTIL_MS[button.ordinal()].store(0, Ordering::SeqCst);
+            }
+        }
+    }
+
+    fn source_captured(button: RemoteButton) -> bool {
+        captured_button(
+            button,
+            RC003_OK_CAPTURE.load(Ordering::SeqCst),
+            RC003_GESTURE_CAPTURE.load(Ordering::SeqCst),
+        )
+    }
+
+    fn captured_button(button: RemoteButton, ok_capture: bool, gesture_mask: u16) -> bool {
+        (button == RemoteButton::Ok && ok_capture)
+            || rc003_button_mask(button) & gesture_mask & RC003_GESTURE_MASK != 0
+    }
+
     /// Raw Input 监听器起止：监听器停止时门控不吞任何键（无归因来源）。
     pub fn set_listener_active(active: bool) {
         LISTENER_ACTIVE.store(active, Ordering::Relaxed);
@@ -676,19 +715,23 @@ mod windows_impl {
     /// 监听器观察到遥控器按键活动（HID 报文或透传键盘事件）后武装该按键：
     /// 其键盘候选键在武装宽限内可被吞键归因。
     pub fn arm_button(button: RemoteButton, grace_ms: u64) {
-        if !can_arm_button(button, RC003_OK_CAPTURE.load(Ordering::SeqCst)) {
+        if !can_arm_button(
+            button,
+            RC003_OK_CAPTURE.load(Ordering::SeqCst),
+            RC003_GESTURE_CAPTURE.load(Ordering::SeqCst),
+        ) {
             return;
         }
         let until = now_ms() + grace_ms.max(1);
         ARMED_UNTIL_MS[button.ordinal()].store(until, Ordering::Relaxed);
-        if button == RemoteButton::Ok && RC003_OK_CAPTURE.load(Ordering::SeqCst) {
+        if source_captured(button) {
             ARMED_UNTIL_MS[button.ordinal()].store(0, Ordering::SeqCst);
         }
     }
 
-    fn can_arm_button(button: RemoteButton, rc003_ok_capture: bool) -> bool {
+    fn can_arm_button(button: RemoteButton, rc003_ok_capture: bool, gesture_mask: u16) -> bool {
         !matches!(button, RemoteButton::Home | RemoteButton::Tv)
-            && !(button == RemoteButton::Ok && rc003_ok_capture)
+            && !captured_button(button, rc003_ok_capture, gesture_mask)
     }
 
     /// 注册被吞键盘边沿的投递端（映射引擎）。
@@ -742,18 +785,18 @@ mod windows_impl {
             let key = (0x0D, 0x1C);
             let mut pairing = HashMap::new();
             for _ in 0..3 {
-                assert!(!captured_ok_pairing(&mut pairing, key, false));
+                assert!(!captured_source_pairing(&mut pairing, key, false));
             }
-            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            assert!(!captured_source_pairing(&mut pairing, key, true));
             assert!(pairing.is_empty());
             // App/helper start while a physical key is already held owns no DOWN.
-            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            assert!(!captured_source_pairing(&mut pairing, key, true));
             assert!(!direct_attributed(0x0D));
             // Both raw keyboard and HID listeners share this arming guard.
-            assert!(!can_arm_button(RemoteButton::Ok, true));
-            assert!(can_arm_button(RemoteButton::Ok, false));
-            assert!(can_arm_button(RemoteButton::Up, true));
-            assert!(!can_arm_button(RemoteButton::Tv, true));
+            assert!(!can_arm_button(RemoteButton::Ok, true, 0));
+            assert!(can_arm_button(RemoteButton::Ok, false, 0));
+            assert!(can_arm_button(RemoteButton::Up, true, 0));
+            assert!(!can_arm_button(RemoteButton::Tv, true, 0));
         }
 
         #[test]
@@ -761,16 +804,54 @@ mod windows_impl {
             let key = (0x0D, 0x1C);
             let mut pairing = HashMap::from([(key, true)]);
             // A legacy DOWN swallowed before capture started still needs its UP.
-            assert!(captured_ok_pairing(&mut pairing, key, true));
-            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            assert!(captured_source_pairing(&mut pairing, key, true));
+            assert!(!captured_source_pairing(&mut pairing, key, true));
             pairing.insert(key, false);
-            assert!(!captured_ok_pairing(&mut pairing, key, true));
+            assert!(!captured_source_pairing(&mut pairing, key, true));
             pairing.insert(key, true);
             // A physical repeat delivered during the transition poisons ownership.
-            assert!(!captured_ok_pairing(&mut pairing, key, false));
+            assert!(!captured_source_pairing(&mut pairing, key, false));
             // Capture has stopped: the original gate uses the same pairing map.
             assert!(!take_up_pairing(&mut pairing, key));
             assert!(pairing.is_empty());
+        }
+
+        #[test]
+        fn all_source_captured_keys_keep_physical_down_and_repeat_visible() {
+            for button in ALL_BUTTONS {
+                let mask = rc003_button_mask(button) & RC003_GESTURE_MASK;
+                if mask == 0 {
+                    continue;
+                }
+                assert!(captured_button(button, false, mask));
+                assert!(!can_arm_button(button, false, mask));
+                assert_eq!(
+                    can_arm_button(button, false, 0),
+                    !matches!(button, RemoteButton::Home | RemoteButton::Tv)
+                );
+                assert!(!captured_button(RemoteButton::Ok, false, mask));
+                let key = (button.ordinal() as u16, 0);
+                let mut pairing = HashMap::new();
+                // A preheld physical key and repeats are never source identity.
+                assert!(!captured_source_pairing(&mut pairing, key, true));
+                for _ in 0..3 {
+                    assert!(!captured_source_pairing(&mut pairing, key, false));
+                }
+                assert!(!captured_source_pairing(&mut pairing, key, true));
+                assert!(pairing.is_empty());
+                // Preserve an old swallowed UP only until a DOWN is passed.
+                pairing.insert(key, true);
+                assert!(captured_source_pairing(&mut pairing, key, true));
+                pairing.insert(key, true);
+                assert!(!captured_source_pairing(&mut pairing, key, false));
+                assert!(!take_up_pairing(&mut pairing, key));
+                pairing.insert(key, false);
+                assert!(!captured_source_pairing(&mut pairing, key, true));
+            }
+            // TV/OK retain their independent ownership controls.
+            assert!(!captured_button(RemoteButton::Tv, false, u16::MAX));
+            assert!(!captured_button(RemoteButton::Ok, false, u16::MAX));
+            assert!(captured_button(RemoteButton::Ok, true, 0));
         }
 
         #[test]
@@ -875,9 +956,9 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::{
     arm_button, configure, decide, is_gate_thread_alive, leaked_down_count, listener_active,
-    set_edge_sink, set_listener_active, set_rc003_ok_capture, set_remote_connected,
-    set_shortcut_capture_active, set_shortcut_capture_sink, swallowed_edge_count, KeyGate,
-    HOLD_LEAKED, HOLD_NONE, HOLD_SWALLOWED_ALL,
+    set_edge_sink, set_listener_active, set_rc003_gesture_capture, set_rc003_ok_capture,
+    set_remote_connected, set_shortcut_capture_active, set_shortcut_capture_sink,
+    swallowed_edge_count, KeyGate, HOLD_LEAKED, HOLD_NONE, HOLD_SWALLOWED_ALL,
 };
 
 #[cfg(not(windows))]
@@ -900,6 +981,7 @@ mod fallback {
     pub fn configure(_enabled: bool, _mapped_mask: u64) {}
     pub fn set_remote_connected(_connected: bool) {}
     pub fn set_rc003_ok_capture(_active: bool) {}
+    pub fn set_rc003_gesture_capture(_mask: u16) {}
     pub fn set_listener_active(_active: bool) {}
     pub fn arm_button(_button: RemoteButton, _grace_ms: u64) {}
     pub fn set_edge_sink(_sink: std::sync::Arc<dyn Fn(ButtonEdge) + Send + Sync>) {}

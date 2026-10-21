@@ -1417,39 +1417,38 @@ mod tests {
 
     #[test]
     fn raw_single_path_fires_on_press_and_repeats_while_held() {
-        let t0 = Instant::now();
-        let mut recognizer = GestureRecognizer::new();
-        recognizer.configure(&mappings_with(
-            RemoteButton::Up,
-            Some(KeyCode::Up),
-            None,
-            None,
-        ));
+        for (button, key) in [
+            (RemoteButton::Up, KeyCode::Up),
+            (RemoteButton::Down, KeyCode::Down),
+            (RemoteButton::Left, KeyCode::Left),
+            (RemoteButton::Right, KeyCode::Right),
+        ] {
+            let t0 = Instant::now();
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&mappings_with(button, Some(key), None, None));
 
-        // 按下沿立即触发单击。
-        assert_eq!(
-            recognizer.press(RemoteButton::Up, t0),
-            vec![ButtonTrigger::Single]
-        );
-        // 350ms 内无连发。
-        assert_eq!(recognizer.advance(t0 + Duration::from_millis(340)), vec![]);
-        // 350ms 起始延迟后按 100ms 间隔连发。
-        let t1 = t0 + REPEAT_START_DELAY;
-        assert_eq!(
-            recognizer.advance(t1),
-            vec![(RemoteButton::Up, ButtonTrigger::Single)]
-        );
-        assert_eq!(recognizer.advance(t1 + Duration::from_millis(99)), vec![]);
-        assert_eq!(
-            recognizer.advance(t1 + Duration::from_millis(100)),
-            vec![(RemoteButton::Up, ButtonTrigger::Single)]
-        );
-        // 释放取消连发。
-        assert_eq!(
-            recognizer.release(RemoteButton::Up, t1 + Duration::from_millis(200)),
-            vec![]
-        );
-        assert_eq!(recognizer.advance(t1 + Duration::from_millis(400)), vec![]);
+            // 按下沿立即触发单击。
+            assert_eq!(recognizer.press(button, t0), vec![ButtonTrigger::Single]);
+            // 350ms 内无连发。
+            assert_eq!(recognizer.advance(t0 + Duration::from_millis(340)), vec![]);
+            // 350ms 起始延迟后按 100ms 间隔连发。
+            let t1 = t0 + REPEAT_START_DELAY;
+            assert_eq!(
+                recognizer.advance(t1),
+                vec![(button, ButtonTrigger::Single)]
+            );
+            assert_eq!(recognizer.advance(t1 + Duration::from_millis(99)), vec![]);
+            assert_eq!(
+                recognizer.advance(t1 + Duration::from_millis(100)),
+                vec![(button, ButtonTrigger::Single)]
+            );
+            // 释放取消连发。
+            assert_eq!(
+                recognizer.release(button, t1 + Duration::from_millis(200)),
+                vec![]
+            );
+            assert_eq!(recognizer.advance(t1 + Duration::from_millis(400)), vec![]);
+        }
     }
 
     #[test]

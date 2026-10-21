@@ -2,11 +2,18 @@
 // GPL-3.0-only. Report entry observation adapted from ZSTDJan commit
 // 1e6b1d285f9cd50f30c5bc92ac7787a693fc993d. TV slot clearing follows the
 // report-copy boundary reviewed in GetSayAll commit 6a4aaf88ef740534a29152ea0ef021cffee82256.
-// Bits: Back=1, Volume Up=2, Volume Down=4, captured TV=8, captured OK=16.
-// No key injection. OK uses the same source-bound report-copy boundary as TV.
+// Bits follow protocol 4. Only configured gesture keys are additionally captured.
+// No key injection. Every capture uses the same source-bound report-copy boundary.
 const tvEnabled = __TV_CAPTURE_ENABLED__ === true;
 const okEnabled = __OK_CAPTURE_ENABLED__ === true;
-const captureMask = (tvEnabled ? 8 : 0) | (okEnabled ? 16 : 0);
+const gestureMask = __GESTURE_CAPTURE_MASK__;
+if (!Number.isInteger(gestureMask) || gestureMask < 0 || gestureMask > 0xffff ||
+    (gestureMask & ~0x1fe7) !== 0) throw new Error('invalid_gesture_configuration');
+const captureMask = (tvEnabled ? 8 : 0) | (okEnabled ? 16 : 0) | gestureMask;
+const observedMask = 7 | captureMask;
+const usages = new Map([[0xf1, 1], [0x80, 2], [0x81, 4], [0x35, 8], [0x28, 16],
+  [0x52, 32], [0x51, 64], [0x50, 128], [0x4f, 256], [0x4a, 512],
+  [0x65, 1024], [0x66, 2048], [0x7f, 4096]]);
 const captureEnabled = captureMask !== 0;
 let stopped = false;
 let listener = null;
@@ -27,11 +34,14 @@ function active() { return !stopped && now() < deadline; }
 function diagnostic(reason) { send({type: 'diagnostic', reason}); }
 function reportReason(suffix, frame = null) {
   const mask = ownedMask | (frame === null ? 0 : frame.mask);
+  if ((mask & gestureMask) !== 0 || (!tvEnabled && !okEnabled && gestureMask !== 0))
+    return 'gesture_' + suffix;
   return ((mask & 16) !== 0 || (!tvEnabled && okEnabled) ? 'ok_' : 'tv_') + suffix;
 }
 function keyDiagnostics(suffix, mask) {
   if ((mask & 8) !== 0) diagnostic('tv_' + suffix);
   if ((mask & 16) !== 0) diagnostic('ok_' + suffix);
+  if ((mask & gestureMask) !== 0) diagnostic('gesture_' + suffix);
 }
 function sameBytes(a, b) { return a.every((value, index) => value === b[index]); }
 function snapshot(pointer) {
@@ -41,11 +51,9 @@ function snapshot(pointer) {
   const capturedSlots = [];
   for (let i = 3; i < 9; i += 2) {
     const usage = bytes[i] | (bytes[i + 1] << 8);
-    if (usage === 0xf1) mask |= 1;
-    else if (usage === 0x80) mask |= 2;
-    else if (usage === 0x81) mask |= 4;
-    else if (tvEnabled && usage === 0x35) { mask |= 8; capturedSlots.push(i); }
-    else if (okEnabled && usage === 0x28) { mask |= 16; capturedSlots.push(i); }
+    const bit = usages.get(usage) || 0;
+    if ((bit & observedMask) !== 0) mask |= bit;
+    if ((bit & captureMask) !== 0) capturedSlots.push(i);
   }
   return {pointer, bytes, mask, capturedSlots, patched: null, needsRestore: false};
 }
@@ -71,7 +79,8 @@ function stop(reason) {
   finishStop();
 }
 function fault(reason) {
-  if (reason === 'tv_report_restore_failed' || reason === 'ok_report_restore_failed')
+  if (reason === 'tv_report_restore_failed' || reason === 'ok_report_restore_failed' ||
+      reason === 'gesture_report_restore_failed')
     restorationFailure = reason;
   if (stopped) return;
   try { send({type: 'fault', reason}); }

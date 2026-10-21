@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'observer.js'), 'utf8'
 const number = n => ({toUInt32: () => n});
 const bytes = (...usages) => [1, 0, 0, ...[0, 1, 2].flatMap(i => [
   (usages[i] || 0) & 255, (usages[i] || 0) >>> 8])];
-function harness(tvEnabled = true, failures = {}, okEnabled = false) {
+function harness(tvEnabled = true, failures = {}, okEnabled = false, gestureMask = 0) {
   const h = {clock: 0, allowed: true, ready: true, detached: false, closed: false,
     reads: 0, writes: [], messages: [], callbacks: null, timer: null, postedStop: null};
   const context = {
@@ -33,7 +33,8 @@ function harness(tvEnabled = true, failures = {}, okEnabled = false) {
   try {
     vm.runInContext(source.replace('__SELECTED_SOURCE_KEY__', '"' + 'a'.repeat(64) + '"')
       .replace('__TV_CAPTURE_ENABLED__', JSON.stringify(tvEnabled))
-      .replace('__OK_CAPTURE_ENABLED__', JSON.stringify(okEnabled)), context);
+      .replace('__OK_CAPTURE_ENABLED__', JSON.stringify(okEnabled))
+      .replace('__GESTURE_CAPTURE_MASK__', JSON.stringify(gestureMask)), context);
   } catch (error) {
     if (Object.keys(failures).length === 0) throw error;
     h.loadError = error;
@@ -478,6 +479,118 @@ async function main() {
     assert.deepEqual(h.masks(), [0, 16]);
     h.report([1, 1, 0, 0, 0, 0, 0, 0, 0]);
     assert.deepEqual(h.faults(), ['ok_report_invalid']); assert.deepEqual(h.masks(), [0, 16]);
+  });
+  const ordinary = [[0xf1, 1], [0x80, 2], [0x81, 4], [0x52, 32], [0x51, 64],
+    [0x50, 128], [0x4f, 256], [0x4a, 512], [0x65, 1024], [0x66, 2048], [0x7f, 4096]];
+  await test('each of all 13 key permissions clears only exact configured usage, including idle first use', () => {
+    for (const [usage, bit] of [...ordinary, [0x35, 8], [0x28, 16]]) {
+      const h = harness(bit === 8, {}, bit === 16, bit & 0x1fe7);
+      h.report(bytes());
+      // Established attribution must survive idle; renew the bounded source lease.
+      for (let i = 0; i < 12; i++) {h.clock += 4000; assert.equal(h.rpc.renew(), true);}
+      const original = bytes(usage, 0x3e, 0x152); // Voice and 16-bit alias remain native.
+      const down = h.report(original);
+      assert.deepEqual(down.delivered, bytes(0, 0x3e, 0x152));
+      assert.deepEqual(down.call.memory.data, original);
+      assert.deepEqual(h.masks(), [0, bit]);
+      h.report(bytes());
+      assert.deepEqual(h.masks(), [0, bit, 0]);
+      assert.deepEqual(h.faults(), []);
+    }
+  });
+  await test('unconfigured ordinary usages remain native and only original three remain observable', () => {
+    const h = harness(false); h.report(bytes());
+    for (const [usage, bit] of ordinary) {
+      const original = bytes(usage, 0x3e, usage + 0x100);
+      assert.deepEqual(h.report(original).delivered, original);
+      assert.equal(h.masks().at(-1), bit & 7);
+    }
+    assert.equal(h.writes.length, 0);
+  });
+  await test('ordinary capture preserves foreign keyboards and unrelated report fields byte for byte', () => {
+    for (const [usage, bit] of ordinary) {
+      const h = harness(false, {}, false, bit); h.report(bytes());
+      h.report(bytes(usage)); h.allowed = false;
+      const reads = h.reads, writes = h.writes.length, masks = h.masks();
+      const original = bytes(usage, 0x3e, 0x152);
+      assert.deepEqual(h.report(original).delivered, original);
+      assert.equal(h.reads, reads); assert.equal(h.writes.length, writes);
+      assert.deepEqual(h.masks(), masks); assert.deepEqual(h.faults(), []);
+    }
+  });
+  await test('every ordinary preheld key waits for real neutral and clears repeated reports once armed', () => {
+    for (const [usage, bit] of ordinary) {
+      const h = harness(false, {}, false, bit);
+      assert.deepEqual(h.report(bytes(usage)).delivered, bytes(usage));
+      h.report(bytes(), {status: 0x103});
+      assert.deepEqual(h.report(bytes(usage)).delivered, bytes(usage));
+      assert.equal(h.writes.length, 0);
+      h.report(bytes());
+      for (let i = 0; i < 3; i++) {
+        const original = bytes(usage, usage, usage);
+        const down = h.report(original);
+        assert.deepEqual(down.delivered, bytes());
+        assert.deepEqual(down.call.memory.data, original);
+      }
+      h.report(bytes());
+      assert.deepEqual(h.masks(), [bit, bit, 0, bit, bit, bit, 0]);
+      assert.equal(h.diagnostics().filter(x => x === 'gesture_preheld_passthrough').length, 1);
+      assert.equal(h.diagnostics().filter(x => x === 'gesture_report_cleared').length, 1);
+    }
+  });
+  await test('mixed TV OK and ordinary slots form one transaction, without partial semantic success', () => {
+    const h = harness(true, {}, true, 32); h.report(bytes());
+    const original = bytes(0x35, 0x28, 0x52);
+    const down = h.report(original, {memory: {failWriteAt: 3}});
+    assert.deepEqual(down.call.memory.data, original);
+    assert.deepEqual(h.masks(), [0]); assert.deepEqual(h.faults(), ['gesture_report_write_failed']);
+  });
+  await test('ordinary write verification and restoration failures never emit mapped DOWN', async () => {
+    for (const [usage, bit] of ordinary) for (const [memory, reason] of [
+      [{failWriteAt: 1}, 'gesture_report_write_failed'],
+      [{ignoreWriteAt: 1}, 'gesture_report_verify_failed'],
+      [{failReadAt: 2}, 'report_read_failed'],
+      [{failWriteAt: 2}, 'gesture_report_restore_failed'],
+    ]) {
+      const h = harness(false, {}, false, bit); h.report(bytes());
+      h.report(bytes(usage), {memory});
+      assert.deepEqual(h.masks(), [0]); assert.deepEqual(h.faults(), [reason]);
+      assertStopped(await h.rpc.stop(), reason === 'gesture_report_restore_failed' ? reason : null);
+    }
+  });
+  await test('ordinary buffer mutation cannot be overwritten during failed clear verification', async () => {
+    const h = harness(false, {}, false, 32); h.report(bytes());
+    const down = h.report(bytes(0x52), {memory: {afterWrite(memory, count) {
+      if (count === 1) memory.data[5] = 0x28;
+    }}});
+    assert.equal(down.call.memory.data[5], 0x28); assert.equal(h.writes.length, 1);
+    assert.deepEqual(h.masks(), [0]); assertStopped(await h.rpc.stop(), 'gesture_report_restore_failed');
+  });
+  await test('every ordinary stop and lease expiry drains in-flight restoration without synthetic release', async () => {
+    for (const [usage, bit] of ordinary) for (const cancel of ['rpc', 'post', 'expiry']) {
+      const h = harness(false, {}, false, bit); h.report(bytes()); h.report(bytes(usage));
+      const call = h.enter(bytes(usage));
+      if (cancel === 'post') h.postedStop();
+      if (cancel === 'expiry') {h.clock = 10001; h.timer();}
+      let settled = false;
+      const pending = h.rpc.stop().then(result => {settled = true; return result;});
+      await Promise.resolve(); assert.equal(settled, false); assert.equal(h.detached, false);
+      h.leave(call);
+      assertStopped(await pending); assert.deepEqual(call.memory.data, bytes(usage));
+      assert.deepEqual(h.masks(), [0, bit]);
+    }
+  });
+  await test('ordinary overlap cannot manufacture neutral and source loss cancels held gestures', () => {
+    for (const [usage, bit] of ordinary) {
+      const h = harness(false, {}, false, bit); h.report(bytes());
+      const memory = {data: bytes(usage)}, outer = h.enter(memory), inner = h.enter(memory);
+      h.leave(inner); h.leave(outer);
+      assert.deepEqual(memory.data, bytes(usage));
+      assert.deepEqual(h.faults(), ['gesture_report_overlap']); assert.deepEqual(h.masks(), [0]);
+      const lost = harness(false, {}, false, bit); lost.report(bytes()); lost.report(bytes(usage));
+      lost.ready = false; assert.equal(lost.rpc.renew(), false);
+      assert.deepEqual(lost.faults(), ['gesture_source_lost']); assert.deepEqual(lost.masks(), [0, bit]);
+    }
   });
   console.log(`observer checks passed: ${passed}`);
 }

@@ -621,7 +621,12 @@ ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实
 与 [RAWINPUTDEVICE](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawinputdevice)：
 低级钩子没有设备句柄，RIDEV_NOLEGACY 仅约束注册应用自己的旧式消息。
 当前真实三次上键长按均先漏出原生 DOWN，不能靠延长 60ms 等待或 4 秒武装修复来源时序。
-本轮只调查，不复制外部实现、不改运行路径；方向报告修改须另获限定授权并验证。
+用户随后明确授权按全部普通键检查结果补齐缺口；本轮将已采用的 TV/OK 来源绑定、
+报告复制边界、清除读回与恢复机制推广到配置了有效长按/双击的普通键，不新增外部实现或时序常量。
+Helper 原参考提交仍为本文件已记录的 ZSTDJan `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d`
+和 GetSayAll `6a4aaf88ef740534a29152ea0ef021cffee82256`，不改变来源或许可。
+协议 4 只处理本仓库已有明确 usage 表，未接管键与语音保持原路径；正常 Backspace 连删不误作独立长按。
+Windows Hook 文档及先前持锁实测用于否决扩大全局等待/吞键窗口，未重新猜测延迟。
 证据、逐键覆盖与待验证方案见 [故障记录](Bugs/2026-10-21-direction-hold-native-arrow.md)。
 
 ## 默认麦克风选择与会话恢复（2026-10-19）

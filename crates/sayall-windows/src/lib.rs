@@ -352,8 +352,8 @@ impl Default for WindowsPlatform {
                     let mapping = Arc::clone(&button_mapping);
                     move || {
                         let connection = runtime.snapshot();
-                        let (input_epoch, tv_enabled, ok_enabled) =
-                            mapping.rc003_tap_configuration();
+                        let (input_epoch, tv_enabled, ok_enabled, gesture_mask) =
+                            mapping.rc003_capture_configuration();
                         let (available, connection_generation, input_epoch) = connection
                             .rc003_input_availability(
                                 lock(&raw_snapshot).phase == RawInputPhase::Ready,
@@ -365,6 +365,7 @@ impl Default for WindowsPlatform {
                             input_epoch,
                             tv_enabled,
                             ok_enabled,
+                            gesture_mask,
                         )
                     }
                 }),

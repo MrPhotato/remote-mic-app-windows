@@ -9,6 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import RegisteredAppsDialog from "../components/RegisteredAppsDialog.vue";
 import BatteryIndicator from "../components/BatteryIndicator.vue";
 import Rc003InputControl from "../components/Rc003InputControl.vue";
+import { useRc003InputState } from "../lib/rc003-input-state";
 import { reportFrontendEvent } from "../lib/frontend-diagnostics";
 import { useSlidingIndicator } from "../lib/sliding-indicator";
 import {
@@ -138,6 +139,13 @@ const TRIGGERS: ButtonTrigger[] = ["single", "double", "long"];
 const remoteModel = computed<RemoteModel>(
   () => props.runtime?.platform.connection.remoteModel ?? "unknown",
 );
+const enhancement = useRc003InputState(() => ({
+  remoteModel: remoteModel.value,
+  connected: props.runtime?.platform.connection.phase === "ready",
+}));
+const enhancementReady = computed(() => enhancement.available && enhancement.loaded.value
+  && enhancement.connected.value && enhancement.contextAvailable.value && !enhancement.readError.value
+  && enhancement.status.value.phase === "ready");
 
 /** RC003 needs the explicit enhancement source to receive these three keys. */
 function needsHardwareCheck(button: RemoteButton): boolean {
@@ -591,19 +599,34 @@ function isActiveScroll(direction: "up" | "down"): boolean {
   return action.type === "scroll" && action.direction === direction;
 }
 
-/**
- * Home/TV 只接收已识别遥控器的事件，普通键盘保留原生输入。
- * 无设备身份的钩子不拦截这两键，因此遥控器也可能带出原生动作。
- * 确定/方向仍保留既有冷首按能力提示。
- */
+/** Enhancement only owns configured multi-gesture keys (plus mapped TV/OK).
+ * Keep the native-action warning for single-only Home and unenhanced paths. */
 const capabilityNote = computed<string | null>(() => {
   if (!editingTarget.value) return null;
-  const button = editingTarget.value.button;
-  if (button === "home" || button === "tv") {
-    return "遥控器的主页或 TV 键可能同时触发 Home 或输入反引号，按住时可能重复。普通键盘不受此映射影响。";
+  const { button, trigger } = editingTarget.value;
+  const actions = actionsOf(button);
+  const hasLong = actions.single.type !== "normal_backspace" && actions.long.type !== "disabled";
+  const hasMultipleGestures = hasLong || actions.double.type !== "disabled";
+  if (remoteModel.value === "rc003") {
+    if (hasMultipleGestures || trigger === "double" || (trigger === "long" && actions.single.type !== "normal_backspace")) {
+      return enhancementReady.value
+        ? "长按和双击由按键增强处理，请保持增强开启。普通键盘按原样使用。"
+        : "RC003 的长按和双击需等上方按键增强显示“增强已就绪”后使用。未就绪时可能先触发原始按键。";
+    }
+    if (button === "tv" || button === "ok") {
+      if (enhancementReady.value) return null;
+      return button === "tv"
+        ? "RC003 TV 键自定义动作请先开启上方按键增强并等待就绪。未就绪时可能输入反引号。普通键盘不受此映射影响。"
+        : "RC003 确认键自定义动作请先开启上方按键增强并等待就绪。未就绪时，首次按下可能额外触发 Enter。";
+    }
   }
-  if (button === "ok" && remoteModel.value === "rc003") {
-    return "RC003 确认键自定义动作请先开启上方按键增强。未开启时，首次按下可能额外触发 Enter。";
+  if (button === "home") {
+    return hasMultipleGestures
+      ? "主页键可能同时触发 Home，按住时可能重复。普通键盘不受此映射影响。"
+      : "主页键仅配置单击时，仍可能同时触发 Home，按住时可能重复。普通键盘不受此映射影响。";
+  }
+  if (button === "tv") {
+    return "TV 键可能同时输入反引号，按住时可能重复。普通键盘不受此映射影响。";
   }
   if (shortcutCapability(button, "single", remoteModel.value) === "identity") {
     const identity = identityShortcutByButton[button];

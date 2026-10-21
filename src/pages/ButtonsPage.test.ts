@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { defineComponent, h } from "vue";
 import ButtonsPage from "./ButtonsPage.vue";
+import { provideRc003InputState } from "../lib/rc003-input-state";
+import { getRc003InputStatus, stoppedRc003InputStatus } from "../lib/rc003-input";
+
+vi.mock("../lib/rc003-input", async original => ({
+  ...await original<typeof import("../lib/rc003-input")>(),
+  getRc003InputStatus: vi.fn(),
+  rc003InputAvailable: vi.fn(() => true),
+}));
 
 type EdgeHandler = (edge: { button: string; isPressed: boolean }) => void;
 type GestureHandler = (gesture: { button: string; trigger: string }) => void;
@@ -89,7 +98,7 @@ import {
   stopShortcutCapture,
   testButtonMapping,
 } from "../lib/bridge";
-import type { ButtonAction, ButtonMappings, RuntimeSnapshot } from "../lib/bridge";
+import type { ButtonAction, ButtonMappings, RemoteButton, RuntimeSnapshot } from "../lib/bridge";
 import { ACTION_LIBRARY_STORAGE_KEY, readActionLibrary } from "../lib/action-library";
 
 const runtime: RuntimeSnapshot = {
@@ -179,6 +188,7 @@ beforeEach(() => {
   vi.mocked(startShortcutCapture).mockClear();
   vi.mocked(stopShortcutCapture).mockClear();
   vi.mocked(testButtonMapping).mockClear();
+  vi.mocked(getRc003InputStatus).mockResolvedValue(stoppedRc003InputStatus());
 });
 
 describe("buttons mapping page", () => {
@@ -1072,7 +1082,7 @@ describe("buttons mapping page", () => {
     expect(await chipState(wrapper, "Enter")).toBe(false);
     expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
+    expect(wrapper.find(".mapping-editor").text()).toContain("未就绪时可能先触发原始按键");
 
     await openCell(wrapper, "TV", 0);
     expect(await chipState(wrapper, "Enter")).toBe(false);
@@ -1080,7 +1090,7 @@ describe("buttons mapping page", () => {
     expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
     expect(wrapper.find(".mapping-editor").text()).toContain("普通键盘不受此映射影响");
-    expect(wrapper.find(".mapping-editor").text()).toContain("可能同时触发 Home 或输入反引号");
+    expect(wrapper.find(".mapping-editor").text()).toContain("未就绪时可能输入反引号");
   });
 
   it("左键与其余方向键同样开放自定义并显示首次按键提示", async () => {
@@ -1098,6 +1108,70 @@ describe("buttons mapping page", () => {
       .find((c) => c.text().includes("左"))!
       .findAll(".mapping-cell")[0]!;
     expect((leftCellRc001.element as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it.each([
+    ["up", "上"], ["home", "主页"], ["back", "返回"],
+    ["power", "电源"], ["menu", "菜单"], ["volume_up", "音量+"],
+  ] as const)("requires ready enhancement for configured %s long actions", async (button, label) => {
+    const mappings: ButtonMappings = { enabled: true, actions: {
+      [button]: {
+        single: { type: "shortcut", chord: { keys: ["up"] } },
+        double: { type: "disabled" },
+        long: { type: "shortcut", chord: { keys: ["control", "alt", "l"] } },
+      },
+    } };
+    vi.mocked(getButtonMappings).mockResolvedValueOnce(mappings);
+    const wrapper = await mountPage();
+    await openCell(wrapper, label, 2);
+    expect(wrapper.get(".capability-note").text()).toContain("需等上方按键增强显示“增强已就绪”后使用");
+    expect(wrapper.get(".capability-note").text()).toContain("未就绪时可能先触发原始按键");
+    expect(wrapper.get(".capability-note").text()).not.toContain("由按键增强处理");
+    wrapper.unmount();
+  });
+
+  it("uses shared ready state and retains the single-only Home warning", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue({ ...stoppedRc003InputStatus(), phase: "ready", generation: 1 });
+    const mappings: ButtonMappings = { enabled: true, actions: {} };
+    for (const button of ["up", "back", "volume_up"] as RemoteButton[]) {
+      mappings.actions[button] = {
+        single: { type: "shortcut", chord: { keys: ["up"] } },
+        double: { type: "shortcut", chord: { keys: ["control", "enter"] } },
+        long: { type: "disabled" },
+      };
+    }
+    const host = mount(defineComponent({
+      setup() {
+        provideRc003InputState(() => ({ remoteModel: "rc003", connected: true }));
+        return () => h(ButtonsPage, { runtime, initialMappings: mappings });
+      },
+    }));
+    await flushPromises();
+    const page = host.findComponent(ButtonsPage);
+    for (const label of ["上", "返回", "音量+"]) {
+      await openCell(page, label, 1);
+      expect(page.get(".capability-note").text()).toContain("长按和双击由按键增强处理");
+      expect(page.get(".capability-note").text()).not.toContain("首次按下可能额外触发");
+    }
+    await openCell(page, "主页", 0);
+    expect(page.get(".capability-note").text()).toContain("仅配置单击时，仍可能同时触发 Home");
+    await openCell(page, "TV", 0);
+    expect(page.find(".capability-note").exists()).toBe(false);
+    await openCell(page, "确定", 0);
+    expect(page.find(".capability-note").exists()).toBe(false);
+    expect(getRc003InputStatus).toHaveBeenCalledOnce();
+    host.unmount();
+  });
+
+  it("does not treat ordinary Backspace hold as a configured long gesture", async () => {
+    vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: true, actions: {
+      back: { single: { type: "normal_backspace" }, double: { type: "disabled" }, long: { type: "disabled" } },
+    } });
+    const wrapper = await mountPage();
+    await openCell(wrapper, "返回", 0);
+    expect(wrapper.find(".capability-note").exists()).toBe(false);
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("按住持续删除");
+    wrapper.unmount();
   });
 
   it("电源（直接归因族）全开放且无单响应提示", async () => {

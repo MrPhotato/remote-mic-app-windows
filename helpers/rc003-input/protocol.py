@@ -6,9 +6,14 @@ import threading
 import time
 
 MAX_LINE = 4096
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 LEASE_SECONDS = 5.0
 U64_MAX = (1 << 64) - 1
+GESTURE_MASK = 0x1fe7
+
+
+def valid_gesture_mask(value):
+    return type(value) is int and 0 <= value <= 0xffff and not value & ~GESTURE_MASK
 
 
 class ProtocolError(RuntimeError):
@@ -30,6 +35,7 @@ class Lease:
     device_id: str
     tv_enabled: bool
     ok_enabled: bool
+    gesture_mask: int = 0
 
 
 def decode_line(line):
@@ -43,19 +49,21 @@ def decode_line(line):
         raise ProtocolError("invalid_message")
     if message == {"type": "stop"}:
         return None
-    if set(message) != {"type", "generation", "enabled", "device_id", "tv_enabled", "ok_enabled"} or message["type"] != "lease":
+    if set(message) != {"type", "generation", "enabled", "device_id", "tv_enabled", "ok_enabled", "gesture_mask"} or message["type"] != "lease":
         raise ProtocolError("invalid_message")
     generation, enabled, device = message["generation"], message["enabled"], message["device_id"]
     tv_enabled = message["tv_enabled"]
     ok_enabled = message["ok_enabled"]
+    gesture_mask = message["gesture_mask"]
     if (type(generation) is not int or not 0 <= generation <= U64_MAX or
-            type(enabled) is not bool or type(tv_enabled) is not bool or type(ok_enabled) is not bool):
+            type(enabled) is not bool or type(tv_enabled) is not bool or type(ok_enabled) is not bool
+            or not valid_gesture_mask(gesture_mask)):
         raise ProtocolError("invalid_lease")
     if not enabled and device is None:
         device = ""
     if not isinstance(device, str) or len(device) > 1024 or "\x00" in device or (enabled and not device):
         raise ProtocolError("invalid_device_selection")
-    return Lease(generation, enabled, device, tv_enabled, ok_enabled)
+    return Lease(generation, enabled, device, tv_enabled, ok_enabled, gesture_mask)
 
 
 class LineDecoder:
