@@ -613,6 +613,17 @@ ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实
 不嵌入照片像素；加宽机身、缩短底部留白，保留第一版底色与无线声波。
 对新资源重复执行 PNG/ICO 校验、深浅背景小尺寸预览和前端构建，结果 passed；原生安装外观仍 deferred。
 
+## 方向键原生首沿调查（2026-10-21）
+
+复核本仓库 [2026-09-06 持锁实测](docs/investigations/2026-09-06-left-double-response-arm-deadlock.md)
+及当前可选 RC003 Helper 的 TV/确认键来源隔离路径，再核对 Microsoft
+[KBDLLHOOKSTRUCT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct)
+与 [RAWINPUTDEVICE](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawinputdevice)：
+低级钩子没有设备句柄，RIDEV_NOLEGACY 仅约束注册应用自己的旧式消息。
+当前真实三次上键长按均先漏出原生 DOWN，不能靠延长 60ms 等待或 4 秒武装修复来源时序。
+本轮只调查，不复制外部实现、不改运行路径；方向报告修改须另获限定授权并验证。
+证据、逐键覆盖与待验证方案见 [故障记录](Bugs/2026-10-21-direction-hold-native-arrow.md)。
+
 ## 默认麦克风选择与会话恢复（2026-10-19）
 
 2026-10-20 缺失恢复目标处理：沿用下述 SoundSwitch / EarTrumpet 接口范围，
