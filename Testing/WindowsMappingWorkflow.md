@@ -19,7 +19,7 @@ Esc、Backspace、Enter、方向键等单键显示键名；组合快捷键使用
 | 方向 | 对应方向键 | 未设置 | 连续移动 |
 | 确定 | Enter，松开时触发 | 未设置 | 插队/排队，Ctrl+Enter |
 | 返回 | Backspace | 未设置 | 连续删除 |
-| 音量＋／－ | 上一个／下一个聊天，Ctrl+Shift+[ / ] | 未设置 | 不连续切换 |
+| 音量＋／－ | 上一个／下一个聊天，Ctrl+Alt+[ / ] | 未设置 | 不连续切换 |
 | 主页 | 回到 Codex | 新建聊天，Ctrl+N | 待我处理，Ctrl+Alt+A |
 | 菜单 | 撤销，Ctrl+Z | 未设置 | 重做，Ctrl+Y |
 | TV | 切换聊天和标签，Ctrl+Alt+B | 展开／收起侧栏，Ctrl+Shift+S | 展开／收起底栏，Ctrl+J |

@@ -56,8 +56,8 @@ describe("Codex coding profile", () => {
       expect(next.actions[key]?.double).toEqual({ type: "disabled" });
       expect(next.actions[key]?.long).toEqual({ type: "disabled" });
     }
-    expect(next.actions.volume_up?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_left"] } });
-    expect(next.actions.volume_down?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
+    expect(next.actions.volume_up?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_left"] } });
+    expect(next.actions.volume_down?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_right"] } });
     expect(next.actions.power?.double).toEqual({ type: "disabled" });
     expect(next.actions.power?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "enter"] } });
     expect(CODING_PROFILE_BUTTONS).toHaveLength(12);

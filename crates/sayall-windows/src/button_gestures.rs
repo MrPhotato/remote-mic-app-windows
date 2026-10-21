@@ -38,7 +38,7 @@ fn is_plain_undo(action: &ButtonAction) -> bool {
         )))
 }
 
-fn is_chat_navigation(action: &ButtonAction) -> bool {
+fn is_chat_or_tab_navigation(action: &ButtonAction) -> bool {
     matches!(action, ButtonAction::Shortcut { chord }
     if chord.keys.len() == 3
         && chord.keys.iter().any(|key| matches!(
@@ -46,6 +46,7 @@ fn is_chat_navigation(action: &ButtonAction) -> bool {
         ))
         && chord.keys.iter().any(|key| matches!(
             key, KeyCode::Shift | KeyCode::LeftShift | KeyCode::RightShift
+                | KeyCode::Alt | KeyCode::LeftAlt | KeyCode::RightAlt
         ))
         && chord.keys.iter().any(|key| matches!(
             key, KeyCode::BracketLeft | KeyCode::BracketRight
@@ -102,10 +103,10 @@ impl GestureConfig {
             && !double_enabled
             && !long_enabled
             && !defer_single_until_release
-            // Conversation switching is a discrete action. Keep legacy/custom
+            // Chat and tab switching are discrete actions. Keep legacy/custom
             // scrolling and system-volume repetition unchanged.
             && !(matches!(button, RemoteButton::VolumeUp | RemoteButton::VolumeDown)
-                && is_chat_navigation(&actions.single))
+                && is_chat_or_tab_navigation(&actions.single))
         {
             button.repeat_interval()
         } else {
@@ -1185,6 +1186,49 @@ mod tests {
         assert_eq!(fired, expected);
         recognizer.release_all();
         assert!(recognizer.advance(now + Duration::from_secs(2)).is_empty());
+    }
+
+    #[test]
+    fn chat_and_tab_navigation_with_physical_modifiers_fire_once_per_volume_press() {
+        for modifier in [
+            KeyCode::Alt,
+            KeyCode::LeftAlt,
+            KeyCode::RightAlt,
+            KeyCode::Shift,
+            KeyCode::LeftShift,
+            KeyCode::RightShift,
+        ] {
+            let mut mappings = ButtonMappings::default();
+            for (button, bracket) in [
+                (RemoteButton::VolumeUp, KeyCode::BracketLeft),
+                (RemoteButton::VolumeDown, KeyCode::BracketRight),
+            ] {
+                mappings.actions.get_mut(&button).unwrap().single = ButtonAction::Shortcut {
+                    chord: KeyChord {
+                        keys: vec![bracket, modifier, KeyCode::RightControl],
+                    },
+                };
+            }
+            let now = Instant::now();
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&mappings);
+            for button in [RemoteButton::VolumeUp, RemoteButton::VolumeDown] {
+                assert_eq!(recognizer.press(button, now), vec![ButtonTrigger::Single]);
+                assert!(recognizer
+                    .press(button, now + Duration::from_millis(50))
+                    .is_empty());
+            }
+            assert!(recognizer.advance(now + Duration::from_secs(2)).is_empty());
+            for button in [RemoteButton::VolumeUp, RemoteButton::VolumeDown] {
+                assert!(recognizer
+                    .release(button, now + Duration::from_secs(2))
+                    .is_empty());
+                assert_eq!(
+                    recognizer.press(button, now + Duration::from_secs(3)),
+                    vec![ButtonTrigger::Single]
+                );
+            }
+        }
     }
 
     #[test]

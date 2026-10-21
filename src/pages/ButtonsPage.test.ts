@@ -203,6 +203,20 @@ describe("buttons mapping page", () => {
     wrapper.unmount();
   });
 
+  it("distinguishes recorded chat and tab navigation while retaining physical keys", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 1);
+    await recordChord(wrapper, ["right_control", "left_shift", "bracket_right"]);
+    const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
+    expect(power.findAll(".mapping-cell")[1]!.text()).toContain("下一个标签页");
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["right_control", "left_shift", "bracket_right"] } });
+    await recordChord(wrapper, ["right_control", "left_alt", "bracket_right"]);
+    expect(power.findAll(".mapping-cell")[1]!.text()).toContain("下一个聊天");
+    expect(readActionLibrary().state.custom).toHaveLength(0);
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it("remembers an unmatched recorded shortcut, renames it and reuses it after reopening", async () => {
     const wrapper = await mountPage();
     await openCell(wrapper, "电源", 0);
@@ -324,17 +338,18 @@ describe("buttons mapping page", () => {
 
   it("keeps existing user mappings and single-key names without saving on mount", async () => {
     vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: false, actions: {
-      power: { single: { type: "shortcut", chord: { keys: ["escape"] } }, double: { type: "disabled" }, long: { type: "shortcut", chord: { keys: ["control", "page_down"] } } },
+      power: { single: { type: "shortcut", chord: { keys: ["escape"] } }, double: { type: "disabled" }, long: { type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } } },
       back: { single: { type: "normal_backspace" }, double: { type: "disabled" }, long: { type: "disabled" } },
     } });
     const wrapper = await mountPage();
     const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
     expect(power.findAll(".mapping-cell")[0]!.text()).toContain("Esc");
-    expect(power.findAll(".mapping-cell")[2]!.text()).toContain("下一个聊天");
+    expect(power.findAll(".mapping-cell")[2]!.text()).toContain("下一个标签页");
     const back = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "返回")!;
     expect(back.findAll(".mapping-cell")[0]!.text()).toContain("Backspace");
     await openCell(wrapper, "电源", 2);
-    expect(wrapper.get('[data-action-id="next-chat"]').attributes("aria-pressed")).toBe("true");
+    await wrapper.get('#action-tab-view').trigger("click");
+    expect(wrapper.get('[data-action-id="next-tab"]').attributes("aria-pressed")).toBe("true");
     expect(saveButtonMappings).not.toHaveBeenCalled();
     expect(localStorage.getItem(ACTION_LIBRARY_STORAGE_KEY)).toBeNull();
     wrapper.unmount();
@@ -358,7 +373,7 @@ describe("buttons mapping page", () => {
     expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(["常用", "聊天", "编辑", "视图", "系统"]);
     expect(wrapper.get(".action-sections").element.firstElementChild).toBe(wrapper.get(".shortcut-recorder").element);
     expect(wrapper.find('select').exists()).toBe(false);
-    expect(wrapper.get('[data-action-id="previous-chat"]').text()).toContain("Ctrl + Shift + [");
+    expect(wrapper.get('[data-action-id="previous-chat"]').text()).toContain("Ctrl + Alt + [");
     await wrapper.get('#action-tab-system').trigger("click");
     await wrapper.get('input[aria-label="搜索全部功能"]').setValue("插队");
     expect(wrapper.get('[data-action-id="queue-message"]').text()).toContain("Ctrl + Enter");
@@ -483,7 +498,7 @@ describe("buttons mapping page", () => {
     await wrapper.get('[data-action-id="next-chat"]').trigger("click");
     await flushPromises();
     const saved = vi.mocked(saveButtonMappings).mock.lastCall![0];
-    expect(saved.actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
+    expect(saved.actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_right"] } });
     expect(saved.actions.ok?.single).toEqual({ type: "shortcut", chord: { keys: ["enter"] } });
     expect(wrapper.get('[data-action-id="next-chat"]').attributes("aria-pressed")).toBe("true");
     expect(testButtonMapping).not.toHaveBeenCalled();
@@ -1143,7 +1158,7 @@ describe("buttons mapping page", () => {
     const preset = wrapper.get('[data-action-id="previous-chat"]');
     await preset.trigger("click");
     await flushPromises();
-    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_left"] } });
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_left"] } });
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });

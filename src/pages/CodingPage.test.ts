@@ -66,6 +66,8 @@ describe("Coding page", () => {
     expect(wrapper.get(".mapping-table").text()).toContain("下一个聊天");
     expect(wrapper.get(".mapping-table").text()).toContain("上一个聊天");
     expect(wrapper.get(".mapping-table").text()).toContain("每次按下切换一次");
+    expect(wrapper.text()).toContain("Ctrl + Alt + [ / ] 切换左侧聊天");
+    expect(wrapper.text()).toContain("右侧标签页用 Ctrl + Shift + [ / ]");
     expect(wrapper.get(".mapping-table").text()).toContain("待处理项");
     expect(wrapper.get(".mapping-table").text()).toContain("显示/隐藏侧边栏");
     expect(wrapper.get(".mapping-table").text()).toContain("切换聊天和标签页");

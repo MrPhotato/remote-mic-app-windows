@@ -20,8 +20,10 @@ describe("Codex Windows shortcut catalog", () => {
 
   it("preserves Windows-specific navigation and lookup combinations", () => {
     const keys = (id: string) => CODEX_SHORTCUTS.find((item) => item.id === id)!.keys;
-    expect(keys("previous-chat")).toEqual(["control", "shift", "bracket_left"]);
-    expect(keys("next-chat")).toEqual(["control", "shift", "bracket_right"]);
+    expect(keys("previous-chat")).toEqual(["control", "alt", "bracket_left"]);
+    expect(keys("next-chat")).toEqual(["control", "alt", "bracket_right"]);
+    expect(keys("previous-tab")).toEqual(["control", "shift", "bracket_left"]);
+    expect(keys("next-tab")).toEqual(["control", "shift", "bracket_right"]);
     expect(keys("needs-attention")).toEqual(["control", "alt", "a"]);
     expect(keys("find-previous")).toEqual(["shift", "f3"]);
     expect(keys("environment-action")).toEqual(["left_windows", "shift", "d"]);
@@ -42,9 +44,9 @@ describe("Codex Windows shortcut catalog", () => {
   it("returns independent mapping values without mutating the catalog", () => {
     const shortcut = CODEX_SHORTCUTS.find((item) => item.id === "next-chat")!;
     const action = codexShortcutAction(shortcut);
-    expect(action).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
+    expect(action).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_right"] } });
     if (action.type !== "shortcut") throw new Error("Expected a shortcut action");
     action.chord.keys.push("shift");
-    expect(shortcut.keys).toEqual(["control", "shift", "bracket_right"]);
+    expect(shortcut.keys).toEqual(["control", "alt", "bracket_right"]);
   });
 });

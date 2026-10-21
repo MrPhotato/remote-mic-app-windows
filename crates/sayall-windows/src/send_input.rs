@@ -1281,13 +1281,13 @@ mod tests {
         assert_eq!(
             mappings.actions(RemoteButton::VolumeUp).single,
             ButtonAction::Shortcut {
-                chord: chord(&[KeyCode::Control, KeyCode::Shift, KeyCode::BracketLeft])
+                chord: chord(&[KeyCode::Control, KeyCode::Alt, KeyCode::BracketLeft])
             }
         );
         assert_eq!(
             mappings.actions(RemoteButton::VolumeDown).single,
             ButtonAction::Shortcut {
-                chord: chord(&[KeyCode::Control, KeyCode::Shift, KeyCode::BracketRight])
+                chord: chord(&[KeyCode::Control, KeyCode::Alt, KeyCode::BracketRight])
             }
         );
         assert_eq!(
