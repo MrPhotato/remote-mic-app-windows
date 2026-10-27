@@ -1249,7 +1249,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_install_defaults_are_enabled_valid_and_keep_enter_immediate() {
+    fn fresh_install_defaults_are_enabled_valid_and_queue_on_confirm_hold() {
         let mappings = ButtonMappings::default();
         assert!(mappings.enabled);
         assert_eq!(mappings.actions.len(), 12);
@@ -1266,6 +1266,9 @@ mod tests {
                 single: ButtonAction::Shortcut {
                     chord: chord(&[KeyCode::Enter])
                 },
+                long: ButtonAction::Shortcut {
+                    chord: chord(&[KeyCode::Control, KeyCode::Enter])
+                },
                 ..ButtonActions::default()
             }
         );
@@ -1278,13 +1281,13 @@ mod tests {
         assert_eq!(
             mappings.actions(RemoteButton::VolumeUp).single,
             ButtonAction::Shortcut {
-                chord: chord(&[KeyCode::Control, KeyCode::Shift, KeyCode::BracketLeft])
+                chord: chord(&[KeyCode::Control, KeyCode::Alt, KeyCode::BracketLeft])
             }
         );
         assert_eq!(
             mappings.actions(RemoteButton::VolumeDown).single,
             ButtonAction::Shortcut {
-                chord: chord(&[KeyCode::Control, KeyCode::Shift, KeyCode::BracketRight])
+                chord: chord(&[KeyCode::Control, KeyCode::Alt, KeyCode::BracketRight])
             }
         );
         assert_eq!(

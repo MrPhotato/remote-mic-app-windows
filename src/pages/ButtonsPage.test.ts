@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { defineComponent, h } from "vue";
 import ButtonsPage from "./ButtonsPage.vue";
+import { provideRc003InputState } from "../lib/rc003-input-state";
+import { getRc003InputStatus, stoppedRc003InputStatus } from "../lib/rc003-input";
+
+vi.mock("../lib/rc003-input", async original => ({
+  ...await original<typeof import("../lib/rc003-input")>(),
+  getRc003InputStatus: vi.fn(),
+  rc003InputAvailable: vi.fn(() => true),
+}));
 
 type EdgeHandler = (edge: { button: string; isPressed: boolean }) => void;
 type GestureHandler = (gesture: { button: string; trigger: string }) => void;
@@ -89,7 +98,7 @@ import {
   stopShortcutCapture,
   testButtonMapping,
 } from "../lib/bridge";
-import type { ButtonAction, ButtonMappings, RuntimeSnapshot } from "../lib/bridge";
+import type { ButtonAction, ButtonMappings, RemoteButton, RuntimeSnapshot } from "../lib/bridge";
 import { ACTION_LIBRARY_STORAGE_KEY, readActionLibrary } from "../lib/action-library";
 
 const runtime: RuntimeSnapshot = {
@@ -179,6 +188,7 @@ beforeEach(() => {
   vi.mocked(startShortcutCapture).mockClear();
   vi.mocked(stopShortcutCapture).mockClear();
   vi.mocked(testButtonMapping).mockClear();
+  vi.mocked(getRc003InputStatus).mockResolvedValue(stoppedRc003InputStatus());
 });
 
 describe("buttons mapping page", () => {
@@ -199,6 +209,20 @@ describe("buttons mapping page", () => {
     expect(wrapper.get('[data-action-id="queue-message"]').attributes("aria-pressed")).toBe("true");
     expect(readActionLibrary().state.custom).toHaveLength(0);
     expect(readActionLibrary().state.usage["queue-message"]?.count).toBe(1);
+    expect(testButtonMapping).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("distinguishes recorded chat and tab navigation while retaining physical keys", async () => {
+    const wrapper = await mountPage();
+    await openCell(wrapper, "电源", 1);
+    await recordChord(wrapper, ["right_control", "left_shift", "bracket_right"]);
+    const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
+    expect(power.findAll(".mapping-cell")[1]!.text()).toContain("下一个标签页");
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["right_control", "left_shift", "bracket_right"] } });
+    await recordChord(wrapper, ["right_control", "left_alt", "bracket_right"]);
+    expect(power.findAll(".mapping-cell")[1]!.text()).toContain("下一个聊天");
+    expect(readActionLibrary().state.custom).toHaveLength(0);
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -324,17 +348,18 @@ describe("buttons mapping page", () => {
 
   it("keeps existing user mappings and single-key names without saving on mount", async () => {
     vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: false, actions: {
-      power: { single: { type: "shortcut", chord: { keys: ["escape"] } }, double: { type: "disabled" }, long: { type: "shortcut", chord: { keys: ["control", "page_down"] } } },
+      power: { single: { type: "shortcut", chord: { keys: ["escape"] } }, double: { type: "disabled" }, long: { type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } } },
       back: { single: { type: "normal_backspace" }, double: { type: "disabled" }, long: { type: "disabled" } },
     } });
     const wrapper = await mountPage();
     const power = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "电源")!;
     expect(power.findAll(".mapping-cell")[0]!.text()).toContain("Esc");
-    expect(power.findAll(".mapping-cell")[2]!.text()).toContain("下一个聊天");
+    expect(power.findAll(".mapping-cell")[2]!.text()).toContain("下一个标签页");
     const back = wrapper.findAll(".mapping-card").find(card => card.get("strong").text() === "返回")!;
     expect(back.findAll(".mapping-cell")[0]!.text()).toContain("Backspace");
     await openCell(wrapper, "电源", 2);
-    expect(wrapper.get('[data-action-id="next-chat"]').attributes("aria-pressed")).toBe("true");
+    await wrapper.get('#action-tab-view').trigger("click");
+    expect(wrapper.get('[data-action-id="next-tab"]').attributes("aria-pressed")).toBe("true");
     expect(saveButtonMappings).not.toHaveBeenCalled();
     expect(localStorage.getItem(ACTION_LIBRARY_STORAGE_KEY)).toBeNull();
     wrapper.unmount();
@@ -358,7 +383,7 @@ describe("buttons mapping page", () => {
     expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(["常用", "聊天", "编辑", "视图", "系统"]);
     expect(wrapper.get(".action-sections").element.firstElementChild).toBe(wrapper.get(".shortcut-recorder").element);
     expect(wrapper.find('select').exists()).toBe(false);
-    expect(wrapper.get('[data-action-id="previous-chat"]').text()).toContain("Ctrl + Shift + [");
+    expect(wrapper.get('[data-action-id="previous-chat"]').text()).toContain("Ctrl + Alt + [");
     await wrapper.get('#action-tab-system').trigger("click");
     await wrapper.get('input[aria-label="搜索全部功能"]').setValue("插队");
     expect(wrapper.get('[data-action-id="queue-message"]').text()).toContain("Ctrl + Enter");
@@ -483,7 +508,7 @@ describe("buttons mapping page", () => {
     await wrapper.get('[data-action-id="next-chat"]').trigger("click");
     await flushPromises();
     const saved = vi.mocked(saveButtonMappings).mock.lastCall![0];
-    expect(saved.actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
+    expect(saved.actions.power?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_right"] } });
     expect(saved.actions.ok?.single).toEqual({ type: "shortcut", chord: { keys: ["enter"] } });
     expect(wrapper.get('[data-action-id="next-chat"]').attributes("aria-pressed")).toBe("true");
     expect(testButtonMapping).not.toHaveBeenCalled();
@@ -526,6 +551,100 @@ describe("buttons mapping page", () => {
     const voiceCard = wrapper.find(".voice-card");
     expect(voiceCard.text()).toContain("语音键");
     expect(voiceCard.text()).toContain("按住说话");
+    expect(wrapper.get(".remote-photo img").attributes()).toMatchObject({
+      src: "/RC003-remote-photo@2x.png",
+      loading: "eager",
+      fetchpriority: "high",
+      width: "202",
+      height: "410",
+    });
+    expect(wrapper.findAll(".mapping-connections path").every(path => path.attributes("pathLength") === "1")).toBe(true);
+  });
+
+  it("keeps prepared actions usable during entrance and immediately reveals them on pointer or focus", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    const initialMappings = await getButtonMappings();
+    let wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    try {
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+      const okCell = wrapper.findAll(".mapping-cell").find(cell => cell.text().includes("Enter"))!;
+      expect(okCell.attributes("disabled")).toBeUndefined();
+      await okCell.trigger("pointerdown");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      await okCell.trigger("click");
+      expect(wrapper.get(".mapping-editor").text()).toContain("Enter");
+      wrapper.unmount();
+      now += 301;
+      wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+      await wrapper.get(".mapping-cell").trigger("focusin");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+    } finally {
+      clock.mockRestore();
+      wrapper.unmount();
+      await flushPromises();
+    }
+  });
+
+  it("skips entrance on a rapid return and does not reintroduce it after completion or resize", async () => {
+    let now = 2_000_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    let notifyResize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { notifyResize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    const initialMappings = await getButtonMappings();
+    let wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    try {
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+      await wrapper.get(".mapping-card").trigger("animationend");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      notifyResize([{ contentRect: { width: 1280 } } as ResizeObserverEntry], {} as ResizeObserver);
+      await flushPromises();
+      expect(wrapper.get(".remote-photo").attributes("style")).toContain("left: 539px");
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      wrapper.unmount();
+      now += 100;
+      wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+      wrapper.unmount();
+      now += 301;
+      wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+      expect(wrapper.get(".mapping-canvas").classes()).toContain("mapping-canvas-entering");
+    } finally {
+      clock.mockRestore();
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+      await flushPromises();
+    }
+  });
+
+  it.each([true, false])("honors reduced-motion=%s and finishes entrance when the preference changes", async (reduced) => {
+    let motionChanged!: () => void;
+    const removeListener = vi.fn();
+    vi.stubGlobal("matchMedia", () => ({
+      matches: reduced,
+      addEventListener: (_type: string, listener: () => void) => { motionChanged = listener; },
+      removeEventListener: removeListener,
+    }));
+    const clock = vi.spyOn(performance, "now").mockReturnValue(3_000_000);
+    const initialMappings = await getButtonMappings();
+    const wrapper = mount(ButtonsPage, { props: { runtime, initialMappings } });
+    try {
+      expect(wrapper.get(".mapping-canvas").classes().includes("mapping-canvas-entering")).toBe(!reduced);
+      motionChanged();
+      await flushPromises();
+      expect(wrapper.get(".mapping-canvas").classes()).not.toContain("mapping-canvas-entering");
+    } finally {
+      clock.mockRestore();
+      wrapper.unmount();
+      vi.unstubAllGlobals();
+      await flushPromises();
+    }
+    expect(removeListener).toHaveBeenCalledWith("change", motionChanged);
   });
 
   it("does not register listeners or polling after unmounting during initial load", async () => {
@@ -963,7 +1082,7 @@ describe("buttons mapping page", () => {
     expect(await chipState(wrapper, "Enter")).toBe(false);
     expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
-    expect(wrapper.find(".mapping-editor").text()).toContain("首次按下可能额外触发");
+    expect(wrapper.find(".mapping-editor").text()).toContain("未就绪时可能先触发原始按键");
 
     await openCell(wrapper, "TV", 0);
     expect(await chipState(wrapper, "Enter")).toBe(false);
@@ -971,7 +1090,7 @@ describe("buttons mapping page", () => {
     expect(await chipState(wrapper, "录入自定义快捷键")).toBe(false);
     expect(await chipState(wrapper, "＋ 添加应用")).toBe(false);
     expect(wrapper.find(".mapping-editor").text()).toContain("普通键盘不受此映射影响");
-    expect(wrapper.find(".mapping-editor").text()).toContain("可能同时触发 Home 或输入反引号");
+    expect(wrapper.find(".mapping-editor").text()).toContain("未就绪时可能输入反引号");
   });
 
   it("左键与其余方向键同样开放自定义并显示首次按键提示", async () => {
@@ -989,6 +1108,70 @@ describe("buttons mapping page", () => {
       .find((c) => c.text().includes("左"))!
       .findAll(".mapping-cell")[0]!;
     expect((leftCellRc001.element as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it.each([
+    ["up", "上"], ["home", "主页"], ["back", "返回"],
+    ["power", "电源"], ["menu", "菜单"], ["volume_up", "音量+"],
+  ] as const)("requires ready enhancement for configured %s long actions", async (button, label) => {
+    const mappings: ButtonMappings = { enabled: true, actions: {
+      [button]: {
+        single: { type: "shortcut", chord: { keys: ["up"] } },
+        double: { type: "disabled" },
+        long: { type: "shortcut", chord: { keys: ["control", "alt", "l"] } },
+      },
+    } };
+    vi.mocked(getButtonMappings).mockResolvedValueOnce(mappings);
+    const wrapper = await mountPage();
+    await openCell(wrapper, label, 2);
+    expect(wrapper.get(".capability-note").text()).toContain("需等上方按键增强显示“增强已就绪”后使用");
+    expect(wrapper.get(".capability-note").text()).toContain("未就绪时可能先触发原始按键");
+    expect(wrapper.get(".capability-note").text()).not.toContain("由按键增强处理");
+    wrapper.unmount();
+  });
+
+  it("uses shared ready state and retains the single-only Home warning", async () => {
+    vi.mocked(getRc003InputStatus).mockResolvedValue({ ...stoppedRc003InputStatus(), phase: "ready", generation: 1 });
+    const mappings: ButtonMappings = { enabled: true, actions: {} };
+    for (const button of ["up", "back", "volume_up"] as RemoteButton[]) {
+      mappings.actions[button] = {
+        single: { type: "shortcut", chord: { keys: ["up"] } },
+        double: { type: "shortcut", chord: { keys: ["control", "enter"] } },
+        long: { type: "disabled" },
+      };
+    }
+    const host = mount(defineComponent({
+      setup() {
+        provideRc003InputState(() => ({ remoteModel: "rc003", connected: true }));
+        return () => h(ButtonsPage, { runtime, initialMappings: mappings });
+      },
+    }));
+    await flushPromises();
+    const page = host.findComponent(ButtonsPage);
+    for (const label of ["上", "返回", "音量+"]) {
+      await openCell(page, label, 1);
+      expect(page.get(".capability-note").text()).toContain("长按和双击由按键增强处理");
+      expect(page.get(".capability-note").text()).not.toContain("首次按下可能额外触发");
+    }
+    await openCell(page, "主页", 0);
+    expect(page.get(".capability-note").text()).toContain("仅配置单击时，仍可能同时触发 Home");
+    await openCell(page, "TV", 0);
+    expect(page.find(".capability-note").exists()).toBe(false);
+    await openCell(page, "确定", 0);
+    expect(page.find(".capability-note").exists()).toBe(false);
+    expect(getRc003InputStatus).toHaveBeenCalledOnce();
+    host.unmount();
+  });
+
+  it("does not treat ordinary Backspace hold as a configured long gesture", async () => {
+    vi.mocked(getButtonMappings).mockResolvedValueOnce({ enabled: true, actions: {
+      back: { single: { type: "normal_backspace" }, double: { type: "disabled" }, long: { type: "disabled" } },
+    } });
+    const wrapper = await mountPage();
+    await openCell(wrapper, "返回", 0);
+    expect(wrapper.find(".capability-note").exists()).toBe(false);
+    expect(wrapper.get(".gesture-timing-note").text()).toContain("按住持续删除");
+    wrapper.unmount();
   });
 
   it("电源（直接归因族）全开放且无单响应提示", async () => {
@@ -1049,7 +1232,7 @@ describe("buttons mapping page", () => {
     const preset = wrapper.get('[data-action-id="previous-chat"]');
     await preset.trigger("click");
     await flushPromises();
-    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_left"] } });
+    expect(vi.mocked(saveButtonMappings).mock.lastCall![0].actions.volume_up?.double).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_left"] } });
     expect(testButtonMapping).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -1219,7 +1402,7 @@ describe("buttons mapping page", () => {
     const wrapper = await mountPage();
     await wrapper.findAll("button").find((button) => button.text() === "恢复默认配置")!.trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("返回键按住连续删除，电源键长按插队/排队");
+    expect(wrapper.text()).toContain("返回键按住连续删除，确定和电源键长按插队/排队");
     const backCard = wrapper.findAll(".mapping-card").find((card) => card.find(".mapping-card-title strong").text() === "返回")!;
     expect(backCard.text()).toContain("Backspace");
     expect(backCard.findAll(".mapping-cell")[2]!.text()).toContain("Backspace");

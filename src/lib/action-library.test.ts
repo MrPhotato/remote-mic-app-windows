@@ -18,7 +18,8 @@ describe("action catalog and labels", () => {
     }
     expect(actionDisplayName({ type: "normal_backspace" })).toBe("Backspace");
     expect(actionDisplayName(chord("control", "enter"))).toBe("插队/排队");
-    expect(actionDisplayName(chord("control", "shift", "bracket_left"))).toBe("上一个聊天");
+    expect(actionDisplayName(chord("control", "alt", "bracket_left"))).toBe("上一个聊天");
+    expect(actionDisplayName(chord("control", "shift", "bracket_left"))).toBe("上一个标签页");
     expect(actionDisplayName(chord("control", "alt", "b"))).toBe("切换聊天和标签页");
     expect(new Set(ACTION_CATALOG.map((entry) => entry.id)).size).toBe(ACTION_CATALOG.length);
   });
@@ -26,8 +27,9 @@ describe("action catalog and labels", () => {
   it("recognizes modifier ordering and official aliases without mutating actual keys", () => {
     const recorded = chord("bracket_right", "right_shift", "left_control");
     const original = JSON.stringify(recorded);
-    expect(findKnownAction(recorded)?.id).toBe("next-chat");
-    expect(actionDisplayName(chord("page_down", "left_control"))).toBe("下一个聊天");
+    expect(findKnownAction(recorded)?.id).toBe("next-tab");
+    expect(findKnownAction(chord("bracket_left", "right_alt", "left_control"))?.id).toBe("previous-chat");
+    expect(findKnownAction(chord("page_down", "left_control"))).toBeUndefined();
     expect(findKnownAction(chord("b", "left_control"))?.id).toBe("sidebar");
     expect(findKnownAction(chord("right_control", "enter"))?.id).toBe("queue-message");
     expect(actionIdentity(recorded)).toBe(actionIdentity(chord("left_control", "right_shift", "bracket_right")));
@@ -46,7 +48,9 @@ describe("action catalog and labels", () => {
   it("provides searchable lower-priority mouse and contextual functions", () => {
     expect(searchActions(emptyActionLibrary(), "鼠标").some((entry) => entry.action.type === "mouse_move")).toBe(true);
     expect(searchActions(emptyActionLibrary(), "Ctrl+Enter", "system").map((entry) => entry.id)).toContain("queue-message");
-    expect(searchActions(emptyActionLibrary(), "Ctrl+Page Down").map((entry) => entry.id)).toContain("next-chat");
+    expect(searchActions(emptyActionLibrary(), "Ctrl+Alt+]").map((entry) => entry.id)).toEqual(["next-chat"]);
+    expect(searchActions(emptyActionLibrary(), "Ctrl+Shift+]").map((entry) => entry.id)).toEqual(["next-tab"]);
+    expect(searchActions(emptyActionLibrary(), "", "view").map((entry) => entry.id)).toContain("previous-tab");
     expect(searchActions(emptyActionLibrary(), "Ctrl+-").map((entry) => entry.id)).toEqual(["font-decrease"]);
     expect(searchActions(emptyActionLibrary(), "Win+L").map((entry) => entry.id)).toContain("lock-screen");
     expect(findKnownAction(chord("control", "s"))?.label).toBe("保存");

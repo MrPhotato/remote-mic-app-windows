@@ -2,6 +2,97 @@
 
 本仓库是面向 Windows 的 Rust/Tauri 工程。
 
+## 2026-10-21 聊天与标签页导航
+
+- 实施前核对用户提供的当前 Windows 应用“视图”菜单：左侧“上一个/下一个侧边栏条目”为 Ctrl+Alt+[ / ]，右侧“上一个/下一个标签页”为 Ctrl+Shift+[ / ]。按用户语义把前者显示为“聊天”，后者显示为“标签页”。这是当前可见菜单证据，不读取第三方私有配置。
+- 沿用本仓库快捷键目录、共享默认及按键注入路径；仅分开功能名称/组合键，并把音量导航的离散触发保护扩展到 Ctrl+Alt 组合。未更改注入时序、蓝牙或 Helper。
+- 旧 Ctrl+Page Up/Down、Ctrl+Tab 等别名没有本轮当前菜单证据，不再当作聊天命令识别；原始用户配置保留其实际按键。没有复制外部实现。
+
+## 2026-10-20 按键页入场与应用级初始化提示
+
+- 0.3.18 按进一步反馈把卡片开始时间提前至 300ms、箭头提前至 380ms，
+  连线与各段时长保持，卡片仍最后完成；沿用已有 CSS 动画及清理边界。
+- 0.3.17 沿用下述本地动画，仅把卡片开始时间从 440ms 提前到 380ms，
+  与连线末段交叉；各动画时长不变，卡片仍在箭头完成后结束，不引入外部实现。
+- 0.3.16 按用户体验反馈恢复本应用统一的 150ms 离场、440ms 翻页入场，
+  页内展开独立放慢至 660ms（遥控器先显示、连线展开、卡片淡入）。
+  继续参考下述 Vue 嵌套动画边界：局部动画不依赖父级 enter 类存活；
+  中途离页交回统一退出动画，保留快速返回及减少动态效果规则。
+- 先复查本仓库对原 macOS RemoteMappingCanvas / RemoteMappingLayout 的既有布局、
+  0.3.2 首帧几何修正、0.3.4 最新配置准备及 0.2.16 初始化弹窗；沿用原遥控器照片、
+  卡片定位、原生 dialog 和真实中性状态判断，不移植额外外部实现或新增动画依赖。
+- 参考 [Vue Transition](https://vuejs.org/guide/built-ins/transition.html) 的 CSS 开关及嵌套动画边界，
+  0.3.15 曾移除按键页的整页等待；0.3.16 按反馈恢复。局部动画不改变玻璃祖先的 opacity。
+  每次仍读取最新按键配置，图片失败不阻塞配置界面。
+- 按 [preload](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload)
+  提前获取已有本地 PNG；不重新生成图片或改变外观。
+- 参考 [Vue 状态共享](https://vuejs.org/guide/scaling-up/state-management.html)，
+  将增强状态和提示生命周期归应用级管理，卡片消费同一来源。只调整前端归属，
+  不生成中性报告、不自动开启增强、不改变权限与硬件处理。
+
+## 2026-10-20 RC003 确认键原生 Enter 抑制
+
+- 用户明确授权仅将现有 Helper 再扩展到确认键，先做本地验证；范围见 ADR 0003。
+- 参考本仓库已经归属的 TV 报告入口清除/返回恢复实现，以及下文固定
+  `GetSayAll/remote-mic-app-windows` 提交 `15a065298a6ab9c84a675bb24c0e419418704d71`
+  的来源说明。延续其报告复制边界思路，不移植上游全按键接管或宿主重启。
+  本轮直接审查已有本地改编实现；远端固定文件未成功重新获取，不声称复核了远端最新实现。
+- 确认键沿用本仓库 HID usage `0x0028` 映射。继承逐调用设备来源绑定、真实中性状态、
+  清除后读回、调用成功后发布与缓冲区恢复；增加独立 mask 16 和显式租约。
+- 普通键盘 Enter 与注入组合键保持公开输入路径；不延长全局归因等待，也不因遥控器活动
+  误吞物理键盘 Enter。短/长按阈值及基础语音时序不变。原生首沿与实体闲置首用须分别验收。
+
+## 2026-10-20 确定键长按日常默认
+
+- 按用户要求及已完成的 RC003 0.3.14 实体确认，将确定键长按 Ctrl+Enter 加入
+  `default-button-mappings.json`。复用本仓库已有共享默认、日常方案备份和配置加载路径，
+  电源键长按保持；未移植新的外部实现，也未调整手势时序。
+- 首次无配置文件、恢复默认及手动应用日常方案一致；已有文件不自动迁移。
+  RC003 仍需用户主动开启增强并完成中性状态初始化；不自动提权、不改基础语音。
+  本次软件验证及新安装验收边界见 [WindowsMappingWorkflow](Testing/WindowsMappingWorkflow.md)。
+
+## 安装界面与自选目录（2026-10-20）
+
+Tauri CLI 参考版本为 2.11.4，固定提交 `8909f221d1515955fc843808032bdc5d62209c96`；
+核对 `crates/tauri-cli/src/signer/sign.rs`、`helpers/updater_signature.rs` 和
+`crates/tauri-bundler/src/bundle/windows/templates/nsis/installer.nsi` 的签名、命令行和快捷方式行为。
+安装内核继续使用本仓库锁定工具链生成的模板，外层分派及安装界面为独立实现。
+
+2026-10-20 实装发现打包后程序哈希不能取恢复后的构建原件。
+[Tauri bundle.rs](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs)
+先备份原件，修改 bundle type 并签名，生成 NSIS 后再还原原件。实际安装文件仅标记三字节不同，
+只读实验哈希与安装结果精确一致。修复采用 NSIS 编译期捕获真正装入的文件，覆盖签名等后续字节变化，
+不通过忽略标记或降低完整性校验来规避问题。见 [故障记录](Bugs/2026-10-20-setup-installed-hash.md)。
+
+捕获使用 NSIS 编译期 `!execute`，直接创建 PowerShell 进程，不经命令解释器；仅在本次构建显式开启时执行。
+另外核对锁定的 `tauri-runtime-wry 2.11.4`，提交
+`ca90b46b2e2cbbc981dae1b809f4af4343fe0558` 的
+[`RequestExit` 分支](https://github.com/tauri-apps/tauri/blob/ca90b46b2e2cbbc981dae1b809f4af4343fe0558/crates/tauri-runtime-wry/src/lib.rs#L4354)
+未保留退出码；安装宿主记录退出请求，在事件循环正常结束后返回该码，保持取消的 `1602`。
+
+- 实施前对照 [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)、本仓库锁定的 Tauri CLI 2.11.4 生成模板，以及 [NSIS Modern UI 2](https://nsis.sourceforge.io/Docs/Modern%20UI%202/Readme.html)。原安装器已有目录页，但被动更新会跳过；原生 NSIS 控件不能直接复用 Vue 组件。因此保留现有 NSIS 文件、注册表、卸载和正常退出实现，新增隔离的 Vue/Tauri 安装宿主；共享本仓库 `WindowChrome.vue` 与 `styles.css`，不复制另一套玻璃主题。
+- 薄 NSIS 外层仅负责解包与分派；无参数进入新界面，显式命令行参数进入原安装器。依据 [NSIS $CMDLINE](https://nsis.sourceforge.io/Docs/Chapter4.html#varconstant) 对 `/D=` 的特殊处理，使用公开 `GetCommandLineW` 保留原参数，避免丢失含空格、中文的安装位置。更新继续锁定现有目录，不将目录选择误当作完整迁移支持。
+- 依照 [Microsoft WebView2 distribution](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，先检查 Runtime；缺失时经原生提示运行官方引导程序。构建时验证并嵌入 Microsoft Authenticode 有效的 bootstrapper，安装时不从其他来源下载运行程序。
+- 安装界面只用公开注册表、`IFileOpenDialog`、进程及文件 API；不加载应用平台层、不访问音频或蓝牙。内层安装器和安装完成的主程序均与编译时 SHA-256 绑定；最终外层安装器完成后才生成 updater 签名。CLI 透传和新 UI 分别验证，不把文件夹选择或安装器启动成功当作完整安装通过。
+
+## 当前生效麦克风高亮（2026-10-20）
+
+2026-10-20 用户回验修订：移除勾号徽标，改由行高亮及按钮“使用中”表达。选择确认后复用本仓库
+`--motion-slide` / `--ease-out-quint` 的一次性轻微回落，失败及轮询不触发。
+预先复核既有玻璃动效与 [Vue 状态过渡](https://vuejs.org/guide/built-ins/transition.html)、
+[MDN 减少动态效果](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion)；
+沿用公开 Web Animations API，取消旧动画和卸载清理，不引入动效库或改变选择／音频生命周期。
+
+- 复核本文件已记录的 SoundSwitch 与 EarTrumpet 默认设备来源及默认麦克风会话设计：保存目标与当前系统默认端点是不同状态，显示沿用现有宿主快照，不增加切换、录音或设备访问。
+- 参考 [Microsoft GetDefaultAudioEndpoint](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint) 的方向与角色语义，按当前 Capture / Console 端点标记；不使用可能过期的枚举默认标记，也不宣称代表每个应用独立选择的麦克风。
+- 参考 [W3C Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)，颜色之外同时提供勾号和“当前生效”文字。无法确认当前端点时取消高亮；仅在状态变化记录不含设备身份的展示类别日志。未复制外部实现。
+
+## 运行窗口任务栏图标（2026-10-19）
+
+- 核对锁定的 Tauri 2.11.5 / tauri-runtime-wry 2.11.4 / Tao 0.35.3：默认窗口图标经 `set_window_icon` 设置 `ICON_SMALL`，独立 `taskbar_icon` 默认空。0.3.11 本机窗口的 `ICON_BIG` 和类大图标均为空，已有小图标有效；不将安装资源正确视为任务栏显示通过。
+- 依据 Microsoft [WM_SETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-seticon)、[WM_GETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-geticon) 和 [LoadImageW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-loadimagew)，在主窗口所属线程为该窗口补齐大图标。资源来自当前 exe 的 Tauri 内嵌图标 32512，使用系统默认尺寸共享句柄；不销毁共享句柄或所有权未知的旧句柄，不从空模块回退加载系统默认图标。
+- 实现自行编写，不复制第三方模块；仅修改本进程同线程窗口的大图标，不修改应用分组标识、固定快捷方式或系统缓存。安装版可见结果另行验证，见 [任务栏图标记录](Bugs/2026-10-19-taskbar-window-icon.md)。
+
 ## README 展示资源（2026-10-19）
 
 - `docs/assets/readme-hero.svg` 与 `voice-flow.svg` 为本项目原创矢量图，沿用新应用图标的银灰遥控器及靛紫、薄荷绿配色，按 GPL-3.0-only 提供；未复制第三方插画、模板或代码。截图来自本机已安装的 0.3.11 应用，展示更新及外观设置，无设备身份或个人路径。
@@ -34,7 +125,7 @@
 - UI 沿用本仓库已归属的原遥控器图、连线与单击/双击/长按卡片，不重新绘制或复制第三方布局。编辑区依据用户确认的五页签方案及当前应用菜单截图调整；单键保留键名，组合键显示功能名。
 - 对照 [OpenAI 官方命令表](https://learn.chatgpt.com/docs/reference/commands) 的 Windows 列：聊天切换使用 Ctrl+Shift+[ / ]、侧栏 Ctrl+Shift+S、聊天和标签区 Ctrl+Alt+B、重做 Ctrl+Y。Ctrl+Enter 的“插队/排队”名称及用途来自用户明确要求，不标为独立实测的官方行为。全部快捷键作用于当前前台应用。
 - 常用历史与置顶仅参考 [VS Code Run Recent Command](https://code.visualstudio.com/docs/terminal/shell-integration#_run-recent-command) 的可搜索历史及置顶交互；未复制实现，也不读取 VS Code 或其他应用的历史。无线麦只记录用户成功分配的功能、次数与选择时间，以及用户主动录制命名的快捷键；不统计实际遥控按压，不收集输入文字或声音。最近与次数的排序规则由本项目实现。
-- 普通手势沿用既有 Mac 参考的 300ms 双击与 550ms 长按阈值，不进行未实测的时序优化。源码确认 OK 闲置首按的原生 Enter 仍可能泄漏，而单击对冲不能补偿长按 Ctrl+Enter；故默认插队/排队放在直接归因的电源键长按，OK 维持 Enter。音量映射为聊天切换时不连发，物理冷首用仍须单独验收。
+- 普通手势沿用既有 Mac 参考的 300ms 双击与 550ms 长按阈值，不进行未实测的时序优化。0.2.13 因 OK 闲置首按原生 Enter 泄漏，默认插队/排队仅放在电源键长按；RC003 确认键后续修复及默认扩展见上方 2026-10-20 条目。音量映射为聊天切换时不连发，物理冷首用仍须单独验收。
 - 计时回调迟到的释放路径按原按下截止时间补发一次长按；测试先复现 Esc/空结果，再验证原阈值内外、已触发及取消不重复。没有调整延迟常量，实体冷首用仍与软件测试分开记录。
 - 后端首次无配置文件与前端手动应用共用一个默认配置源；不通过升级覆盖已有用户文件，不改变语音、设备、管理员增强或系统默认音频设置。验收边界见 [WindowsMappingWorkflow](Testing/WindowsMappingWorkflow.md)。
 
@@ -539,7 +630,32 @@ ICO 包含 16、24、32、48、64、128、256px；预览检查深浅背景与实
 不嵌入照片像素；加宽机身、缩短底部留白，保留第一版底色与无线声波。
 对新资源重复执行 PNG/ICO 校验、深浅背景小尺寸预览和前端构建，结果 passed；原生安装外观仍 deferred。
 
+## 方向键原生首沿调查（2026-10-21）
+
+复核本仓库 [2026-09-06 持锁实测](docs/investigations/2026-09-06-left-double-response-arm-deadlock.md)
+及当前可选 RC003 Helper 的 TV/确认键来源隔离路径，再核对 Microsoft
+[KBDLLHOOKSTRUCT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct)
+与 [RAWINPUTDEVICE](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawinputdevice)：
+低级钩子没有设备句柄，RIDEV_NOLEGACY 仅约束注册应用自己的旧式消息。
+当前真实三次上键长按均先漏出原生 DOWN，不能靠延长 60ms 等待或 4 秒武装修复来源时序。
+用户随后明确授权按全部普通键检查结果补齐缺口；本轮将已采用的 TV/OK 来源绑定、
+报告复制边界、清除读回与恢复机制推广到配置了有效长按/双击的普通键，不新增外部实现或时序常量。
+Helper 原参考提交仍为本文件已记录的 ZSTDJan `1e6b1d285f9cd50f30c5bc92ac7787a693fc993d`
+和 GetSayAll `6a4aaf88ef740534a29152ea0ef021cffee82256`，不改变来源或许可。
+协议 4 只处理本仓库已有明确 usage 表，未接管键与语音保持原路径；正常 Backspace 连删不误作独立长按。
+Windows Hook 文档及先前持锁实测用于否决扩大全局等待/吞键窗口，未重新猜测延迟。
+证据、逐键覆盖与待验证方案见 [故障记录](Bugs/2026-10-21-direction-hold-native-arrow.md)。
+
 ## 默认麦克风选择与会话恢复（2026-10-19）
+
+2026-10-20 缺失恢复目标处理：沿用下述 SoundSwitch / EarTrumpet 接口范围，
+同时核对 Microsoft [默认端点选择规则](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/default-audio-endpoint-selection)
+及 [GetDevice](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdevice)。
+Windows 以活动设备、用户偏好和系统排序选择默认端点；没有可用默认值时返回
+E_NOTFOUND。GetDevice 的 E_NOTFOUND 仅证明该标识不对应当前系统端点，
+不能据此宣称驱动故障。实现只在确认原端点不可用或原本没有默认值时保留系统当前选择，
+不复制系统排序、不重启设备，也不调用未验证的“清空默认设备”接口。
+当前默认仍为 CABLE 也必须如实记录。授权与边界见 ADR 0004。
 
 先核对 SoundSwitch 与 EarTrumpet 的默认设备切换做法。Windows 公开 Core Audio 接口提供
 [默认端点读取](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint)
@@ -560,3 +676,25 @@ EarTrumpet 固定提交 `0321205ad775a91967cf439576b52909e146149b` 的
 读取与通知使用公开 API，写入入口只接受重新验证为 active Capture 的端点；不写 Render 默认设备，
 不访问第三方应用设置，也不新增驱动、提权或蓝牙操作。真实设备与安装版验收分别记录于
 [Windows 默认麦克风验证](Testing/WindowsDefaultMicrophone.md)。
+
+### 固定遥控器目标与手选普通麦克风（2026-10-20）
+
+修复前复核上述 SoundSwitch 与 EarTrumpet 固定提交的行为结论：当前默认设备来自 Core Audio 实际读回，显式手选默认设备与应用持有的自动切换偏好应分别处理。复用本仓库既有逐角色写入、读回、失败回滚和恢复记录，不复制新的外部代码，不增加设备写入接口或权限。
+
+按用户纠正，虚拟 Capture 固定在目标区、普通 Capture 固定在其余列表。普通麦“立即使用”独立于遥控器目标保存，成功确认后结束临时恢复所有权；保留外部手选保护，重新应用 CABLE 才解除。历史物理目标仅在唯一已验证虚拟线路存在时迁移。界面仅用既有低饱和靛紫高亮和按钮文案，不用绿色／外部发光；成功反馈仍只作用于刚选中的行。范围与尚待实机验收项见 [ADR 0004](docs/decisions/0004-default-microphone-session.md) 和 [验证记录](Testing/WindowsDefaultMicrophone.md)。
+
+### 默认麦克风改为跟随遥控器连接（2026-10-19）
+
+按用户要求，将切换触发点由进程启动／退出改为所选遥控器的连接生命周期。复核并复用上节
+SoundSwitch `6ce0c4d80849fe4654ec36a0db0556eee8555f26`、EarTrumpet
+`0321205ad775a91967cf439576b52909e146149b` 的既有参考结论，以及本仓库 Windows
+平台层的逐角色恢复、外部默认设备通知和真实 `connection_generation` 隔离；没有复制新的外部实现。
+枚举和通知仍为公开 Core Audio API，写默认录音设备仍是用户有限授权的未公开
+`IPolicyConfig::SetDefaultEndpoint`，不将整条路径表述为公开 API，边界沿用 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
+
+同一连接代次 `Ready/Streaming/Draining` 持有切换，不随单次说话反复切换；离线仅保存，
+断开时恢复，新代次就绪后重建基线，退出兜底。保留外部手动选择，不新增 BLE 会话、Radio 操作、
+驱动或提权，不改变按住说话时序。宿主 28 项、Windows 平台层 23 项（1 项默认 ignored）、
+前端 44 项测试及 1030×734 深浅浏览器布局 passed；真实接口释放／重选往返 passed，
+三种 Render 默认值全程不变。安装版实体遥控器断开／重连与听写仍 deferred，详见
+[本次验证与历史边界](Testing/WindowsDefaultMicrophone.md)。

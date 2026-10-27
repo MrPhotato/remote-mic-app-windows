@@ -14,6 +14,9 @@ pub struct MicrophoneSelectionSnapshot {
     pub phase: String,
     pub last_error: Option<String>,
     pub restore_pending: bool,
+    /// Ownership evidence survives a simultaneous error/failed UI phase.
+    #[serde(default)]
+    pub external_change_observed: bool,
 }
 
 impl Default for MicrophoneSelectionSnapshot {
@@ -26,6 +29,7 @@ impl Default for MicrophoneSelectionSnapshot {
             phase: "unconfigured".into(),
             last_error: None,
             restore_pending: false,
+            external_change_observed: false,
         }
     }
 }
@@ -43,10 +47,16 @@ impl DefaultMicrophoneRuntime {
     pub fn select(&self, _: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
         Err(PlatformError::UnsupportedPlatform)
     }
+    pub fn use_now(&self, _: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+        Err(PlatformError::UnsupportedPlatform)
+    }
     pub fn snapshot(&self) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
         Err(PlatformError::UnsupportedPlatform)
     }
     pub fn restore(&self) -> Result<(), PlatformError> {
+        Err(PlatformError::UnsupportedPlatform)
+    }
+    pub fn release_session(&self) -> Result<(), PlatformError> {
         Err(PlatformError::UnsupportedPlatform)
     }
 }
@@ -57,7 +67,7 @@ mod native {
     use std::collections::VecDeque;
     use std::io::Write;
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
         Arc,
     };
@@ -65,8 +75,9 @@ mod native {
     use windows::core::{IUnknown, IUnknown_Vtbl, Interface, GUID, HRESULT, PCWSTR};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
     use windows::Win32::Media::Audio::{
-        eCapture, ERole, IMMDeviceEnumerator, IMMEndpoint, IMMNotificationClient,
-        MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+        eCapture, ERole, IMMDevice, IMMDeviceEnumerator, IMMEndpoint, IMMNotificationClient,
+        MMDeviceEnumerator, DEVICE_STATE_ACTIVE, DEVICE_STATE_DISABLED, DEVICE_STATE_NOTPRESENT,
+        DEVICE_STATE_UNPLUGGED,
     };
     use windows::Win32::System::Com::StructuredStorage::{
         PropVariantClear, PropVariantToStringAlloc,
@@ -125,8 +136,14 @@ mod native {
         const IID: GUID = GUID::from_u128(0xf8679f50_850a_41cf_9c72_430f290290c8);
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum CaptureAvailability {
+        Active,
+        Unavailable,
+    }
     trait AudioAccess {
         fn current(&self, role: usize) -> Result<Option<String>, PlatformError>;
+        fn capture_availability(&self, id: &str) -> Result<CaptureAvailability, PlatformError>;
         fn capture_name(&self, id: &str) -> Result<String, PlatformError>;
         fn set_capture(&mut self, id: &str, role: usize) -> Result<(), PlatformError>;
     }
@@ -147,6 +164,38 @@ mod native {
             }
             .map_err(|e| failure("policy_interface", e))?;
             Ok(Self { enumerator, policy })
+        }
+        fn active_capture(&self, id: &str) -> Result<Option<IMMDevice>, PlatformError> {
+            if id.is_empty() || id.contains('\0') {
+                return Err(local_failure("麦克风标识无效"));
+            }
+            let id = wide(id);
+            let device = match unsafe { self.enumerator.GetDevice(PCWSTR(id.as_ptr())) } {
+                Ok(device) => device,
+                Err(error) if error.code() == HRESULT::from_win32(1168) => {
+                    note("capture_availability", "not_found");
+                    return Ok(None);
+                }
+                Err(error) => return Err(failure("get_capture", error)),
+            };
+            let endpoint: IMMEndpoint =
+                device.cast().map_err(|e| failure("capture_interface", e))?;
+            let flow =
+                unsafe { endpoint.GetDataFlow() }.map_err(|e| failure("capture_direction", e))?;
+            if flow != eCapture {
+                return Err(local_failure("所选设备不是麦克风"));
+            }
+            let state = unsafe { device.GetState() }.map_err(|e| failure("capture_state", e))?;
+            if state == DEVICE_STATE_ACTIVE {
+                return Ok(Some(device));
+            }
+            let inactive =
+                DEVICE_STATE_DISABLED.0 | DEVICE_STATE_NOTPRESENT.0 | DEVICE_STATE_UNPLUGGED.0;
+            if state.0 != 0 && state.0 & !inactive == 0 {
+                note("capture_availability", "inactive");
+                return Ok(None);
+            }
+            Err(local_failure("无法确认麦克风状态，已保留恢复记录"))
         }
     }
     fn wide(value: &str) -> Vec<u16> {
@@ -172,21 +221,19 @@ mod native {
                 Err(error) => Err(failure("read_default", error)),
             }
         }
+        fn capture_availability(&self, id: &str) -> Result<CaptureAvailability, PlatformError> {
+            self.active_capture(id).map(|device| {
+                if device.is_some() {
+                    CaptureAvailability::Active
+                } else {
+                    CaptureAvailability::Unavailable
+                }
+            })
+        }
         fn capture_name(&self, id: &str) -> Result<String, PlatformError> {
-            if id.is_empty() || id.contains('\0') {
-                return Err(local_failure("麦克风标识无效"));
-            }
-            let id = wide(id);
-            let device = unsafe { self.enumerator.GetDevice(PCWSTR(id.as_ptr())) }
-                .map_err(|e| failure("get_capture", e))?;
-            let endpoint: IMMEndpoint =
-                device.cast().map_err(|e| failure("capture_interface", e))?;
-            let flow =
-                unsafe { endpoint.GetDataFlow() }.map_err(|e| failure("capture_direction", e))?;
-            let state = unsafe { device.GetState() }.map_err(|e| failure("capture_state", e))?;
-            if flow != eCapture || state != DEVICE_STATE_ACTIVE {
-                return Err(local_failure("所选设备不是当前可用的麦克风"));
-            }
+            let device = self
+                .active_capture(id)?
+                .ok_or_else(|| local_failure("所选麦克风当前不可用"))?;
             let store = unsafe { device.OpenPropertyStore(STGM_READ) }
                 .map_err(|e| failure("capture_properties", e))?;
             let mut value = unsafe { store.GetValue(&PKEY_Device_FriendlyName) }
@@ -225,12 +272,18 @@ mod native {
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
     struct RoleLease {
-        original: String,
+        #[serde(deserialize_with = "required_original")]
+        original: Option<String>,
         last_applied: Option<String>,
         pending: Option<String>,
         owned: bool,
         #[serde(default)]
         relinquished: bool,
+    }
+    fn required_original<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<String>, D::Error> {
+        Option::<String>::deserialize(deserializer)
     }
     #[derive(Clone, Debug, Serialize, Deserialize)]
     struct Journal {
@@ -240,7 +293,7 @@ mod native {
     impl Journal {
         fn empty() -> Self {
             Self {
-                schema_version: 1,
+                schema_version: 2,
                 roles: Vec::new(),
             }
         }
@@ -248,14 +301,14 @@ mod native {
             self.roles.iter().any(|role| role.owned)
         }
         fn validate(&self) -> Result<(), PlatformError> {
-            if self.schema_version != 1
+            if !matches!(self.schema_version, 1 | 2)
                 || (!self.roles.is_empty() && self.roles.len() != 3)
                 || self.roles.iter().any(|role| {
-                    role.original.is_empty()
-                        || role.original.contains('\0')
+                    (self.schema_version == 1 && role.original.is_none())
                         || role
-                            .last_applied
+                            .original
                             .iter()
+                            .chain(role.last_applied.iter())
                             .chain(role.pending.iter())
                             .any(|id| id.is_empty() || id.contains('\0'))
                         || (role.owned && role.last_applied.is_none() && role.pending.is_none())
@@ -274,9 +327,12 @@ mod native {
         fn load(&self) -> Result<Journal, PlatformError> {
             match std::fs::read(&self.0) {
                 Ok(bytes) => {
-                    let journal: Journal = serde_json::from_slice(&bytes)
+                    let mut journal: Journal = serde_json::from_slice(&bytes)
                         .map_err(|_| local_failure("无法读取麦克风恢复记录，尚未切换系统设备"))?;
                     journal.validate()?;
+                    // Schema 1 strings deserialize as Some; only schema 2 permits
+                    // a confirmed absence of a default endpoint as the baseline.
+                    journal.schema_version = 2;
                     Ok(journal)
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Journal::empty()),
@@ -345,6 +401,7 @@ mod native {
             ])
         }
         fn relinquish(&mut self, role: usize, reason: &str) {
+            self.state.external_change_observed = true;
             // Windows can change Console and Multimedia together. Never restore
             // the other half of that pair over a user's external selection.
             let affected = if role < 2 { 0..2 } else { 2..3 };
@@ -361,13 +418,15 @@ mod native {
             if self.journal.roles.len() != 3 {
                 return Ok(());
             }
+            let before = self.journal.clone();
+            let before_phase = self.state.phase.clone();
             let mut changed = false;
             for (role, current) in current.iter().enumerate() {
                 let lease = &self.journal.roles[role];
                 if lease.owned
                     && lease.last_applied.is_none()
                     && lease.pending.is_some()
-                    && current.as_deref() == Some(lease.original.as_str())
+                    && current == &lease.original
                 {
                     // A write-ahead intent may survive a crash before that role
                     // changed. It is not evidence of an external paired change.
@@ -385,7 +444,11 @@ mod native {
                 }
             }
             if changed {
-                self.store.save(&self.journal)?;
+                if let Err(error) = self.store.save(&self.journal) {
+                    self.journal = before;
+                    self.state.phase = before_phase;
+                    return Err(error);
+                }
             }
             Ok(())
         }
@@ -410,9 +473,7 @@ mod native {
             // Save all three baselines and intent for both potentially linked roles
             // before the system call. A crash in the call must not lose its side effect.
             for &affected in &affected {
-                let previous = before_values[affected]
-                    .clone()
-                    .ok_or_else(|| local_failure("无法确认切换前的默认麦克风"))?;
+                let previous = before_values[affected].clone();
                 let lease = &mut self.journal.roles[affected];
                 if !lease.owned {
                     lease.original = previous;
@@ -519,10 +580,7 @@ mod native {
             if self.journal.roles.is_empty() {
                 let mut roles = Vec::new();
                 for role in 0..3 {
-                    let original = self
-                        .backend
-                        .current(role)?
-                        .ok_or_else(|| local_failure("无法确认原默认麦克风，尚未进行切换"))?;
+                    let original = self.backend.current(role)?;
                     roles.push(RoleLease {
                         original,
                         last_applied: None,
@@ -557,8 +615,54 @@ mod native {
                 return Err(error);
             }
             self.state.phase = "ready".into();
+            self.state.external_change_observed = false;
             self.state.last_error = None;
             self.snapshot()
+        }
+        fn use_now(
+            &mut self,
+            id: String,
+            cancelled: &impl Fn() -> bool,
+        ) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+            let started = Instant::now();
+            let previous_target = (
+                self.state.target_microphone_id.clone(),
+                self.state.target_microphone_name.clone(),
+            );
+            let result = (|| {
+                // Reuse the checked three-role write, write-ahead journal and
+                // rollback. A failed manual choice must retain prior recovery.
+                let selected = self.select_inner(id.clone(), cancelled)?;
+                if selected.phase != "ready"
+                    || selected.current_microphone_id.as_deref() != Some(id.as_str())
+                {
+                    return Err(local_failure("默认麦克风未确认，已保留恢复记录"));
+                }
+                if cancelled() {
+                    return Err(local_failure("麦克风切换已取消，已保留恢复记录"));
+                }
+                // This explicit user choice becomes the system preference.
+                // Persist the relinquishment before reporting success so exit
+                // or the next process cannot undo a completed manual choice.
+                let committed = Journal::empty();
+                self.store.save(&committed)?;
+                self.journal = committed;
+                self.state.target_microphone_id = None;
+                self.state.target_microphone_name = None;
+                self.state.phase = "external".into();
+                self.state.external_change_observed = true;
+                self.state.restore_pending = false;
+                self.state.last_error = None;
+                note("manual_choice", "committed_without_restore");
+                self.snapshot()
+            })();
+            if let Err(error) = &result {
+                self.state.target_microphone_id = previous_target.0;
+                self.state.target_microphone_name = previous_target.1;
+                self.record_error(error);
+            }
+            elapsed_note("use_now", result.is_ok(), started);
+            result
         }
         fn rollback_selection(&mut self, before: &[RoleLease], previous: &[Option<String>; 3]) {
             for (role, previous) in previous.iter().enumerate() {
@@ -568,14 +672,22 @@ mod native {
                     if current[role] == *previous || !self.journal.roles[role].owned {
                         return Ok(());
                     }
-                    let target = previous
-                        .as_deref()
-                        .ok_or_else(|| local_failure("回滚前麦克风不可确认"))?;
+                    let Some(target) = previous.as_deref() else {
+                        // First restore valid peers while both roles remain owned.
+                        return Ok(());
+                    };
                     self.protect_paired_role(role, target, &current)?;
                     self.write_capture(target, role, "rollback")
                 })();
                 if result.is_err() {
                     role_note("rollback", role, "pending");
+                }
+            }
+            for (role, previous) in previous.iter().enumerate() {
+                if previous.is_none() && self.journal.roles[role].owned {
+                    if self.preserve_current(role, "no_previous_default").is_err() {
+                        role_note("rollback", role, "pending");
+                    }
                 }
             }
             // A later role's write can change an earlier one. Restore the old lease
@@ -617,6 +729,7 @@ mod native {
             Ok(())
         }
         fn uncertainty(&mut self) -> Result<(), PlatformError> {
+            self.state.external_change_observed = true;
             for lease in &mut self.journal.roles {
                 lease.owned = false;
                 lease.relinquished = true;
@@ -650,6 +763,66 @@ mod native {
             self.state.restore_pending = self.journal.pending();
             Ok(self.state.clone())
         }
+        fn preserve_current(&mut self, role: usize, reason: &str) -> Result<(), PlatformError> {
+            // Read again at the decision boundary. A new external value belongs
+            // to Windows/user and must never be replaced by a guessed endpoint.
+            let current = self.defaults()?;
+            self.reconcile(&current)?;
+            let mut next = self.journal.clone();
+            if !next.roles[role].owned {
+                return Ok(());
+            }
+            if role < 2 {
+                let peer = &next.roles[1 - role];
+                if peer.owned {
+                    if let Some(original) = peer.original.as_deref() {
+                        if self.backend.capture_availability(original)?
+                            == CaptureAvailability::Active
+                            && current[1 - role].as_deref() != Some(original)
+                        {
+                            role_note("restore_fallback", role, "waiting_for_valid_peer");
+                            return Err(local_failure(
+                                "关联麦克风的原设置尚未恢复，已保留恢复记录",
+                            ));
+                        }
+                    }
+                }
+            }
+            next.roles[role].owned = false;
+            next.roles[role].pending = None;
+            next.roles[role].relinquished = true;
+            // Commit retirement before forgetting ownership in memory. If the
+            // disk is unavailable, the old recoverable lease remains intact.
+            self.store.save(&next)?;
+            let lease = &self.journal.roles[role];
+            role_note(
+                "restore_fallback",
+                role,
+                &format!(
+                    "{reason} default_present={} current_is_last_applied={}",
+                    current[role].is_some(),
+                    current[role].is_some() && current[role] == lease.last_applied,
+                ),
+            );
+            self.journal = next;
+            Ok(())
+        }
+        fn unavailable_original_reason(
+            &self,
+            role: usize,
+        ) -> Result<Option<&'static str>, PlatformError> {
+            let lease = &self.journal.roles[role];
+            if !lease.owned {
+                return Ok(None);
+            }
+            match lease.original.as_deref() {
+                None => Ok(Some("original_default_absent")),
+                Some(id) => match self.backend.capture_availability(id)? {
+                    CaptureAvailability::Active => Ok(None),
+                    CaptureAvailability::Unavailable => Ok(Some("original_unavailable")),
+                },
+            }
+        }
         fn restore_role(&mut self, role: usize) -> Result<(), PlatformError> {
             let current = self.defaults()?;
             self.reconcile(&current)?;
@@ -658,11 +831,31 @@ mod native {
                 role_note("restore_decision", role, "not_owned");
                 return Ok(());
             }
-            if current[role].as_deref() == Some(lease.original.as_str()) {
+            if self.unavailable_original_reason(role)?.is_some() {
+                role_note("restore_decision", role, "fallback_deferred");
                 return Ok(());
             }
-            self.protect_paired_role(role, &lease.original, &current)?;
-            self.write_capture(&lease.original, role, "restore")
+            if current[role] == lease.original {
+                return Ok(());
+            }
+            let original = lease
+                .original
+                .as_deref()
+                .ok_or_else(|| local_failure("原默认麦克风不可用"))?;
+            self.protect_paired_role(role, original, &current)?;
+            match self.write_capture(original, role, "restore") {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    // The endpoint can disappear after preflight. Only a fresh,
+                    // conclusive availability result can retire the old lease.
+                    if self.unavailable_original_reason(role)?.is_some() {
+                        role_note("restore_decision", role, "fallback_deferred");
+                        Ok(())
+                    } else {
+                        Err(error)
+                    }
+                }
+            }
         }
         fn restore(&mut self) -> Result<(), PlatformError> {
             let started = Instant::now();
@@ -673,6 +866,27 @@ mod native {
             elapsed_note("restore", result.is_ok(), started);
             result
         }
+        fn release_session(&mut self) -> Result<(), PlatformError> {
+            let result = self.restore();
+            // A new connection takes a fresh baseline. Even after failure, the
+            // next selection must finish the retained journal before switching.
+            self.state.target_microphone_id = None;
+            self.state.target_microphone_name = None;
+            if result.is_ok() {
+                self.state.phase = if self.state.external_change_observed {
+                    "external"
+                } else {
+                    "unconfigured"
+                }
+                .into();
+                self.state.last_error = None;
+            }
+            note(
+                "release_session",
+                if result.is_ok() { "passed" } else { "failed" },
+            );
+            result
+        }
         fn restore_inner(&mut self) -> Result<(), PlatformError> {
             let mut failure = None;
             for role in 0..self.journal.roles.len() {
@@ -680,15 +894,30 @@ mod native {
                     failure.get_or_insert(error);
                 }
             }
+            // Keep ownership until all valid originals have been attempted.
+            // A valid Console/Multimedia restoration may legitimately update its
+            // still-owned peer. Retiring the missing peer first would prevent it.
+            for role in 0..self.journal.roles.len() {
+                let result =
+                    self.unavailable_original_reason(role)
+                        .and_then(|reason| match reason {
+                            Some(reason) => self.preserve_current(role, reason),
+                            None => Ok(()),
+                        });
+                if let Err(error) = result {
+                    failure.get_or_insert(error);
+                }
+            }
             if !self.journal.roles.is_empty() {
                 let current = self.defaults()?;
                 self.reconcile(&current)?;
+                let mut next = self.journal.clone();
                 for (role, current) in current.iter().enumerate() {
-                    let lease = &mut self.journal.roles[role];
+                    let lease = &mut next.roles[role];
                     if !lease.owned {
                         continue;
                     }
-                    if current.as_deref() == Some(lease.original.as_str()) {
+                    if current == &lease.original {
                         lease.owned = false;
                         lease.pending = None;
                         role_note("restore_final_readback", role, "passed");
@@ -699,15 +928,17 @@ mod native {
                         role_note("restore_final_readback", role, "pending");
                     }
                 }
-                self.store.save(&self.journal)?;
+                self.store.save(&next)?;
+                self.journal = next;
             }
             self.state.restore_pending = self.journal.pending();
             if let Some(error) = failure {
                 return Err(error);
             }
             if !self.journal.pending() {
-                self.journal = Journal::empty();
-                self.store.save(&self.journal)?;
+                let empty = Journal::empty();
+                self.store.save(&empty)?;
+                self.journal = empty;
             }
             Ok(())
         }
@@ -716,15 +947,24 @@ mod native {
     enum Request {
         Select(
             String,
+            u64,
+            Arc<AtomicBool>,
+            SyncSender<Result<MicrophoneSelectionSnapshot, PlatformError>>,
+        ),
+        UseNow(
+            String,
+            u64,
             Arc<AtomicBool>,
             SyncSender<Result<MicrophoneSelectionSnapshot, PlatformError>>,
         ),
         Snapshot(SyncSender<Result<MicrophoneSelectionSnapshot, PlatformError>>),
         Restore(SyncSender<Result<(), PlatformError>>),
+        ReleaseSession(SyncSender<Result<(), PlatformError>>),
     }
     pub struct DefaultMicrophoneRuntime {
         sender: SyncSender<Request>,
         closing: Arc<AtomicBool>,
+        session_epoch: Arc<AtomicU64>,
     }
     impl DefaultMicrophoneRuntime {
         pub fn new(journal_path: PathBuf) -> Result<Self, PlatformError> {
@@ -732,6 +972,8 @@ mod native {
             let (ready_tx, ready_rx) = mpsc::sync_channel(1);
             let closing = Arc::new(AtomicBool::new(false));
             let worker_closing = closing.clone();
+            let session_epoch = Arc::new(AtomicU64::new(0));
+            let worker_epoch = session_epoch.clone();
             std::thread::Builder::new()
                 .name("sayall-default-microphone".into())
                 .spawn(move || {
@@ -799,9 +1041,18 @@ mod native {
                             }
                         }
                         match request {
-                            Request::Select(id, cancelled, reply) => {
+                            Request::Select(id, epoch, cancelled, reply) => {
                                 let result = owner.select(id, &|| {
                                     worker_closing.load(Ordering::Acquire)
+                                        || worker_epoch.load(Ordering::Acquire) != epoch
+                                        || cancelled.load(Ordering::Acquire)
+                                });
+                                let _ = reply.send(result);
+                            }
+                            Request::UseNow(id, epoch, cancelled, reply) => {
+                                let result = owner.use_now(id, &|| {
+                                    worker_closing.load(Ordering::Acquire)
+                                        || worker_epoch.load(Ordering::Acquire) != epoch
                                         || cancelled.load(Ordering::Acquire)
                                 });
                                 let _ = reply.send(result);
@@ -815,6 +1066,9 @@ mod native {
                             }
                             Request::Restore(reply) => {
                                 let _ = reply.send(owner.restore());
+                            }
+                            Request::ReleaseSession(reply) => {
+                                let _ = reply.send(owner.release_session());
                             }
                         }
                     }
@@ -830,16 +1084,45 @@ mod native {
             ready_rx
                 .recv_timeout(WAIT)
                 .map_err(|_| local_failure("麦克风切换初始化超时"))??;
-            Ok(Self { sender, closing })
+            Ok(Self {
+                sender,
+                closing,
+                session_epoch,
+            })
         }
         pub fn select(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+            self.request_selection(id, false)
+        }
+        pub fn use_now(&self, id: String) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
+            self.request_selection(id, true)
+        }
+        fn request_selection(
+            &self,
+            id: String,
+            manual: bool,
+        ) -> Result<MicrophoneSelectionSnapshot, PlatformError> {
             if self.closing.load(Ordering::Acquire) {
                 return Err(local_failure("应用正在退出，麦克风切换已取消"));
             }
             let (reply, receive) = mpsc::sync_channel(1);
             let cancelled = Arc::new(AtomicBool::new(false));
+            let request = if manual {
+                Request::UseNow(
+                    id,
+                    self.session_epoch.load(Ordering::Acquire),
+                    cancelled.clone(),
+                    reply,
+                )
+            } else {
+                Request::Select(
+                    id,
+                    self.session_epoch.load(Ordering::Acquire),
+                    cancelled.clone(),
+                    reply,
+                )
+            };
             self.sender
-                .try_send(Request::Select(id, cancelled.clone(), reply))
+                .try_send(request)
                 .map_err(|_| local_failure("麦克风操作正忙，请稍后重试"))?;
             match receive.recv_timeout(WAIT) {
                 Ok(result) => result,
@@ -864,6 +1147,18 @@ mod native {
             let (reply, receive) = mpsc::sync_channel(1);
             self.sender
                 .try_send(Request::Restore(reply))
+                .map_err(|_| local_failure("麦克风恢复请求尚未进入队列"))?;
+            receive
+                .recv_timeout(WAIT)
+                .map_err(|_| local_failure("麦克风恢复超时，已保留恢复记录"))?
+        }
+        /// End the current remote-connection lease without closing the worker.
+        /// Invalidate queued/in-flight selections before requesting restoration.
+        pub fn release_session(&self) -> Result<(), PlatformError> {
+            self.session_epoch.fetch_add(1, Ordering::AcqRel);
+            let (reply, receive) = mpsc::sync_channel(1);
+            self.sender
+                .try_send(Request::ReleaseSession(reply))
                 .map_err(|_| local_failure("麦克风恢复请求尚未进入队列"))?;
             receive
                 .recv_timeout(WAIT)
@@ -934,11 +1229,27 @@ mod native {
             active: BTreeSet<String>,
             writes: Vec<(usize, String)>,
             fail: Option<(usize, String)>,
+            availability_error: Option<String>,
+            current_error: Option<usize>,
+            disappear_on_set: Option<String>,
             linked_console_multimedia: bool,
         }
         impl AudioAccess for Fake {
             fn current(&self, role: usize) -> Result<Option<String>, PlatformError> {
+                if self.current_error == Some(role) {
+                    return Err(local_failure("read default failed"));
+                }
                 Ok(self.current.borrow()[role].clone())
+            }
+            fn capture_availability(&self, id: &str) -> Result<CaptureAvailability, PlatformError> {
+                if self.availability_error.as_deref() == Some(id) {
+                    return Err(local_failure("capture API failed"));
+                }
+                Ok(if self.active.contains(id) {
+                    CaptureAvailability::Active
+                } else {
+                    CaptureAvailability::Unavailable
+                })
             }
             fn capture_name(&self, id: &str) -> Result<String, PlatformError> {
                 if self.active.contains(id) {
@@ -948,6 +1259,9 @@ mod native {
                 }
             }
             fn set_capture(&mut self, id: &str, role: usize) -> Result<(), PlatformError> {
+                if self.disappear_on_set.as_deref() == Some(id) {
+                    self.active.remove(id);
+                }
                 self.capture_name(id)?;
                 self.writes.push((role, id.to_owned()));
                 if self
@@ -988,6 +1302,9 @@ mod native {
                         .collect(),
                     writes: Vec::new(),
                     fail: None,
+                    availability_error: None,
+                    current_error: None,
+                    disappear_on_set: None,
                     linked_console_multimedia: false,
                 },
                 Store::default(),
@@ -1036,6 +1353,140 @@ mod native {
             assert_eq!(values(&owner), original);
         }
         #[test]
+        fn manual_choice_survives_disconnect_exit_and_the_next_remote_lease() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            let selected = owner.use_now("C".into(), &|| false).unwrap();
+            ack(&mut owner, "C");
+            assert_eq!(selected.current_microphone_id.as_deref(), Some("C"));
+            assert!(selected.target_microphone_id.is_none());
+            assert!(selected.external_change_observed);
+            assert!(!selected.restore_pending);
+            assert!(!owner.store.saved.last().unwrap().pending());
+            owner.release_session().unwrap();
+            owner.restore().unwrap();
+            assert_eq!(values(&owner), all("C"));
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner), all("C"));
+        }
+        #[test]
+        fn manual_choice_failure_rolls_back_and_retains_remote_recovery() {
+            let mut owner = owner();
+            let baseline = values(&owner);
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.backend.fail = Some((2, "C".into()));
+            assert!(owner.use_now("C".into(), &|| false).is_err());
+            assert_eq!(values(&owner), all("B"));
+            assert_eq!(owner.state.target_microphone_id.as_deref(), Some("B"));
+            owner.restore().unwrap();
+            assert_eq!(values(&owner), baseline);
+        }
+        #[test]
+        fn manual_commit_persistence_failure_keeps_journal_and_does_not_claim_success() {
+            let mut owner = owner();
+            let baseline = values(&owner);
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.store.fail_at = Some(owner.store.saved.len());
+            assert!(owner.use_now("B".into(), &|| false).is_err());
+            assert_eq!(owner.state.phase, "failed");
+            assert!(owner.journal.pending());
+            owner.store.fail_at = None;
+            owner.restore().unwrap();
+            assert_eq!(values(&owner), baseline);
+        }
+        #[test]
+        fn cancelled_manual_choice_never_writes_or_discards_existing_lease() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            let writes = owner.backend.writes.len();
+            assert!(owner.use_now("C".into(), &|| true).is_err());
+            assert_eq!(owner.backend.writes.len(), writes);
+            assert_eq!(values(&owner), all("B"));
+            assert!(owner.journal.pending());
+        }
+        #[test]
+        fn connection_release_can_repeat_and_next_connection_uses_fresh_baseline() {
+            let mut owner = owner();
+            let original = values(&owner);
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner), original);
+            assert!(owner.state.target_microphone_id.is_none());
+            let writes = owner.backend.writes.len();
+            owner.release_session().unwrap();
+            assert_eq!(owner.backend.writes.len(), writes);
+            *owner.backend.current.borrow_mut() = all("D");
+            owner.select("C".into(), &|| false).unwrap();
+            ack(&mut owner, "C");
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner), all("D"));
+        }
+        #[test]
+        fn failed_connection_release_retains_recovery_before_new_selection() {
+            let mut owner = linked_owner();
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.backend.availability_error = Some("A".into());
+            assert!(owner.release_session().is_err());
+            assert!(owner.state.target_microphone_id.is_none());
+            assert!(owner.journal.pending());
+            assert!(owner.select("C".into(), &|| false).is_err());
+            assert_eq!(values(&owner)[0].as_deref(), Some("B"));
+            owner.backend.availability_error = None;
+            owner.release_session().unwrap();
+            owner.select("C".into(), &|| false).unwrap();
+            ack(&mut owner, "C");
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner)[0].as_deref(), Some("A"));
+        }
+        #[test]
+        fn connection_release_preserves_external_aba_and_signals_no_auto_reclaim() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.observe(0, Some("C".into())).unwrap();
+            owner.observe(0, Some("B".into())).unwrap();
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner)[0].as_deref(), Some("B"));
+            assert_eq!(owner.state.phase, "external");
+        }
+        #[test]
+        fn external_choice_survives_failed_phase_and_connection_release() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            ack(&mut owner, "B");
+            owner.record_error(&local_failure("transient read failure"));
+            *owner.backend.current.borrow_mut() = all("C");
+            ack(&mut owner, "C");
+            assert_eq!(owner.state.phase, "failed");
+            assert!(owner.snapshot().unwrap().external_change_observed);
+            owner.release_session().unwrap();
+            assert_eq!(owner.state.phase, "external");
+            assert!(owner.state.external_change_observed);
+            assert_eq!(values(&owner), all("C"));
+        }
+        #[test]
+        fn connection_epoch_change_cancels_inflight_selection_and_restores() {
+            let mut owner = linked_owner();
+            let original = values(&owner);
+            let checks = std::cell::Cell::new(0);
+            assert!(owner
+                .select("B".into(), &|| {
+                    checks.set(checks.get() + 1);
+                    checks.get() >= 3
+                })
+                .is_err());
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner), original);
+            assert!(!owner.journal.pending());
+        }
+        #[test]
         fn partial_second_selection_rolls_back_to_previous_selection_not_baseline() {
             let mut owner = owner();
             let original = values(&owner);
@@ -1073,8 +1524,8 @@ mod native {
             owner.observe(0, Some("C".into())).unwrap();
             owner.select("D".into(), &|| false).unwrap();
             ack(&mut owner, "D");
-            assert_eq!(owner.journal.roles[0].original, "C");
-            assert_eq!(owner.journal.roles[1].original, "B");
+            assert_eq!(owner.journal.roles[0].original.as_deref(), Some("C"));
+            assert_eq!(owner.journal.roles[1].original.as_deref(), Some("B"));
             owner.restore().unwrap();
             assert_eq!(
                 values(&owner),
@@ -1090,7 +1541,7 @@ mod native {
             // No observe call: the external notification has not arrived yet.
             owner.select("D".into(), &|| false).unwrap();
             ack(&mut owner, "D");
-            assert_eq!(owner.journal.roles[1].original, "C");
+            assert_eq!(owner.journal.roles[1].original.as_deref(), Some("C"));
             owner.restore().unwrap();
             assert_eq!(
                 values(&owner),
@@ -1141,13 +1592,281 @@ mod native {
             assert!(owner.backend.writes.is_empty());
         }
         #[test]
-        fn missing_original_keeps_pending_without_guessing_another_device() {
+        fn disconnect_with_missing_original_allows_a_fresh_connection_baseline() {
+            let mut owner = linked_owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.active.remove("A");
+            owner.release_session().unwrap();
+            let baseline = values(&owner);
+            assert!(!owner.journal.pending());
+            assert!(owner.state.target_microphone_id.is_none());
+            owner.select("B".into(), &|| false).unwrap();
+            owner.release_session().unwrap();
+            assert_eq!(values(&owner), baseline);
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn missing_original_preserves_current_and_restores_valid_peer_without_guessing() {
             let mut owner = owner();
             owner.select("B".into(), &|| false).unwrap();
             owner.backend.active.remove("A");
+            let writes = owner.backend.writes.len();
+            owner.restore().unwrap();
+            assert_eq!(
+                values(&owner),
+                [Some("B".into()), Some("A2".into()), Some("A3".into())]
+            );
+            assert_eq!(
+                owner.backend.writes[writes..],
+                [(1, "A2".into()), (2, "A3".into())]
+            );
+            assert!(!owner.journal.pending());
+            assert!(owner
+                .store
+                .saved
+                .iter()
+                .any(|journal| journal.roles.len() == 3
+                    && journal.roles[0].relinquished
+                    && journal.roles[0].original.as_deref() == Some("A")));
+        }
+        #[test]
+        fn valid_original_restores_linked_pair_before_missing_peer_retires() {
+            let mut owner = owner();
+            owner.backend.linked_console_multimedia = true;
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.active.remove("A2");
+            let writes = owner.backend.writes.len();
+            owner.restore().unwrap();
+            assert_eq!(
+                owner.backend.writes[writes..],
+                [(0, "A".into()), (2, "A3".into())]
+            );
+            assert_eq!(values(&owner)[..2], all("A")[..2]);
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn stale_journal_retires_before_new_current_baseline_and_is_idempotent() {
+            let mut old = owner();
+            old.select("B".into(), &|| false).unwrap();
+            for id in ["A", "A2", "A3"] {
+                old.backend.active.remove(id);
+            }
+            let writes = old.backend.writes.len();
+            let mut fresh = Owner::new(old.backend, Store::default(), old.journal);
+            assert_eq!(fresh.select("B".into(), &|| false).unwrap().phase, "ready");
+            assert_eq!(fresh.backend.writes.len(), writes);
+            assert!(fresh
+                .journal
+                .roles
+                .iter()
+                .all(|lease| lease.original.as_deref() == Some("B")));
+            fresh.restore().unwrap();
+            fresh.restore().unwrap();
+            assert_eq!(fresh.backend.writes.len(), writes);
+            assert!(!fresh.journal.pending());
+            assert_eq!(values(&fresh), all("B"));
+        }
+        #[test]
+        fn unavailable_baseline_does_not_override_an_external_default() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.active.remove("A");
+            owner.backend.current.borrow_mut()[0] = Some("C".into());
+            let writes = owner.backend.writes.len();
+            owner.restore().unwrap();
+            assert_eq!(
+                values(&owner),
+                [Some("C".into()), Some("B".into()), Some("A3".into())]
+            );
+            assert_eq!(owner.backend.writes[writes..], [(2, "A3".into())]);
+        }
+        #[test]
+        fn missing_original_api_failure_and_default_read_failure_keep_pending() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.active.remove("A");
+            owner.backend.availability_error = Some("A2".into());
+            let writes = owner.backend.writes.len();
             assert!(owner.restore().is_err());
-            assert_eq!(values(&owner)[0].as_deref(), Some("B"));
-            assert!(owner.journal.roles[0].owned);
+            assert!(owner.journal.roles[0].owned && owner.journal.roles[1].owned);
+            assert_eq!(owner.backend.writes[writes..], [(2, "A3".into())]);
+            owner.backend.availability_error = None;
+            owner.backend.current_error = Some(0);
+            assert!(owner.restore().is_err());
+            assert!(owner.journal.roles[0].owned && owner.journal.roles[1].owned);
+            owner.backend.current_error = None;
+            owner.restore().unwrap();
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn failed_retirement_save_retains_memory_and_durable_ownership_for_retry() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.active.remove("A");
+            owner.store.fail_at = Some(owner.store.saved.len());
+            let writes = owner.backend.writes.len();
+            assert!(owner.restore().is_err());
+            assert!(owner.journal.roles.iter().all(|lease| lease.owned));
+            assert!(owner
+                .store
+                .saved
+                .last()
+                .unwrap()
+                .roles
+                .iter()
+                .all(|lease| lease.owned));
+            assert_eq!(writes, owner.backend.writes.len());
+            owner.store.fail_at = None;
+            owner.restore().unwrap();
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn failed_external_reconcile_save_cannot_forget_ownership() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.current.borrow_mut()[0] = Some("C".into());
+            owner.store.fail_at = Some(owner.store.saved.len());
+            let writes = owner.backend.writes.len();
+            assert!(owner.restore().is_err());
+            assert!(owner.journal.roles.iter().all(|lease| lease.owned));
+            assert_eq!(writes, owner.backend.writes.len());
+            owner.store.fail_at = None;
+            owner.restore().unwrap();
+            assert_eq!(values(&owner)[0].as_deref(), Some("C"));
+        }
+        #[test]
+        fn disappearance_between_preflight_and_write_uses_confirmed_fallback() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.disappear_on_set = Some("A".into());
+            owner.restore().unwrap();
+            assert_eq!(values(&owner)[..2], [Some("B".into()), Some("A2".into())]);
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn linked_disappearance_during_write_still_restores_valid_peer_first() {
+            let mut owner = owner();
+            owner.backend.linked_console_multimedia = true;
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.disappear_on_set = Some("A".into());
+            owner.restore().unwrap();
+            assert_eq!(values(&owner)[..2], all("A2")[..2]);
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn final_cleanup_save_failure_keeps_the_retired_record_until_retry() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            for id in ["A", "A2", "A3"] {
+                owner.backend.active.remove(id);
+            }
+            owner.store.fail_at = Some(owner.store.saved.len() + 4);
+            let writes = owner.backend.writes.len();
+            assert!(owner.restore().is_err());
+            assert_eq!(owner.journal.roles.len(), 3);
+            assert!(!owner.journal.pending());
+            assert_eq!(owner.store.saved.last().unwrap().roles.len(), 3);
+            owner.store.fail_at = None;
+            owner.restore().unwrap();
+            assert!(owner.journal.roles.is_empty());
+            assert_eq!(writes, owner.backend.writes.len());
+        }
+        #[test]
+        fn no_default_baselines_select_and_exit_without_null_writes() {
+            let mut owner = owner();
+            *owner.backend.current.borrow_mut() = [None, None, None];
+            owner.select("B".into(), &|| false).unwrap();
+            assert!(owner
+                .journal
+                .roles
+                .iter()
+                .all(|lease| lease.original.is_none()));
+            let writes = owner.backend.writes.len();
+            owner.restore().unwrap();
+            assert_eq!(values(&owner), all("B"));
+            assert_eq!(writes, owner.backend.writes.len());
+            assert!(!owner.journal.pending());
+            assert!(owner.backend.writes.iter().all(|(_, id)| !id.is_empty()));
+        }
+        #[test]
+        fn zero_capture_devices_and_no_defaults_do_not_block_restore() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.backend.active.clear();
+            *owner.backend.current.borrow_mut() = [None, None, None];
+            let writes = owner.backend.writes.len();
+            owner.restore().unwrap();
+            assert_eq!(writes, owner.backend.writes.len());
+            assert!(!owner.journal.pending());
+            assert!(owner.select("B".into(), &|| false).is_err());
+            assert_eq!(writes, owner.backend.writes.len());
+        }
+        #[test]
+        fn no_default_partial_selection_rollback_never_recreates_retired_lease() {
+            let mut owner = owner();
+            *owner.backend.current.borrow_mut() = [None, None, None];
+            owner.backend.fail = Some((1, "B".into()));
+            assert!(owner.select("B".into(), &|| false).is_err());
+            assert_eq!(values(&owner), [Some("B".into()), None, None]);
+            assert!(!owner.journal.pending());
+            assert!(owner.journal.roles[0].relinquished);
+            owner.restore().unwrap();
+            assert!(!owner.journal.pending());
+            assert!(owner.backend.writes.iter().all(|(_, id)| !id.is_empty()));
+        }
+        #[test]
+        fn linked_mixed_baseline_rollback_restores_valid_peer_before_retiring_none() {
+            let mut owner = owner();
+            owner.backend.current.borrow_mut()[0] = None;
+            owner.backend.linked_console_multimedia = true;
+            owner.backend.fail = Some((2, "B".into()));
+            assert!(owner.select("B".into(), &|| false).is_err());
+            assert_eq!(
+                values(&owner),
+                [Some("A2".into()), Some("A2".into()), Some("A3".into())]
+            );
+            assert!(!owner.journal.pending());
+            owner.restore().unwrap();
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn failed_valid_peer_write_keeps_missing_peer_owned_until_retry() {
+            let mut owner = linked_owner();
+            owner.select("B".into(), &|| false).unwrap();
+            owner.journal.roles[0].original = Some("A2".into());
+            owner.backend.active.remove("A2");
+            owner.backend.fail = Some((1, "A".into()));
+            assert!(owner.restore().is_err());
+            assert!(owner.journal.roles[0].owned && owner.journal.roles[1].owned);
+            owner.backend.fail = None;
+            owner.restore().unwrap();
+            assert_eq!(values(&owner)[..2], all("A")[..2]);
+            assert!(!owner.journal.pending());
+        }
+        #[test]
+        fn schemas_require_original_but_only_v2_accepts_explicit_null() {
+            let mut owner = owner();
+            owner.select("B".into(), &|| false).unwrap();
+            let mut value = serde_json::to_value(&owner.journal).unwrap();
+            value["schema_version"] = 1.into();
+            let legacy: Journal = serde_json::from_value(value.clone()).unwrap();
+            legacy.validate().unwrap();
+            assert_eq!(legacy.roles[0].original.as_deref(), Some("A"));
+            value["roles"][0]["original"] = serde_json::Value::Null;
+            assert!(serde_json::from_value::<Journal>(value.clone())
+                .unwrap()
+                .validate()
+                .is_err());
+            value["schema_version"] = 2.into();
+            serde_json::from_value::<Journal>(value.clone())
+                .unwrap()
+                .validate()
+                .unwrap();
+            value["roles"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("original");
+            assert!(serde_json::from_value::<Journal>(value).is_err());
         }
         #[test]
         fn startup_pending_write_is_recovered_before_new_baseline() {
@@ -1256,8 +1975,188 @@ mod native {
             assert_eq!(writes, owner.backend.writes.len());
         }
 
+        /// Reads the real stale endpoint/defaults but persists only a new copy
+        /// under target. The adapter cannot write any Windows audio setting.
+        #[test]
+        #[ignore = "Requires a real stale journal copy and matching current Capture defaults"]
+        fn default_microphone_stale_journal_readonly_probe() {
+            use windows::Win32::Media::Audio::{eRender, EDataFlow};
+
+            let target_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .canonicalize()
+                .expect("repository target exists");
+            let source = PathBuf::from(
+                std::env::var_os("SAYALL_MICROPHONE_RECOVERY_JOURNAL")
+                    .expect("set source journal copy under repository target"),
+            )
+            .canonicalize()
+            .expect("source journal copy exists");
+            assert!(
+                source.starts_with(&target_root),
+                "source must be a target copy"
+            );
+            let bytes = std::fs::read(&source).expect("read source copy");
+            let input: Journal = serde_json::from_slice(&bytes).expect("parse source copy");
+            input.validate().expect("valid source journal");
+            assert_eq!(input.roles.len(), 3);
+            let target = input.roles[0].last_applied.clone().expect("saved target");
+            assert!(
+                input.roles.iter().all(|lease| {
+                    lease.owned
+                        && lease.original.is_some()
+                        && lease.last_applied.as_deref() == Some(target.as_str())
+                }),
+                "requires three owned stale roles with one saved target"
+            );
+
+            wasapi::initialize_mta().ok().expect("test MTA");
+            struct Apartment;
+            impl Drop for Apartment {
+                fn drop(&mut self) {
+                    wasapi::deinitialize();
+                }
+            }
+            let _apartment = Apartment;
+            let enumerator: IMMDeviceEnumerator =
+                unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
+                    .expect("independent enumerator");
+            fn defaults(
+                enumerator: &IMMDeviceEnumerator,
+                flow: EDataFlow,
+            ) -> Result<[Option<String>; 3], PlatformError> {
+                let mut values = Vec::new();
+                for role in 0..3 {
+                    let value =
+                        match unsafe { enumerator.GetDefaultAudioEndpoint(flow, ERole(role)) } {
+                            Ok(device) => {
+                                let pointer = unsafe { device.GetId() }
+                                    .map_err(|e| failure("probe_id", e))?;
+                                let value = unsafe { pointer.to_string() }
+                                    .map_err(|e| failure("probe_decode_id", e.into()));
+                                unsafe {
+                                    CoTaskMemFree(Some(pointer.0.cast()));
+                                }
+                                Some(value?)
+                            }
+                            Err(error) if error.code() == HRESULT::from_win32(1168) => None,
+                            Err(error) => return Err(failure("probe_default", error)),
+                        };
+                    values.push(value);
+                }
+                values
+                    .try_into()
+                    .map_err(|_| local_failure("probe role count"))
+            }
+            let before_capture = defaults(&enumerator, eCapture).expect("Capture baseline");
+            let before_render = defaults(&enumerator, eRender).expect("Render baseline");
+            assert!(
+                before_capture
+                    .iter()
+                    .all(|id| id.as_deref() == Some(target.as_str())),
+                "current Capture roles must already match the saved target"
+            );
+            for lease in &input.roles {
+                let original = wide(lease.original.as_deref().unwrap());
+                assert!(
+                    matches!(
+                        unsafe { enumerator.GetDevice(PCWSTR(original.as_ptr())) },
+                        Err(error) if error.code() == HRESULT::from_win32(1168)
+                    ),
+                    "requires an actual missing endpoint, not a simulated failure"
+                );
+            }
+            struct ReadOnlyAudio {
+                audio: WindowsAudio,
+                attempted_writes: usize,
+            }
+            impl AudioAccess for ReadOnlyAudio {
+                fn current(&self, role: usize) -> Result<Option<String>, PlatformError> {
+                    self.audio.current(role)
+                }
+                fn capture_availability(
+                    &self,
+                    id: &str,
+                ) -> Result<CaptureAvailability, PlatformError> {
+                    self.audio.capture_availability(id)
+                }
+                fn capture_name(&self, id: &str) -> Result<String, PlatformError> {
+                    self.audio.capture_name(id)
+                }
+                fn set_capture(&mut self, _: &str, _: usize) -> Result<(), PlatformError> {
+                    self.attempted_writes += 1;
+                    Err(local_failure("read-only probe forbids system writes"))
+                }
+            }
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let directory = target_root.join(format!(
+                "microphone-readonly-probe-{}-{stamp}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&directory).expect("new isolated probe directory");
+            let journal_path = directory.join("microphone-restore.json");
+            std::fs::write(&journal_path, &bytes).expect("copy journal for production disk store");
+            let store = DiskJournal(journal_path);
+            let journal = store.load().expect("production journal load and migration");
+            assert_eq!(journal.schema_version, 2);
+            let mut owner = Owner::new(
+                ReadOnlyAudio {
+                    audio: WindowsAudio::new().expect("read backend"),
+                    attempted_writes: 0,
+                },
+                store,
+                journal,
+            );
+            let selected = owner.select(target, &|| false);
+            let restored = owner.restore();
+            let after_capture = defaults(&enumerator, eCapture).expect("Capture readback");
+            let after_render = defaults(&enumerator, eRender).expect("Render readback");
+            let receipt = serde_json::json!({
+                "read_only": true,
+                "real_original_not_found": true,
+                "source_unchanged": std::fs::read(&source).unwrap() == bytes,
+                "selected_ready": selected.as_ref().is_ok_and(|state| state.phase == "ready"),
+                "restored_without_pending": restored.is_ok() && !owner.journal.pending(),
+                "persisted_without_pending": !owner.store.load().unwrap().pending(),
+                "attempted_system_writes": owner.backend.attempted_writes,
+                "capture_defaults_unchanged": before_capture == after_capture,
+                "render_defaults_unchanged": before_render == after_render,
+            });
+            std::fs::write(
+                directory.join("result.json"),
+                serde_json::to_vec_pretty(&receipt).unwrap(),
+            )
+            .expect("sanitized probe receipt");
+            println!("default_microphone_readonly_probe {receipt}");
+            assert!(
+                selected.is_ok_and(|state| state.phase == "ready"),
+                "stale lease must unblock selection"
+            );
+            assert!(
+                restored.is_ok() && !owner.journal.pending(),
+                "restore must finish"
+            );
+            assert_eq!(
+                owner.backend.attempted_writes, 0,
+                "no setter may be requested"
+            );
+            assert!(
+                before_capture == after_capture && before_render == after_render,
+                "all Capture and Render defaults must remain unchanged"
+            );
+            assert!(
+                std::fs::read(&source).unwrap() == bytes,
+                "source copy is immutable"
+            );
+        }
+
         /// Run `probe` first, then explicitly authorize the bounded default-Capture
         /// round trip with SAYALL_DEFAULT_MIC_TEST=allow-default-capture-switch.
+        /// Prefer the current default physical Capture. If it is virtual or
+        /// ambiguous, set SAYALL_DEFAULT_MIC_PHYSICAL_INDEX from the probe output.
         /// No app launch, audio client, volume, Render write or Bluetooth operation.
         #[test]
         #[ignore = "Changes Capture defaults only with explicit local test authorization"]
@@ -1269,7 +2168,9 @@ mod native {
 
             let mode = std::env::var("SAYALL_DEFAULT_MIC_TEST").unwrap_or_default();
             assert!(
-                mode == "probe" || mode == "allow-default-capture-switch",
+                mode == "probe"
+                    || mode == "allow-default-capture-switch"
+                    || mode == "allow-manual-capture-switch",
                 "explicit probe/switch mode required"
             );
             wasapi::initialize_mta().ok().expect("test MTA");
@@ -1310,7 +2211,7 @@ mod native {
                 .iter()
                 .filter(|mic| mic.is_virtual_cable_candidate && !mic.render_endpoint_ids.is_empty())
                 .collect();
-            let physical: Vec<_> = microphones
+            let mut physical: Vec<_> = microphones
                 .iter()
                 .filter(|mic| {
                     if mic.is_virtual_cable_candidate {
@@ -1332,19 +2233,34 @@ mod native {
                     factor == Some(Microphone.0 as u32) || factor == Some(Headset.0 as u32)
                 })
                 .collect();
+            physical.sort_by(|left, right| left.id.cmp(&right.id));
             println!("default_microphone_live stage=probe capture_roles=3 render_roles=3 physical_candidates={} verified_cable_candidates={} read_only=true", physical.len(), virtuals.len());
-            assert_eq!(
-                physical.len(),
-                1,
-                "requires one unambiguous physical microphone"
-            );
+            for (index, candidate) in physical.iter().enumerate() {
+                println!("default_microphone_live stage=physical_candidate index={index} is_default={} read_only=true", candidate.id == capture_before[0]);
+            }
+            if mode == "probe" {
+                return;
+            }
             assert_eq!(
                 virtuals.len(),
                 1,
                 "requires one verified virtual microphone"
             );
-            if mode == "probe" {
-                return;
+            let physical_index = match std::env::var("SAYALL_DEFAULT_MIC_PHYSICAL_INDEX") {
+                Ok(value) => value.parse::<usize>().expect("physical test index must be an integer from the probe"),
+                Err(_) => physical.iter().position(|candidate| candidate.id == capture_before[0])
+                    .or_else(|| (physical.len() == 1).then_some(0))
+                    .expect("probe then explicitly choose SAYALL_DEFAULT_MIC_PHYSICAL_INDEX; current default is not a unique physical candidate"),
+            };
+            let physical_target = *physical.get(physical_index).expect(
+                "physical test index must refer to an active candidate from the current probe",
+            );
+            println!("default_microphone_live stage=test_target physical_index={physical_index} is_default={}", physical_target.id == capture_before[0]);
+            if mode == "allow-manual-capture-switch" {
+                assert!(
+                    capture_before.iter().all(|id| id == &physical_target.id),
+                    "manual test requires a uniform physical baseline; probe only otherwise"
+                );
             }
 
             let stamp = std::time::SystemTime::now()
@@ -1389,7 +2305,7 @@ mod native {
             let guard = RestoreGuard(&runtime);
             // Assertions are after cleanup. The guard also restores on an unexpected panic.
             let selected = (|| -> Result<(), PlatformError> {
-                for (kind, target) in [("physical", physical[0]), ("virtual", virtuals[0])] {
+                for (kind, target) in [("physical", physical_target), ("virtual", virtuals[0])] {
                     let snapshot = runtime.select(target.id.clone())?;
                     let capture = defaults(&enumerator, eCapture)?;
                     let render = defaults(&enumerator, eRender)?;
@@ -1398,6 +2314,42 @@ mod native {
                     println!("default_microphone_live stage=selected kind={kind} capture_all_match={capture_matches} render_unchanged={render_unchanged}");
                     if !capture_matches || !render_unchanged || snapshot.phase != "ready" {
                         return Err(local_failure("live independent selection readback failed"));
+                    }
+                    runtime.release_session()?;
+                    let restored = defaults(&enumerator, eCapture)? == capture_before;
+                    let render_unchanged = defaults(&enumerator, eRender)? == render_before;
+                    println!("default_microphone_live stage=connection_released kind={kind} capture_baseline_restored={restored} render_unchanged={render_unchanged}");
+                    if !restored || !render_unchanged || runtime.snapshot()?.restore_pending {
+                        return Err(local_failure("live connection release readback failed"));
+                    }
+                    runtime.release_session()?;
+                }
+                if mode == "allow-manual-capture-switch" {
+                    runtime.select(virtuals[0].id.clone())?;
+                    let selected = runtime.use_now(physical_target.id.clone())?;
+                    let capture_restored = defaults(&enumerator, eCapture)? == capture_before;
+                    let render_unchanged = defaults(&enumerator, eRender)? == render_before;
+                    println!("default_microphone_live stage=manual_committed capture_baseline_restored={capture_restored} render_unchanged={render_unchanged} restore_pending={}", selected.restore_pending);
+                    if !capture_restored
+                        || !render_unchanged
+                        || selected.restore_pending
+                        || !selected.external_change_observed
+                    {
+                        return Err(local_failure("live manual commit readback failed"));
+                    }
+                    runtime.release_session()?;
+                    let manual_preserved = defaults(&enumerator, eCapture)? == capture_before;
+                    if !manual_preserved {
+                        return Err(local_failure("live manual choice was reverted on release"));
+                    }
+                    runtime.select(virtuals[0].id.clone())?;
+                    runtime.release_session()?;
+                    let fresh_baseline_restored =
+                        defaults(&enumerator, eCapture)? == capture_before;
+                    println!("default_microphone_live stage=manual_new_lease manual_preserved={manual_preserved} fresh_baseline_restored={fresh_baseline_restored}");
+                    if !fresh_baseline_restored || defaults(&enumerator, eRender)? != render_before
+                    {
+                        return Err(local_failure("live manual fresh baseline readback failed"));
                     }
                 }
                 Ok(())
@@ -1423,8 +2375,12 @@ mod native {
                 "independent baseline readback failed; journal retained"
             );
             assert!(
-                runtime.select(physical[0].id.clone()).is_err(),
+                runtime.select(physical_target.id.clone()).is_err(),
                 "exit gate rejects later selection"
+            );
+            assert!(
+                runtime.use_now(physical_target.id.clone()).is_err(),
+                "exit gate rejects later manual selection"
             );
         }
     }

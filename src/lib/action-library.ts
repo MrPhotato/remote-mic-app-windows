@@ -23,7 +23,7 @@ const shortcut = (keys: KeyCode[]): ButtonAction => ({ type: "shortcut", chord: 
 const editIds = new Set(["undo", "redo", "find-chat", "find-next", "find-previous"]);
 const systemIds = new Set(["settings", "keyboard-shortcuts", "close", "quit", "fullscreen"]);
 const frequentIds = new Set([
-  "previous-chat", "next-chat", "needs-attention", "new-chat", "queue-message", "find-chat",
+  "previous-chat", "next-chat", "previous-tab", "next-tab", "needs-attention", "new-chat", "queue-message", "find-chat",
   "undo", "redo", "review-panel", "sidebar", "bottom-panel", "model-picker", "command-menu",
 ]);
 const shortLabels: Record<string, string> = {

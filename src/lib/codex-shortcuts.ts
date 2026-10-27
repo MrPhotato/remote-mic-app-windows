@@ -1,12 +1,12 @@
 import type { ButtonAction, KeyCode } from "./bridge";
 
-/** Public Windows defaults, checked against the official command reference. */
+/** Public Windows shortcuts; navigation updated from the visible app menu. */
 export const CODEX_SHORTCUTS_SOURCE = "https://learn.chatgpt.com/docs/reference/commands";
-export const CODEX_SHORTCUTS_VERIFIED = "2026-10-14";
+export const CODEX_SHORTCUTS_VERIFIED = "2026-10-21";
 
 export const CODEX_SHORTCUT_GROUPS = [
-  { id: "navigation", label: "切换会话" },
-  { id: "chats", label: "管理会话" },
+  { id: "navigation", label: "切换聊天" },
+  { id: "chats", label: "管理聊天" },
   { id: "workspace", label: "工作区与浏览器" },
   { id: "input", label: "输入与审批" },
   { id: "window", label: "窗口与设置" },
@@ -23,8 +23,10 @@ export interface CodexShortcut {
 }
 
 export const CODEX_SHORTCUTS: CodexShortcut[] = [
-  { id: "previous-chat", group: "navigation", label: "上一个聊天", keys: ["control", "shift", "bracket_left"], aliases: [["control", "page_up"], ["control", "shift", "tab"]], note: "在聊天与打开的标签页之间切换。" },
-  { id: "next-chat", group: "navigation", label: "下一个聊天", keys: ["control", "shift", "bracket_right"], aliases: [["control", "page_down"], ["control", "tab"]], note: "在聊天与打开的标签页之间切换。" },
+  { id: "previous-chat", group: "navigation", label: "上一个聊天", keys: ["control", "alt", "bracket_left"], note: "切换左侧边栏中的聊天。" },
+  { id: "next-chat", group: "navigation", label: "下一个聊天", keys: ["control", "alt", "bracket_right"], note: "切换左侧边栏中的聊天。" },
+  { id: "previous-tab", group: "workspace", label: "上一个标签页", keys: ["control", "shift", "bracket_left"], note: "切换右侧区域打开的标签页。" },
+  { id: "next-tab", group: "workspace", label: "下一个标签页", keys: ["control", "shift", "bracket_right"], note: "切换右侧区域打开的标签页。" },
   { id: "needs-attention", group: "navigation", label: "处理待办聊天", keys: ["control", "alt", "a"], note: "Codex 在前台时，切换到需要你处理的聊天。" },
   { id: "navigate-back", group: "navigation", label: "返回", keys: ["control", "bracket_left"] },
   { id: "navigate-forward", group: "navigation", label: "前进", keys: ["control", "bracket_right"] },

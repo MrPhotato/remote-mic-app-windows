@@ -2,46 +2,67 @@
 // GPL-3.0-only. Report entry observation adapted from ZSTDJan commit
 // 1e6b1d285f9cd50f30c5bc92ac7787a693fc993d. TV slot clearing follows the
 // report-copy boundary reviewed in GetSayAll commit 6a4aaf88ef740534a29152ea0ef021cffee82256.
-// Bits: Back=1, Volume Up=2, Volume Down=4, captured TV=8. No key injection.
+// Bits follow protocol 4. Only configured gesture keys are additionally captured.
+// No key injection. Every capture uses the same source-bound report-copy boundary.
 const tvEnabled = __TV_CAPTURE_ENABLED__ === true;
+const okEnabled = __OK_CAPTURE_ENABLED__ === true;
+const gestureMask = __GESTURE_CAPTURE_MASK__;
+if (!Number.isInteger(gestureMask) || gestureMask < 0 || gestureMask > 0xffff ||
+    (gestureMask & ~0x1fe7) !== 0) throw new Error('invalid_gesture_configuration');
+const captureMask = (tvEnabled ? 8 : 0) | (okEnabled ? 16 : 0) | gestureMask;
+const observedMask = 7 | captureMask;
+const usages = new Map([[0xf1, 1], [0x80, 2], [0x81, 4], [0x35, 8], [0x28, 16],
+  [0x52, 32], [0x51, 64], [0x50, 128], [0x4f, 256], [0x4a, 512],
+  [0x65, 1024], [0x66, 2048], [0x7f, 4096]]);
+const captureEnabled = captureMask !== 0;
 let stopped = false;
 let listener = null;
 let timer = null;
 let inFlight = 0;
 let cleanupComplete = false;
 let cleanupError = null;
-let restorationFailed = false;
+let restorationFailure = null;
 let stopPromise = null;
 let resolveStop = null;
-let tvReady = false;
-let tvOwned = false;
-let preheldNoted = false;
+let captureReady = false;
+let ownedMask = 0;
+let preheldNoted = 0;
 let tick = null;
 function now() { return tick === null ? 0 : tick().toNumber(); }
 let deadline = 0;
 function active() { return !stopped && now() < deadline; }
 function diagnostic(reason) { send({type: 'diagnostic', reason}); }
+function reportReason(suffix, frame = null) {
+  const mask = ownedMask | (frame === null ? 0 : frame.mask);
+  if ((mask & gestureMask) !== 0 || (!tvEnabled && !okEnabled && gestureMask !== 0))
+    return 'gesture_' + suffix;
+  return ((mask & 16) !== 0 || (!tvEnabled && okEnabled) ? 'ok_' : 'tv_') + suffix;
+}
+function keyDiagnostics(suffix, mask) {
+  if ((mask & 8) !== 0) diagnostic('tv_' + suffix);
+  if ((mask & 16) !== 0) diagnostic('ok_' + suffix);
+  if ((mask & gestureMask) !== 0) diagnostic('gesture_' + suffix);
+}
 function sameBytes(a, b) { return a.every((value, index) => value === b[index]); }
 function snapshot(pointer) {
   const bytes = new Uint8Array(pointer.readByteArray(9));
   if (bytes[0] !== 1 || bytes[1] !== 0 || bytes[2] !== 0) return null;
   let mask = 0;
-  const tvSlots = [];
+  const capturedSlots = [];
   for (let i = 3; i < 9; i += 2) {
     const usage = bytes[i] | (bytes[i + 1] << 8);
-    if (usage === 0xf1) mask |= 1;
-    else if (usage === 0x80) mask |= 2;
-    else if (usage === 0x81) mask |= 4;
-    else if (tvEnabled && usage === 0x35) { mask |= 8; tvSlots.push(i); }
+    const bit = usages.get(usage) || 0;
+    if ((bit & observedMask) !== 0) mask |= bit;
+    if ((bit & captureMask) !== 0) capturedSlots.push(i);
   }
-  return {pointer, bytes, mask, tvSlots, patched: null, needsRestore: false};
+  return {pointer, bytes, mask, capturedSlots, patched: null, needsRestore: false};
 }
 function finishStop() {
   if (!stopped || inFlight !== 0 || cleanupComplete) return;
   try {
     if (listener !== null) listener.detach();
     rc003Source.close();
-    if (restorationFailed) cleanupError = 'tv_report_restore_failed';
+    if (restorationFailure !== null) cleanupError = restorationFailure;
   } catch (_) { cleanupError = 'capture_cleanup_failed'; }
   cleanupComplete = true;
   if (resolveStop !== null) resolveStop({quiescent: true, cleanup_error: cleanupError});
@@ -49,8 +70,8 @@ function finishStop() {
 function stop(reason) {
   if (!stopped) {
     stopped = true;
-    tvReady = false;
-    tvOwned = false;
+    captureReady = false;
+    ownedMask = 0;
     if (timer !== null) clearInterval(timer);
     // A fault/stop cancels a pending gesture. A synthetic mask=0 would click it.
     send({type: 'stopped', reason});
@@ -58,7 +79,9 @@ function stop(reason) {
   finishStop();
 }
 function fault(reason) {
-  if (reason === 'tv_report_restore_failed') restorationFailed = true;
+  if (reason === 'tv_report_restore_failed' || reason === 'ok_report_restore_failed' ||
+      reason === 'gesture_report_restore_failed')
+    restorationFailure = reason;
   if (stopped) return;
   try { send({type: 'fault', reason}); }
   finally { stop(reason); }
@@ -79,7 +102,7 @@ function restore(frame, partialWrite = false) {
     let matches = sameBytes(current, frame.patched);
     if (partialWrite) {
       matches = current.every((value, index) => {
-        const slot = frame.tvSlots.find(offset => index === offset || index === offset + 1);
+        const slot = frame.capturedSlots.find(offset => index === offset || index === offset + 1);
         return slot === undefined ? value === frame.bytes[index]
           : ((current[slot] === 0 && current[slot + 1] === 0)
             || (current[slot] === frame.bytes[slot] && current[slot + 1] === frame.bytes[slot + 1]));
@@ -87,10 +110,10 @@ function restore(frame, partialWrite = false) {
     }
     if (!matches) {
       frame.needsRestore = false;
-      if (!partialWrite) diagnostic('tv_buffer_changed');
+      if (!partialWrite) diagnostic(reportReason('buffer_changed', frame));
       return !partialWrite;
     }
-    for (const offset of frame.tvSlots) {
+    for (const offset of frame.capturedSlots) {
       frame.pointer.add(offset).writeByteArray(
         new Uint8Array([frame.bytes[offset], frame.bytes[offset + 1]]).buffer);
     }
@@ -106,7 +129,7 @@ rpc.exports = {
   renew() {
     if (!active()) { if (!stopped) stop('lease_expired'); return false; }
     if (!rc003Source.status().ready) {
-      if (tvEnabled) fault('tv_source_lost');
+      if (captureEnabled) fault(reportReason('source_lost'));
       return false;
     }
     deadline = now() + 10000;
@@ -135,37 +158,39 @@ listener = Interceptor.attach(Process.getModuleByName('ntdll.dll')
       if (args[6].add(4).readU8() !== 2 || args[6].add(5).readU8() !== 1) return;
       // Check before reading: a nested call can see the first call's cleared
       // buffer. It must never turn that artificial zero into neutral or UP.
-      if (tvEnabled && inFlight !== 0) { fault('tv_report_overlap'); return; }
+      if (captureEnabled && inFlight !== 0) { fault(reportReason('report_overlap')); return; }
       const frame = snapshot(args[8]);
       if (frame === null) {
-        // Other report IDs may share the device. They are not a TV release.
-        if (tvEnabled && tvOwned && args[8].readU8() === 1) fault('tv_report_invalid');
+        // Other report IDs may share the device. They are not a captured key release.
+        if (captureEnabled && ownedMask !== 0 && args[8].readU8() === 1)
+          fault(reportReason('report_invalid'));
         return;
       }
       this.frame = frame;
-      if (tvEnabled) { inFlight++; this.counted = true; }
-      if (!tvEnabled || !tvReady || frame.tvSlots.length === 0) return;
+      if (captureEnabled) { inFlight++; this.counted = true; }
+      if (!captureEnabled || !captureReady || frame.capturedSlots.length === 0) return;
       frame.patched = frame.bytes.slice();
-      for (const offset of frame.tvSlots) {
+      for (const offset of frame.capturedSlots) {
         frame.patched[offset] = 0;
         frame.patched[offset + 1] = 0;
       }
       frame.needsRestore = true;
       try {
-        for (const offset of frame.tvSlots)
+        for (const offset of frame.capturedSlots)
           frame.pointer.add(offset).writeByteArray(new Uint8Array([0, 0]).buffer);
       } catch (_) {
-        fault(restore(frame, true) ? 'tv_report_write_failed' : 'tv_report_restore_failed');
+        fault(reportReason(restore(frame, true) ? 'report_write_failed' : 'report_restore_failed', frame));
         return;
       }
       if (!sameBytes(new Uint8Array(frame.pointer.readByteArray(9)), frame.patched)) {
-        fault(restore(frame, true) ? 'tv_report_verify_failed' : 'tv_report_restore_failed');
+        fault(reportReason(restore(frame, true) ? 'report_verify_failed' : 'report_restore_failed', frame));
         return;
       }
       frame.cleared = true;
     } catch (_) {
       const frame = this.frame;
-      fault(frame !== null && !restore(frame, true) ? 'tv_report_restore_failed' : 'report_read_failed');
+      fault(frame !== null && !restore(frame, true)
+        ? reportReason('report_restore_failed', frame) : 'report_read_failed');
     }
   },
   onLeave(retval) {
@@ -174,26 +199,30 @@ listener = Interceptor.attach(Process.getModuleByName('ntdll.dll')
       if (frame === null) return;
       // Even after stop/expiry, restore an already modified in-flight buffer
       // before allowing stop()'s Promise to resolve and the script to unload.
-      if (!restore(frame)) { fault('tv_report_restore_failed'); return; }
+      if (!restore(frame)) { fault(reportReason('report_restore_failed', frame)); return; }
       if (!active()) { if (!stopped) stop('lease_expired'); return; }
       if (retval.toUInt32() !== 0) {
-        if (tvEnabled && (frame.cleared || tvOwned)) fault('tv_report_submit_failed');
+        if (captureEnabled && (frame.cleared || ownedMask !== 0))
+          fault(reportReason('report_submit_failed', frame));
         return;
       }
-      if (tvEnabled) {
-        if (!tvReady) {
-          // Preserve preheld TV in the mask: Python's neutral gate must not
+      if (captureEnabled) {
+        if (!captureReady) {
+          // Preserve configured preheld keys: Python's neutral gate must not
           // mistake it for a released remote. It cannot emit a gesture yet.
-          if (frame.mask === 0) { tvReady = true; diagnostic('tv_capture_ready'); }
-          else if ((frame.mask & 8) !== 0 && !preheldNoted) {
-            preheldNoted = true;
-            diagnostic('tv_preheld_passthrough');
+          if (frame.mask === 0) {
+            captureReady = true;
+            keyDiagnostics('capture_ready', captureMask);
+          } else {
+            const newlyPreheld = frame.mask & captureMask & ~preheldNoted;
+            preheldNoted |= newlyPreheld;
+            keyDiagnostics('preheld_passthrough', newlyPreheld);
           }
-        } else if ((frame.mask & 8) !== 0) {
-          if (!frame.cleared) { fault('tv_report_verify_failed'); return; }
-          if (!tvOwned) diagnostic('tv_report_cleared');
-          tvOwned = true;
-        } else { tvOwned = false; }
+        } else if ((frame.mask & captureMask) !== 0) {
+          if (!frame.cleared) { fault(reportReason('report_verify_failed', frame)); return; }
+          keyDiagnostics('report_cleared', frame.mask & captureMask & ~ownedMask);
+          ownedMask = frame.mask & captureMask;
+        } else { ownedMask = 0; }
       }
       send({type: 'mask', mask: frame.mask});
     } catch (_) { fault('report_read_failed'); }

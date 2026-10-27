@@ -36,7 +36,7 @@ function port(current = existing()): CodingProfilePort {
 describe("Codex coding profile", () => {
   beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
-  it("keeps primary keys immediate, leaves rapid Back presses as deletion, and uses volume keys for navigation", () => {
+  it("adds queue on confirm hold, keeps editing keys repeatable, and uses volume keys for navigation", () => {
     const current = existing();
     const original = JSON.stringify(current);
     const next = buildCodingProfile(current);
@@ -46,16 +46,18 @@ describe("Codex coding profile", () => {
       expect(next.actions[key]?.single).toEqual({ type: "shortcut", chord: { keys: [key] } });
     }
     expect(next.actions.ok?.single).toEqual({ type: "shortcut", chord: { keys: ["enter"] } });
+    expect(next.actions.ok?.double).toEqual({ type: "disabled" });
+    expect(next.actions.ok?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "enter"] } });
     expect(next.actions.power?.single).toEqual({ type: "shortcut", chord: { keys: ["escape"] } });
     expect(next.actions.back?.single).toEqual({ type: "normal_backspace" });
     expect(next.actions.back?.double).toEqual({ type: "disabled" });
     expect(next.actions.back?.long).toEqual({ type: "disabled" });
-    for (const key of ["up", "down", "left", "right", "ok", "volume_up", "volume_down"] as const) {
+    for (const key of ["up", "down", "left", "right", "volume_up", "volume_down"] as const) {
       expect(next.actions[key]?.double).toEqual({ type: "disabled" });
       expect(next.actions[key]?.long).toEqual({ type: "disabled" });
     }
-    expect(next.actions.volume_up?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_left"] } });
-    expect(next.actions.volume_down?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "shift", "bracket_right"] } });
+    expect(next.actions.volume_up?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_left"] } });
+    expect(next.actions.volume_down?.single).toEqual({ type: "shortcut", chord: { keys: ["control", "alt", "bracket_right"] } });
     expect(next.actions.power?.double).toEqual({ type: "disabled" });
     expect(next.actions.power?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "enter"] } });
     expect(CODING_PROFILE_BUTTONS).toHaveLength(12);
@@ -79,6 +81,7 @@ describe("Codex coding profile", () => {
 
   it("persists an exact backup before asking the backend to save", async () => {
     const current = existing();
+    current.actions.ok!.long = { type: "shortcut", chord: { keys: ["escape"] } };
     const deps = port(current);
     deps.saveMappings = vi.fn(async (next) => {
       expect(readCodingBackup(localStorage)?.mappings).toEqual(current);
@@ -90,6 +93,9 @@ describe("Codex coding profile", () => {
     expect(result.backup.mappings).toEqual(current);
     expect(deps.saveMappings).toHaveBeenCalledWith(buildCodingProfile(current));
     expect(result.mappings.enabled).toBe(true);
+    expect(result.mappings.actions.ok?.long).toEqual({ type: "shortcut", chord: { keys: ["control", "enter"] } });
+    const restored = await restoreCodingProfile(deps);
+    expect(restored.actions.ok?.long).toEqual({ type: "shortcut", chord: { keys: ["escape"] } });
   });
 
   it("backs up fresh mappings on every apply while preserving the first recovery point", async () => {

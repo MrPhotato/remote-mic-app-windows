@@ -23,7 +23,7 @@ const PAYLOAD_MANIFEST: &str =
 const FRAME_LIMIT: usize = 4096;
 const IPC_READ_TIMEOUT: Duration = Duration::from_millis(100);
 const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
-type Availability = dyn Fn() -> (bool, u64, u64, bool) + Send + Sync;
+type Availability = dyn Fn() -> (bool, u64, u64, bool, bool, u16) + Send + Sync;
 
 struct Worker {
     stop: Arc<AtomicBool>,
@@ -123,6 +123,11 @@ impl Rc003InputRuntime {
             .name("sayall-rc003-input".into())
             .spawn(move || {
                 let result = runtime.run(&payload, &stop_thread);
+                // Keep the identity-free Enter gate bypassed during bounded
+                // helper cleanup and in-flight report-buffer restoration.
+                // This does not promise to wait for physical button release.
+                crate::key_gate::set_rc003_ok_capture(false);
+                crate::key_gate::set_rc003_gesture_capture(0);
                 let generation = runtime.snapshot().generation;
                 let _ = runtime
                     .sender
@@ -174,6 +179,8 @@ impl Rc003InputRuntime {
         stop: &AtomicBool,
         input_epoch: u64,
         tv_enabled: bool,
+        ok_enabled: bool,
+        gesture_mask: u16,
     ) -> Option<u64> {
         let _gate = self.input_gate.lock().unwrap();
         if stop.load(Ordering::SeqCst) {
@@ -185,10 +192,16 @@ impl Rc003InputRuntime {
         });
         let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
         self.status.lock().unwrap().generation = generation;
+        // Authentication has completed before this method is called in production.
+        // Disable predictive Enter attribution before granting the source lease.
+        crate::key_gate::set_rc003_ok_capture(ok_enabled);
+        crate::key_gate::set_rc003_gesture_capture(gesture_mask);
         let _ = self.sender.send(EngineMessage::Rc003TapStart {
             generation,
             input_epoch,
             tv_enabled,
+            ok_enabled,
+            gesture_mask,
         });
         Some(generation)
     }
@@ -198,8 +211,8 @@ impl Rc003InputRuntime {
         stop: &AtomicBool,
         generation: u64,
         sequence: u64,
-        pressed_mask: u8,
-        previous_mask: u8,
+        pressed_mask: u16,
+        previous_mask: u16,
     ) -> Result<bool, &'static str> {
         let _gate = self.input_gate.lock().unwrap();
         if stop.load(Ordering::SeqCst) {
@@ -254,7 +267,7 @@ impl Rc003InputRuntime {
                             for hello in frames.read(&mut stream)? {
                                 if valid_hello(&hello, &token) {
                                     gatt_note(
-                                        "rc003_input ipc phase=authenticated protocol=2".into(),
+                                        "rc003_input ipc phase=authenticated protocol=4".into(),
                                     );
                                     return Ok((stream, frames));
                                 }
@@ -277,7 +290,7 @@ impl Rc003InputRuntime {
         let mut last_lease = Instant::now() - Duration::from_secs(2);
         let mut last_contact = Instant::now();
         let mut last_sequence = None;
-        let mut previous_mask = 0_u8;
+        let mut previous_mask = 0_u16;
         let mut armed = false;
         let result = (|| {
             loop {
@@ -291,26 +304,45 @@ impl Rc003InputRuntime {
                 if last_contact.elapsed() > Duration::from_secs(5) {
                     return Err("helper_heartbeat_timeout");
                 }
-                let (available, connection_generation, input_epoch, tv_enabled) =
-                    (self.available)();
+                let (
+                    available,
+                    connection_generation,
+                    input_epoch,
+                    tv_enabled,
+                    ok_enabled,
+                    gesture_mask,
+                ) = (self.available)();
                 let selected = self.selected.lock().unwrap().clone();
                 let capture_tv_enabled =
                     tv_capture_enabled(available, selected.is_some(), tv_enabled);
+                let capture_ok_enabled =
+                    tv_capture_enabled(available, selected.is_some(), ok_enabled);
+                let capture_gesture_mask = if available && selected.is_some() {
+                    gesture_mask
+                } else {
+                    0
+                };
                 let selection = (
                     available,
                     connection_generation,
                     input_epoch,
                     tv_enabled,
+                    ok_enabled,
+                    gesture_mask,
                     selected.clone(),
                 );
                 if last_selection.as_ref() != Some(&selection) {
                     gatt_note(format!(
-                        "rc003_input selection phase=changed available={available} connection_generation={connection_generation} input_epoch={input_epoch} tv_enabled={tv_enabled} selected={}",
+                        "rc003_input selection phase=changed available={available} connection_generation={connection_generation} input_epoch={input_epoch} tv_enabled={tv_enabled} ok_enabled={ok_enabled} gesture_mask={gesture_mask} selected={}",
                         selected.is_some()
                     ));
-                    let Some(next_generation) =
-                        self.begin_generation(stop, input_epoch, capture_tv_enabled)
-                    else {
+                    let Some(next_generation) = self.begin_generation(
+                        stop,
+                        input_epoch,
+                        capture_tv_enabled,
+                        capture_ok_enabled,
+                        capture_gesture_mask,
+                    ) else {
                         return Ok(());
                     };
                     generation = next_generation;
@@ -333,7 +365,7 @@ impl Rc003InputRuntime {
                         &mut stream,
                         &json!({"type":"lease", "generation":generation,
                         "enabled":available && selected.is_some(), "device_id":selected,
-                        "tv_enabled":capture_tv_enabled}),
+                        "tv_enabled":capture_tv_enabled, "ok_enabled":capture_ok_enabled, "gesture_mask":capture_gesture_mask}),
                     )?;
                     last_lease = Instant::now();
                 }
@@ -354,10 +386,15 @@ impl Rc003InputRuntime {
                             let mask = message["pressed_mask"]
                                 .as_u64()
                                 .filter(|mask| {
-                                    *mask <= 15 && (capture_tv_enabled || *mask & 8 == 0)
+                                    valid_capture_mask(
+                                        *mask,
+                                        capture_tv_enabled,
+                                        capture_ok_enabled,
+                                        capture_gesture_mask,
+                                    )
                                 })
                                 .ok_or("ipc_invalid_state")?
-                                as u8;
+                                as u16;
                             if last_sequence.is_some_and(|previous| sequence <= previous) {
                                 continue;
                             }
@@ -393,6 +430,8 @@ impl Rc003InputRuntime {
                                             stop,
                                             input_epoch,
                                             capture_tv_enabled,
+                                            capture_ok_enabled,
+                                            capture_gesture_mask,
                                         ) else {
                                             return Ok(());
                                         };
@@ -499,9 +538,17 @@ fn tv_capture_enabled(available: bool, selected: bool, configured: bool) -> bool
     available && selected && configured
 }
 
+fn valid_capture_mask(mask: u64, tv_enabled: bool, ok_enabled: bool, gesture_mask: u16) -> bool {
+    let allowed = 7
+        | if tv_enabled { 8 } else { 0 }
+        | if ok_enabled { 16 } else { 0 }
+        | u64::from(gesture_mask);
+    gesture_mask & !crate::raw_input::RC003_GESTURE_MASK == 0 && mask & !allowed == 0
+}
+
 fn valid_hello(hello: &Value, token: &str) -> bool {
     hello["type"] == "hello"
-        && hello["protocol"].as_u64() == Some(2)
+        && hello["protocol"].as_u64() == Some(4)
         && hello["token"] == token
         && hello["pid"]
             .as_u64()
@@ -729,17 +776,60 @@ mod tests {
     }
 
     #[test]
-    fn rc003_tv_protocol_requires_v2_and_rejects_legacy_hello() {
-        let mut hello = json!({"type":"hello", "protocol":2, "token":"test-token", "pid":1});
+    fn rc003_tv_protocol_requires_v4_and_rejects_legacy_hello() {
+        let mut hello = json!({"type":"hello", "protocol":4, "token":"test-token", "pid":1});
         assert!(valid_hello(&hello, "test-token"));
-        for protocol in [json!(1), json!(3), json!(true), json!("2"), Value::Null] {
+        for protocol in [
+            json!(1),
+            json!(2),
+            json!(3),
+            json!(true),
+            json!("4"),
+            Value::Null,
+        ] {
             hello["protocol"] = protocol;
             assert!(!valid_hello(&hello, "test-token"));
         }
-        hello["protocol"] = json!(2);
+        hello["protocol"] = json!(4);
         assert!(!valid_hello(&hello, "wrong-token"));
         hello["pid"] = json!(0);
         assert!(!valid_hello(&hello, "test-token"));
+    }
+
+    #[test]
+    fn rc003_capture_masks_allow_only_explicitly_enabled_optional_buttons() {
+        for tv in [false, true] {
+            for ok in [false, true] {
+                for mask in 0..=64 {
+                    let expected = mask <= 31 && (tv || mask & 8 == 0) && (ok || mask & 16 == 0);
+                    assert_eq!(valid_capture_mask(mask, tv, ok, 0), expected);
+                }
+                assert!(!valid_capture_mask(u64::MAX, tv, ok, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn rc003_generic_protocol_checks_high_bits_without_truncation() {
+        for button in crate::raw_input::ALL_BUTTONS {
+            let mask = crate::raw_input::rc003_button_mask(button);
+            if mask & crate::raw_input::RC003_GESTURE_MASK != 0 {
+                assert!(valid_capture_mask(u64::from(mask), false, false, mask));
+                if mask > 7 {
+                    assert!(!valid_capture_mask(u64::from(mask), false, false, 0));
+                }
+            }
+        }
+        for mask in [8192, u16::MAX as u64, u64::MAX] {
+            assert!(!valid_capture_mask(
+                mask,
+                true,
+                true,
+                crate::raw_input::RC003_GESTURE_MASK
+            ));
+        }
+        assert!(!valid_capture_mask(0, false, false, 8));
+        assert!(!valid_capture_mask(0, false, false, 16));
     }
 
     #[test]
@@ -747,10 +837,10 @@ mod tests {
         let (sender, events) = mpsc::channel();
         let runtime = Arc::new(Rc003InputRuntime::new(
             sender,
-            Arc::new(|| (true, 1, 0, false)),
+            Arc::new(|| (true, 1, 0, false, false, 0)),
         ));
         let stop = Arc::new(AtomicBool::new(false));
-        let generation = runtime.begin_generation(&stop, 0, false).unwrap();
+        let generation = runtime.begin_generation(&stop, 0, false, false, 0).unwrap();
         let _ = events.try_iter().collect::<Vec<_>>();
         let (checked, checked_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
@@ -761,7 +851,10 @@ mod tests {
             assert!(!input_stop.load(Ordering::SeqCst));
             checked.send(()).unwrap();
             resume_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert_eq!(input.begin_generation(&input_stop, 0, false), None);
+            assert_eq!(
+                input.begin_generation(&input_stop, 0, false, false, 0),
+                None
+            );
             assert!(!input
                 .forward_state(&input_stop, generation, 1, 1, 0)
                 .unwrap());
@@ -783,17 +876,19 @@ mod tests {
         let (sender, events) = mpsc::channel();
         let runtime = Arc::new(Rc003InputRuntime::new(
             sender,
-            Arc::new(|| (true, 1, 0, false)),
+            Arc::new(|| (true, 1, 0, false, false, 0)),
         ));
         let stop = Arc::new(AtomicBool::new(false));
-        let first = runtime.begin_generation(&stop, 0, false).unwrap();
+        let first = runtime.begin_generation(&stop, 0, false, false, 0).unwrap();
         let _ = events.try_iter().collect::<Vec<_>>();
         let (forwarded, forwarded_rx) = mpsc::channel();
         let (resume, resume_rx) = mpsc::channel();
         let input = Arc::clone(&runtime);
         let input_stop = Arc::clone(&stop);
         let worker = thread::spawn(move || {
-            let generation = input.begin_generation(&input_stop, 0, false).unwrap();
+            let generation = input
+                .begin_generation(&input_stop, 0, false, false, 0)
+                .unwrap();
             assert!(input
                 .forward_state(&input_stop, generation, 1, 0, 0)
                 .unwrap());
@@ -813,7 +908,7 @@ mod tests {
         let messages = events.try_iter().collect::<Vec<_>>();
         assert!(matches!(messages.as_slice(), [
             EngineMessage::Rc003TapLost { generation: replaced },
-            EngineMessage::Rc003TapStart { generation: started, input_epoch: 0, tv_enabled: false },
+            EngineMessage::Rc003TapStart { generation: started, input_epoch: 0, tv_enabled: false, ok_enabled: false, gesture_mask: 0 },
             EngineMessage::Rc003TapState { generation: neutral, pressed_mask: 0, .. },
             EngineMessage::Rc003TapState { generation: pressed, pressed_mask: 1, .. },
             EngineMessage::Rc003TapLost { generation: stopped },

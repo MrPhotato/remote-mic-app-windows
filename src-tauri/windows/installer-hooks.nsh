@@ -11,6 +11,48 @@
 !define SAYALL_SHCNE_UPDATEITEM 0x00002000
 !define SAYALL_SHCNF_PATHW_FLUSHNOWAIT 0x00003005
 
+; Only the explicit setup UI option changes shortcut creation. Passive upgrades
+; with no option preserve Tauri's existing shortcut behavior.
+Var SayAllDesktopChoice
+Var SayAllOriginalShortcutMode
+
+!macro SayAllReadDesktopChoice
+  StrCpy $SayAllDesktopChoice ""
+  StrCpy $SayAllOriginalShortcutMode $NoShortcutMode
+  ${GetOptions} $CMDLINE "/SAYALL_DESKTOP=" $SayAllDesktopChoice
+  ${IfNot} ${Errors}
+    ${If} $SayAllDesktopChoice != "0"
+    ${AndIf} $SayAllDesktopChoice != "1"
+      DetailPrint "SayAll shortcut_choice result=failed reason=invalid_option"
+      SetErrorLevel 87
+      Abort
+    ${EndIf}
+    ${If} $SayAllDesktopChoice == "0"
+      ; Suppress the standard silent-install desktop shortcut. The start-menu
+      ; creation is restored after installation; existing links are not deleted.
+      StrCpy $NoShortcutMode 1
+    ${EndIf}
+    DetailPrint "SayAll shortcut_choice result=accepted desktop=$SayAllDesktopChoice"
+  ${EndIf}
+!macroend
+
+!macro SayAllApplyDesktopChoice
+  ${If} $SayAllDesktopChoice == "0"
+    StrCpy $NoShortcutMode $SayAllOriginalShortcutMode
+    Call CreateOrUpdateStartMenuShortcut
+    DetailPrint "SayAll shortcut_choice result=passed desktop=create_skipped"
+  ${ElseIf} $SayAllDesktopChoice == "1"
+    Push $UpdateMode
+    Push $NoShortcutMode
+    StrCpy $UpdateMode 0
+    StrCpy $NoShortcutMode 0
+    Call CreateOrUpdateDesktopShortcut
+    Pop $NoShortcutMode
+    Pop $UpdateMode
+    DetailPrint "SayAll shortcut_choice result=passed desktop=create_requested"
+  ${EndIf}
+!macroend
+
 ; Load the existing link and change only its default icon. Do not rebuild links:
 ; arguments, working directory, hotkey, description, show mode and other stored
 ; properties belong to the user. An explicit custom icon is left untouched.
@@ -249,7 +291,23 @@ FunctionEnd
   Pop $R8
 !macroend
 
+; This runs in makensis, never on the user's machine. Tauri restores the source
+; executable after bundling, so hashing it later would miss its patched/signed
+; bytes. Explicit per-build paths keep ordinary NSIS fixtures unaffected.
+!macro SayAllCaptureInstalledApp
+  ; Unset NSIS environment expressions remain literal text, so an explicit
+  ; sentinel is necessary; comparing a missing path with "" would trigger it.
+  !if "$%SAYALL_SETUP_CAPTURE_ENABLED%" == "1"
+    !if ! /FileExists "$%SAYALL_SETUP_CAPTURE_SCRIPT%"
+      !error "Setup capture script is missing"
+    !endif
+    !execute '"$%WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$%SAYALL_SETUP_CAPTURE_SCRIPT%" -SourcePath "${MAINBINARYSRCPATH}" -ReceiptPath "$%SAYALL_SETUP_CAPTURE_RECEIPT%" -Version "${VERSION}"' = 0
+  !endif
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro SayAllCaptureInstalledApp
+  !insertmacro SayAllReadDesktopChoice
   ${IfNot} ${AtLeastBuild} ${SAYALL_MINIMUM_WINDOWS_BUILD}
     MessageBox MB_ICONSTOP|MB_OK "无线麦 SayAll 需要 Windows 10 1809（内部版本 17763）或更高版本。$\r$\nSayAll requires Windows 10 1809 (build 17763) or later."
     SetErrorLevel 1633
@@ -283,6 +341,7 @@ FunctionEnd
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro SayAllApplyDesktopChoice
   !insertmacro SayAllRefreshInstalledIcons
   Push $R8
   ReadRegStr $R8 HKLM "${SAYALL_VB_CABLE_SERVICE_KEY}" "DisplayName"

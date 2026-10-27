@@ -14,6 +14,8 @@ import {
 } from "./navigation";
 import AboutPage from "./pages/AboutPage.vue";
 import WindowTitlebar from "./components/WindowTitlebar.vue";
+import Rc003NeutralPrompt from "./components/Rc003NeutralPrompt.vue";
+import { provideRc003InputState } from "./lib/rc003-input-state";
 import ButtonsPage from "./pages/ButtonsPage.vue";
 import CodingPage from "./pages/CodingPage.vue";
 import ConnectionPage from "./pages/ConnectionPage.vue";
@@ -32,6 +34,12 @@ let disposed = false;
 watch(activePage, (page) => persistActivePage(page));
 const runtime = ref<RuntimeSnapshot | null>(null);
 const loadError = ref("");
+provideRc003InputState(() => ({
+  remoteModel: runtime.value?.platform.connection.remoteModel ?? "unknown",
+  connected: ["ready", "streaming", "draining"].includes(runtime.value?.platform.connection.phase ?? ""),
+  connectionGeneration: runtime.value?.platform.connection.generation,
+  statusAvailable: !loadError.value,
+}));
 let runtimePollTimer: ReturnType<typeof setInterval> | undefined;
 let initialRuntimeReported = false;
 
@@ -147,6 +155,7 @@ onUnmounted(() => {
     <span class="ambient-light violet"></span>
   </div>
   <WindowTitlebar />
+  <Rc003NeutralPrompt />
   <div class="app-shell">
     <Sidebar :active-page="activePage" :update-available="releaseResult?.status === 'available'" @select="navigate" />
     <main class="content" :aria-busy="navigationPending">
@@ -155,9 +164,8 @@ onUnmounted(() => {
         {{ navigationError }} <button class="secondary-button" type="button" @click="navigate('buttons')">重新读取</button>
       </div>
       <p v-if="!pageReady && navigationPending" class="muted" role="status">正在读取按键配置…</p>
-      <!-- 页面切换：out-in 顺序让旧页面先淡出，新页面再上浮进场。
-           玻璃面板的 backdrop-filter 对后一帧全重新模糊，用 mode=out-in
-           避免两屏同时在渲染时的峰值绘制开销。 -->
+      <!-- 配置完整后使用统一的翻页动画；按键画布的局部展开独立完成，
+           out-in 避免两屏玻璃面板同时重绘。 -->
       <Transition name="page" mode="out-in">
         <component v-if="pageReady" :is="activeComponent" :key="activePage" :runtime="runtime" v-bind="activePage === 'buttons' ? { initialMappings: preparedMappings } : {}" @navigate="navigate" />
       </Transition>

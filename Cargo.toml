@@ -3,11 +3,12 @@ members = [
     "crates/sayall-core",
     "crates/sayall-windows",
     "src-tauri",
+    "tools/sayall-setup",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.11"
+version = "0.3.21"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/MrPhotato/remote-mic-app-windows"

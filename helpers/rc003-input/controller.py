@@ -1,4 +1,5 @@
 """RC003 key lifecycle, separate from Frida and Windows for deterministic tests."""
+from protocol import valid_gesture_mask
 
 
 class InputState:
@@ -9,23 +10,32 @@ class InputState:
         self.armed = False
         self.mask = 0
         self.tv_enabled = False
+        self.ok_enabled = False
+        self.gesture_mask = 0
 
-    def begin(self, generation, tv_enabled=False):
+    def begin(self, generation, tv_enabled=False, ok_enabled=False, gesture_mask=0):
         if type(tv_enabled) is not bool:
             raise ValueError("invalid_tv_configuration")
+        if type(ok_enabled) is not bool:
+            raise ValueError("invalid_ok_configuration")
+        if not valid_gesture_mask(gesture_mask):
+            raise ValueError("invalid_gesture_configuration")
         if self.generation != generation:
             self.sequence = 0
         self.generation = generation
         self.armed = False
         self.mask = 0
         self.tv_enabled = tv_enabled
+        self.ok_enabled = ok_enabled
+        self.gesture_mask = gesture_mask
         self.status("waiting", "awaiting_neutral")
 
     def status(self, phase, reason):
         self.emit({"type": "status", "generation": self.generation or 0, "phase": phase, "reason": reason})
 
     def observe(self, mask):
-        if type(mask) is not int or not 0 <= mask <= (15 if self.tv_enabled else 7):
+        allowed = 7 | (8 if self.tv_enabled else 0) | (16 if self.ok_enabled else 0) | self.gesture_mask
+        if type(mask) is not int or mask < 0 or mask & ~allowed:
             raise ValueError("invalid_mask")
         if not self.armed:
             if mask != 0:

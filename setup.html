@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN" class="setup-document">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      document.documentElement.dataset.theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    </script>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <title>安装无线麦 SayAll</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/setup/main.ts"></script>
+  </body>
+</html>

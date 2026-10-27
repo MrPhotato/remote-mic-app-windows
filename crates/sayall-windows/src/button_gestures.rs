@@ -38,7 +38,7 @@ fn is_plain_undo(action: &ButtonAction) -> bool {
         )))
 }
 
-fn is_chat_navigation(action: &ButtonAction) -> bool {
+fn is_chat_or_tab_navigation(action: &ButtonAction) -> bool {
     matches!(action, ButtonAction::Shortcut { chord }
     if chord.keys.len() == 3
         && chord.keys.iter().any(|key| matches!(
@@ -46,6 +46,7 @@ fn is_chat_navigation(action: &ButtonAction) -> bool {
         ))
         && chord.keys.iter().any(|key| matches!(
             key, KeyCode::Shift | KeyCode::LeftShift | KeyCode::RightShift
+                | KeyCode::Alt | KeyCode::LeftAlt | KeyCode::RightAlt
         ))
         && chord.keys.iter().any(|key| matches!(
             key, KeyCode::BracketLeft | KeyCode::BracketRight
@@ -102,10 +103,10 @@ impl GestureConfig {
             && !double_enabled
             && !long_enabled
             && !defer_single_until_release
-            // Conversation switching is a discrete action. Keep legacy/custom
+            // Chat and tab switching are discrete actions. Keep legacy/custom
             // scrolling and system-volume repetition unchanged.
             && !(matches!(button, RemoteButton::VolumeUp | RemoteButton::VolumeDown)
-                && is_chat_navigation(&actions.single))
+                && is_chat_or_tab_navigation(&actions.single))
         {
             button.repeat_interval()
         } else {
@@ -1170,7 +1171,6 @@ mod tests {
         for button in [
             RemoteButton::VolumeUp,
             RemoteButton::VolumeDown,
-            RemoteButton::Ok,
             RemoteButton::Up,
             RemoteButton::Back,
         ] {
@@ -1189,33 +1189,78 @@ mod tests {
     }
 
     #[test]
-    fn default_power_hold_queues_once_without_escape_and_tap_escapes_on_release() {
-        let now = Instant::now();
-        let mut recognizer = GestureRecognizer::new();
-        recognizer.configure(&ButtonMappings::default());
-        assert!(recognizer.press(RemoteButton::Power, now).is_empty());
-        assert_eq!(
-            recognizer.release(RemoteButton::Power, now + Duration::from_millis(80)),
-            vec![ButtonTrigger::Single]
-        );
-        let held = now + Duration::from_secs(1);
-        assert!(recognizer.press(RemoteButton::Power, held).is_empty());
-        assert_eq!(
-            recognizer.advance(held + LONG_PRESS_THRESHOLD),
-            vec![(RemoteButton::Power, ButtonTrigger::Long)]
-        );
-        assert!(recognizer.advance(held + Duration::from_secs(2)).is_empty());
-        assert!(recognizer
-            .release(RemoteButton::Power, held + Duration::from_secs(3))
-            .is_empty());
-        let next = held + Duration::from_secs(4);
-        recognizer.press(RemoteButton::Power, next);
-        recognizer.release_all();
-        recognizer.configure(&ButtonMappings::default());
-        assert!(recognizer
-            .release(RemoteButton::Power, next + Duration::from_secs(1))
-            .is_empty());
-        assert!(recognizer.advance(next + Duration::from_secs(2)).is_empty());
+    fn chat_and_tab_navigation_with_physical_modifiers_fire_once_per_volume_press() {
+        for modifier in [
+            KeyCode::Alt,
+            KeyCode::LeftAlt,
+            KeyCode::RightAlt,
+            KeyCode::Shift,
+            KeyCode::LeftShift,
+            KeyCode::RightShift,
+        ] {
+            let mut mappings = ButtonMappings::default();
+            for (button, bracket) in [
+                (RemoteButton::VolumeUp, KeyCode::BracketLeft),
+                (RemoteButton::VolumeDown, KeyCode::BracketRight),
+            ] {
+                mappings.actions.get_mut(&button).unwrap().single = ButtonAction::Shortcut {
+                    chord: KeyChord {
+                        keys: vec![bracket, modifier, KeyCode::RightControl],
+                    },
+                };
+            }
+            let now = Instant::now();
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&mappings);
+            for button in [RemoteButton::VolumeUp, RemoteButton::VolumeDown] {
+                assert_eq!(recognizer.press(button, now), vec![ButtonTrigger::Single]);
+                assert!(recognizer
+                    .press(button, now + Duration::from_millis(50))
+                    .is_empty());
+            }
+            assert!(recognizer.advance(now + Duration::from_secs(2)).is_empty());
+            for button in [RemoteButton::VolumeUp, RemoteButton::VolumeDown] {
+                assert!(recognizer
+                    .release(button, now + Duration::from_secs(2))
+                    .is_empty());
+                assert_eq!(
+                    recognizer.press(button, now + Duration::from_secs(3)),
+                    vec![ButtonTrigger::Single]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn default_confirm_and_power_hold_queue_once_without_single_and_tap_fires_on_release() {
+        for button in [RemoteButton::Ok, RemoteButton::Power] {
+            let now = Instant::now();
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&ButtonMappings::default());
+            assert!(recognizer.press(button, now).is_empty());
+            assert_eq!(
+                recognizer.release(button, now + Duration::from_millis(80)),
+                vec![ButtonTrigger::Single]
+            );
+            let held = now + Duration::from_secs(1);
+            assert!(recognizer.press(button, held).is_empty());
+            assert_eq!(
+                recognizer.advance(held + LONG_PRESS_THRESHOLD),
+                vec![(button, ButtonTrigger::Long)]
+            );
+            assert!(recognizer.advance(held + Duration::from_secs(2)).is_empty());
+            assert!(recognizer
+                .release(button, held + Duration::from_secs(3))
+                .is_empty());
+            let next = held + Duration::from_secs(4);
+            recognizer.press(button, next);
+            recognizer.release_all();
+            recognizer.configure(&ButtonMappings::default());
+            assert!(recognizer
+                .release(button, next + Duration::from_secs(1))
+                .is_empty());
+            assert!(recognizer.advance(next + Duration::from_secs(2)).is_empty());
+        }
     }
 
     #[test]
@@ -1372,39 +1417,38 @@ mod tests {
 
     #[test]
     fn raw_single_path_fires_on_press_and_repeats_while_held() {
-        let t0 = Instant::now();
-        let mut recognizer = GestureRecognizer::new();
-        recognizer.configure(&mappings_with(
-            RemoteButton::Up,
-            Some(KeyCode::Up),
-            None,
-            None,
-        ));
+        for (button, key) in [
+            (RemoteButton::Up, KeyCode::Up),
+            (RemoteButton::Down, KeyCode::Down),
+            (RemoteButton::Left, KeyCode::Left),
+            (RemoteButton::Right, KeyCode::Right),
+        ] {
+            let t0 = Instant::now();
+            let mut recognizer = GestureRecognizer::new();
+            recognizer.configure(&mappings_with(button, Some(key), None, None));
 
-        // 按下沿立即触发单击。
-        assert_eq!(
-            recognizer.press(RemoteButton::Up, t0),
-            vec![ButtonTrigger::Single]
-        );
-        // 350ms 内无连发。
-        assert_eq!(recognizer.advance(t0 + Duration::from_millis(340)), vec![]);
-        // 350ms 起始延迟后按 100ms 间隔连发。
-        let t1 = t0 + REPEAT_START_DELAY;
-        assert_eq!(
-            recognizer.advance(t1),
-            vec![(RemoteButton::Up, ButtonTrigger::Single)]
-        );
-        assert_eq!(recognizer.advance(t1 + Duration::from_millis(99)), vec![]);
-        assert_eq!(
-            recognizer.advance(t1 + Duration::from_millis(100)),
-            vec![(RemoteButton::Up, ButtonTrigger::Single)]
-        );
-        // 释放取消连发。
-        assert_eq!(
-            recognizer.release(RemoteButton::Up, t1 + Duration::from_millis(200)),
-            vec![]
-        );
-        assert_eq!(recognizer.advance(t1 + Duration::from_millis(400)), vec![]);
+            // 按下沿立即触发单击。
+            assert_eq!(recognizer.press(button, t0), vec![ButtonTrigger::Single]);
+            // 350ms 内无连发。
+            assert_eq!(recognizer.advance(t0 + Duration::from_millis(340)), vec![]);
+            // 350ms 起始延迟后按 100ms 间隔连发。
+            let t1 = t0 + REPEAT_START_DELAY;
+            assert_eq!(
+                recognizer.advance(t1),
+                vec![(button, ButtonTrigger::Single)]
+            );
+            assert_eq!(recognizer.advance(t1 + Duration::from_millis(99)), vec![]);
+            assert_eq!(
+                recognizer.advance(t1 + Duration::from_millis(100)),
+                vec![(button, ButtonTrigger::Single)]
+            );
+            // 释放取消连发。
+            assert_eq!(
+                recognizer.release(button, t1 + Duration::from_millis(200)),
+                vec![]
+            );
+            assert_eq!(recognizer.advance(t1 + Duration::from_millis(400)), vec![]);
+        }
     }
 
     #[test]

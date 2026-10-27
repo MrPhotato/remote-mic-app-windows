@@ -49,7 +49,7 @@ export interface MicrophoneSelectionSnapshot {
   targetMicrophoneName: string | null;
   currentMicrophoneId: string | null;
   currentMicrophoneName: string | null;
-  phase: "unconfigured" | "ready" | "failed" | "external";
+  phase: "unconfigured" | "waiting_connection" | "ready" | "failed" | "external";
   lastError: string | null;
   restorePending: boolean;
 }
@@ -522,9 +522,9 @@ const browserMicrophones: MicrophoneEndpoint[] = [
   { id: "preview-microphone", name: "Microphone Array (Realtek Audio)", isVirtualCableCandidate: false, isDefault: true, isDefaultCommunications: false, renderEndpointIds: [] },
 ];
 let browserMicrophoneSelection: MicrophoneSelectionSnapshot = {
-  targetMicrophoneId: "preview-microphone", targetMicrophoneName: "Microphone Array (Realtek Audio)",
+  targetMicrophoneId: "preview-cable", targetMicrophoneName: "CABLE Output (VB-Audio Virtual Cable)",
   currentMicrophoneId: "preview-microphone", currentMicrophoneName: "Microphone Array (Realtek Audio)",
-  phase: "ready", lastError: null, restorePending: false,
+  phase: "waiting_connection", lastError: null, restorePending: false,
 };
 
 export async function getMicrophoneSelection(): Promise<MicrophoneSelectionSnapshot> {
@@ -535,24 +535,30 @@ export async function getMicrophoneSelection(): Promise<MicrophoneSelectionSnaps
 export async function selectMicrophone(microphoneId: string): Promise<MicrophoneSelectionSnapshot> {
   if (!isTauriRuntime()) {
     const microphone = browserMicrophones.find((item) => item.id === microphoneId);
-    if (!microphone) throw new Error("麦克风暂不可用");
+    if (!microphone?.isVirtualCableCandidate) throw new Error("请选择遥控器的虚拟麦克风");
     browserMicrophoneSelection = {
+      ...browserMicrophoneSelection,
       targetMicrophoneId: microphone.id, targetMicrophoneName: microphone.name,
-      currentMicrophoneId: microphone.id, currentMicrophoneName: microphone.name,
-      phase: "ready", lastError: null, restorePending: false,
+      phase: "waiting_connection", lastError: null, restorePending: false,
     };
-    if (microphone.isVirtualCableCandidate) {
-      browserSnapshot.platform.audio = {
-        ...browserSnapshot.platform.audio,
-        phase: "ready",
-        selectedEndpointId: microphone.renderEndpointIds[0] ?? null,
-        selectedEndpointName: "CABLE Input (VB-Audio Virtual Cable)",
-        lastError: null,
-      };
-    }
     return { ...browserMicrophoneSelection };
   }
   return invoke<MicrophoneSelectionSnapshot>("select_microphone", { microphoneId });
+}
+
+/** Explicit physical microphone override; the remote's virtual target remains saved. */
+export async function useMicrophoneNow(microphoneId: string): Promise<MicrophoneSelectionSnapshot> {
+  if (!isTauriRuntime()) {
+    const microphone = browserMicrophones.find((item) => item.id === microphoneId);
+    if (!microphone || microphone.isVirtualCableCandidate) throw new Error("请选择普通麦克风");
+    browserMicrophoneSelection = {
+      ...browserMicrophoneSelection,
+      currentMicrophoneId: microphone.id, currentMicrophoneName: microphone.name,
+      phase: "external", lastError: null, restorePending: false,
+    };
+    return { ...browserMicrophoneSelection };
+  }
+  return invoke<MicrophoneSelectionSnapshot>("use_microphone_now", { microphoneId });
 }
 
 export async function retryAudioEndpoint(): Promise<AudioSnapshot> {

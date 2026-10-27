@@ -66,10 +66,16 @@ describe("Coding page", () => {
     expect(wrapper.get(".mapping-table").text()).toContain("下一个聊天");
     expect(wrapper.get(".mapping-table").text()).toContain("上一个聊天");
     expect(wrapper.get(".mapping-table").text()).toContain("每次按下切换一次");
+    expect(wrapper.text()).toContain("Ctrl + Alt + [ / ] 切换左侧聊天");
+    expect(wrapper.text()).toContain("右侧标签页用 Ctrl + Shift + [ / ]");
     expect(wrapper.get(".mapping-table").text()).toContain("待处理项");
     expect(wrapper.get(".mapping-table").text()).toContain("显示/隐藏侧边栏");
     expect(wrapper.get(".mapping-table").text()).toContain("切换聊天和标签页");
     expect(wrapper.get(".mapping-table").text()).toContain("插队/排队");
+    const confirmRow = wrapper.findAll(".mapping-table tbody tr").find((row) => row.get("th").text() === "确定")!;
+    expect(confirmRow.findAll("td")[2]!.text()).toBe("插队/排队");
+    expect(wrapper.text()).toContain("确定、菜单和电源的单按在松开时触发");
+    expect(wrapper.text()).toContain("RC003 的确定键长按、返回及音量键需先启用按键增强");
     expect(wrapper.get(".mapping-table").text()).toContain("Esc");
     expect(wrapper.get(".mapping-table").text()).toContain("Enter");
     expect(wrapper.get(".mapping-table").text()).toContain("Backspace");
@@ -85,6 +91,7 @@ describe("Coding page", () => {
     expect(wrapper.text()).not.toContain("本预设未配置音量动作");
     await wrapper.get('[data-testid="apply-profile"]').trigger("click");
     await flushPromises();
+    expect(mocks.saveButtonMappings.mock.calls[0][0].actions.ok.long).toEqual({ type: "shortcut", chord: { keys: ["control", "enter"] } });
     expect(wrapper.find('.preset-card [role="status"]').exists()).toBe(false);
     expect(wrapper.get('[data-testid="apply-profile"]').attributes("disabled")).toBeDefined();
     resolveSave(mocks.saveButtonMappings.mock.calls[0][0]);

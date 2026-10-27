@@ -59,6 +59,8 @@ pub mod send_input_windows;
 pub mod text_edit;
 #[cfg(windows)]
 mod wetype_revive;
+#[cfg(windows)]
+pub mod window_icon;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -352,13 +354,21 @@ impl Default for WindowsPlatform {
                     let mapping = Arc::clone(&button_mapping);
                     move || {
                         let connection = runtime.snapshot();
-                        let (input_epoch, tv_enabled) = mapping.rc003_tap_configuration();
+                        let (input_epoch, tv_enabled, ok_enabled, gesture_mask) =
+                            mapping.rc003_capture_configuration();
                         let (available, connection_generation, input_epoch) = connection
                             .rc003_input_availability(
                                 lock(&raw_snapshot).phase == RawInputPhase::Ready,
                                 input_epoch,
                             );
-                        (available, connection_generation, input_epoch, tv_enabled)
+                        (
+                            available,
+                            connection_generation,
+                            input_epoch,
+                            tv_enabled,
+                            ok_enabled,
+                            gesture_mask,
+                        )
                     }
                 }),
             ));
