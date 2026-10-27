@@ -94,14 +94,15 @@ export async function runMicrophoneJourney(steps: string[]): Promise<void> {
   assert(audio.selectedEndpointId === endpoints[0].id, "仿真 CABLE Input 没有被自动选择");
   assert(cable.renderEndpointIds.includes(audio.selectedEndpointId), "仿真录音端点与传声线路不匹配");
 
-  const assertList = (target: MicrophoneEndpoint, other: MicrophoneEndpoint): void => {
+  const assertList = (): void => {
     const list = document.querySelector("#audio-endpoint-list");
     const names = Array.from(list?.querySelectorAll("strong") ?? []).map((node) => node.textContent?.trim());
-    assert(names.includes(other.name), "其余麦克风列表没有平铺未选录音端点");
-    assert(!names.includes(target.name), "目标麦克风重复出现在其余列表");
+    assert(names.includes(physical.name), "普通麦克风必须固定在其余列表");
+    assert(!names.includes(cable.name), "CABLE 不能移入其余列表");
+    assert(document.querySelector(".microphone-name")?.textContent?.trim() === cable.name, "遥控器目标区必须保留 CABLE");
     assert(!endpoints.some((endpoint) => names.includes(endpoint.name)), "麦克风列表混入了播放端点");
   };
-  assertList(cable, physical);
+  assertList();
   const details = document.querySelector<HTMLDetailsElement>(".audio-route-details");
   assert(details && !details.open, "麦克风诊断详情没有默认收起");
   const summary = details.querySelector("summary");
@@ -115,18 +116,24 @@ export async function runMicrophoneJourney(steps: string[]): Promise<void> {
 
   for (const microphone of [physical, cable]) {
     const button = await waitFor(() => {
-      const row = Array.from(document.querySelectorAll("#audio-endpoint-list li")).find(
+      const row = Array.from(document.querySelectorAll("#audio-endpoint-list li, .selected-microphone-row")).find(
         (item) => item.querySelector("strong")?.textContent?.trim() === microphone.name,
       );
       return row?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? null;
     }, `选择“${microphone.name}”按钮可用`);
     button.click();
-    await waitForTarget(microphone);
-    assertList(microphone, microphone === cable ? physical : cable);
+    if (microphone === cable) await waitForTarget(cable);
+    else {
+      await waitFor(() => document.querySelector("#audio-endpoint-list .microphone-active strong")?.textContent?.trim() === physical.name ? true : null, "普通麦克风实际使用中");
+      const selection = await getMicrophoneSelection();
+      assert(selection.targetMicrophoneId === cable.id, "手选普通麦不能改掉遥控器目标");
+      assert(selection.currentMicrophoneId === physical.id && selection.phase === "external" && !selection.restorePending, "普通麦手选没有完成或仍会被自动恢复覆盖");
+    }
+    assertList();
   }
   const restoredRoute = await getAudioSnapshot();
   assert(restoredRoute.phase === "ready" && restoredRoute.selectedEndpointId === audio.selectedEndpointId, "切回虚拟麦克风后传声线路不一致");
-  steps.push("普通麦克风与 CABLE 经选择按钮和 Tauri IPC 往返切换，保留退出恢复状态");
+  steps.push("普通麦克风立即使用且 CABLE 固定为遥控器目标，重应用 CABLE 后恢复连接管理");
 }
 
 async function runJourney(steps: string[]): Promise<PlatformSnapshot> {

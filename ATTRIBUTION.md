@@ -75,6 +75,23 @@ Tauri CLI 参考版本为 2.11.4，固定提交 `8909f221d1515955fc843808032bdc5
 - 依照 [Microsoft WebView2 distribution](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)，先检查 Runtime；缺失时经原生提示运行官方引导程序。构建时验证并嵌入 Microsoft Authenticode 有效的 bootstrapper，安装时不从其他来源下载运行程序。
 - 安装界面只用公开注册表、`IFileOpenDialog`、进程及文件 API；不加载应用平台层、不访问音频或蓝牙。内层安装器和安装完成的主程序均与编译时 SHA-256 绑定；最终外层安装器完成后才生成 updater 签名。CLI 透传和新 UI 分别验证，不把文件夹选择或安装器启动成功当作完整安装通过。
 
+## 当前生效麦克风高亮（2026-10-20）
+
+2026-10-20 用户回验修订：移除勾号徽标，改由行高亮及按钮“使用中”表达。选择确认后复用本仓库
+`--motion-slide` / `--ease-out-quint` 的一次性轻微回落，失败及轮询不触发。
+预先复核既有玻璃动效与 [Vue 状态过渡](https://vuejs.org/guide/built-ins/transition.html)、
+[MDN 减少动态效果](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion)；
+沿用公开 Web Animations API，取消旧动画和卸载清理，不引入动效库或改变选择／音频生命周期。
+
+- 复核本文件已记录的 SoundSwitch 与 EarTrumpet 默认设备来源及默认麦克风会话设计：保存目标与当前系统默认端点是不同状态，显示沿用现有宿主快照，不增加切换、录音或设备访问。
+- 参考 [Microsoft GetDefaultAudioEndpoint](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint) 的方向与角色语义，按当前 Capture / Console 端点标记；不使用可能过期的枚举默认标记，也不宣称代表每个应用独立选择的麦克风。
+- 参考 [W3C Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html)，颜色之外同时提供勾号和“当前生效”文字。无法确认当前端点时取消高亮；仅在状态变化记录不含设备身份的展示类别日志。未复制外部实现。
+
+## 运行窗口任务栏图标（2026-10-19）
+
+- 核对锁定的 Tauri 2.11.5 / tauri-runtime-wry 2.11.4 / Tao 0.35.3：默认窗口图标经 `set_window_icon` 设置 `ICON_SMALL`，独立 `taskbar_icon` 默认空。0.3.11 本机窗口的 `ICON_BIG` 和类大图标均为空，已有小图标有效；不将安装资源正确视为任务栏显示通过。
+- 依据 Microsoft [WM_SETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-seticon)、[WM_GETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-geticon) 和 [LoadImageW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-loadimagew)，在主窗口所属线程为该窗口补齐大图标。资源来自当前 exe 的 Tauri 内嵌图标 32512，使用系统默认尺寸共享句柄；不销毁共享句柄或所有权未知的旧句柄，不从空模块回退加载系统默认图标。
+- 实现自行编写，不复制第三方模块；仅修改本进程同线程窗口的大图标，不修改应用分组标识、固定快捷方式或系统缓存。安装版可见结果另行验证，见 [任务栏图标记录](Bugs/2026-10-19-taskbar-window-icon.md)。
 
 ## README 展示资源（2026-10-19）
 
@@ -659,3 +676,25 @@ EarTrumpet 固定提交 `0321205ad775a91967cf439576b52909e146149b` 的
 读取与通知使用公开 API，写入入口只接受重新验证为 active Capture 的端点；不写 Render 默认设备，
 不访问第三方应用设置，也不新增驱动、提权或蓝牙操作。真实设备与安装版验收分别记录于
 [Windows 默认麦克风验证](Testing/WindowsDefaultMicrophone.md)。
+
+### 固定遥控器目标与手选普通麦克风（2026-10-20）
+
+修复前复核上述 SoundSwitch 与 EarTrumpet 固定提交的行为结论：当前默认设备来自 Core Audio 实际读回，显式手选默认设备与应用持有的自动切换偏好应分别处理。复用本仓库既有逐角色写入、读回、失败回滚和恢复记录，不复制新的外部代码，不增加设备写入接口或权限。
+
+按用户纠正，虚拟 Capture 固定在目标区、普通 Capture 固定在其余列表。普通麦“立即使用”独立于遥控器目标保存，成功确认后结束临时恢复所有权；保留外部手选保护，重新应用 CABLE 才解除。历史物理目标仅在唯一已验证虚拟线路存在时迁移。界面仅用既有低饱和靛紫高亮和按钮文案，不用绿色／外部发光；成功反馈仍只作用于刚选中的行。范围与尚待实机验收项见 [ADR 0004](docs/decisions/0004-default-microphone-session.md) 和 [验证记录](Testing/WindowsDefaultMicrophone.md)。
+
+### 默认麦克风改为跟随遥控器连接（2026-10-19）
+
+按用户要求，将切换触发点由进程启动／退出改为所选遥控器的连接生命周期。复核并复用上节
+SoundSwitch `6ce0c4d80849fe4654ec36a0db0556eee8555f26`、EarTrumpet
+`0321205ad775a91967cf439576b52909e146149b` 的既有参考结论，以及本仓库 Windows
+平台层的逐角色恢复、外部默认设备通知和真实 `connection_generation` 隔离；没有复制新的外部实现。
+枚举和通知仍为公开 Core Audio API，写默认录音设备仍是用户有限授权的未公开
+`IPolicyConfig::SetDefaultEndpoint`，不将整条路径表述为公开 API，边界沿用 [ADR 0004](docs/decisions/0004-default-microphone-session.md)。
+
+同一连接代次 `Ready/Streaming/Draining` 持有切换，不随单次说话反复切换；离线仅保存，
+断开时恢复，新代次就绪后重建基线，退出兜底。保留外部手动选择，不新增 BLE 会话、Radio 操作、
+驱动或提权，不改变按住说话时序。宿主 28 项、Windows 平台层 23 项（1 项默认 ignored）、
+前端 44 项测试及 1030×734 深浅浏览器布局 passed；真实接口释放／重选往返 passed，
+三种 Render 默认值全程不变。安装版实体遥控器断开／重连与听写仍 deferred，详见
+[本次验证与历史边界](Testing/WindowsDefaultMicrophone.md)。

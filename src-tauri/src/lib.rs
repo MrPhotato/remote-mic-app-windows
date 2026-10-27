@@ -249,6 +249,21 @@ async fn select_microphone(
 }
 
 #[tauri::command]
+async fn use_microphone_now(
+    microphone_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<MicrophoneSelectionSnapshot, String> {
+    let microphone = Arc::clone(&state.microphone);
+    let platform = Arc::clone(&state.platform);
+    let settings = state.settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        microphone.use_now(microphone_id, platform.as_ref(), &settings)
+    })
+    .await
+    .map_err(|_| "切换当前麦克风失败".to_owned())?
+}
+
+#[tauri::command]
 async fn retry_audio_endpoint(state: tauri::State<'_, AppState>) -> Result<AudioSnapshot, String> {
     let platform = Arc::clone(&state.platform);
     let settings = state.settings.clone();
@@ -1237,6 +1252,24 @@ pub fn run() {
             sayall_windows::gatt_note(
                 "app_lifecycle event=tauri_setup phase=started result=passed".to_owned(),
             );
+            // Tauri sets ICON_SMALL; Windows also needs an explicit ICON_BIG
+            // for the running window's taskbar/Alt+Tab representation.
+            #[cfg(windows)]
+            match app.get_webview_window("main") {
+                Some(window) => match window.hwnd() {
+                    Ok(hwnd) => {
+                        let _ = sayall_windows::window_icon::set_main_window_taskbar_icon(
+                            windows::Win32::Foundation::HWND(hwnd.0),
+                        );
+                    }
+                    Err(_) => sayall_windows::gatt_note(
+                        "window_icon feature=taskbar_icon action=initialize phase=completed terminal_result=failed error_domain=tauri error_code=hwnd_unavailable retryable=false".to_owned(),
+                    ),
+                },
+                None => sayall_windows::gatt_note(
+                    "window_icon feature=taskbar_icon action=initialize phase=completed terminal_result=failed error_domain=tauri error_code=main_window_missing retryable=false".to_owned(),
+                ),
+            }
             // 托盘图标：主窗口关闭后驻留；菜单 = 显示主界面 / 退出；
             // 左键点击托盘 = 显示并聚焦主窗口（Mac StatusIcon 同款行为）。
             #[cfg(all(windows, not(feature = "runtime-simulation")))]
@@ -1473,6 +1506,7 @@ pub fn run() {
         list_microphones,
         get_microphone_selection,
         select_microphone,
+        use_microphone_now,
         retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
@@ -1524,6 +1558,7 @@ pub fn run() {
         list_microphones,
         get_microphone_selection,
         select_microphone,
+        use_microphone_now,
         retry_audio_endpoint,
         get_audio_snapshot,
         select_audio_endpoint,
@@ -1569,9 +1604,7 @@ pub fn run() {
                 let microphone = Arc::clone(&state.microphone);
                 let platform = Arc::clone(&state.platform);
                 let settings = state.settings.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    microphone.apply_startup(platform.as_ref(), &settings)
-                });
+                microphone.start_connection_monitor(platform, settings);
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if !shutdown_platform_for_exit(handle) {
